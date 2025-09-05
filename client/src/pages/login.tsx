@@ -66,7 +66,7 @@ export default function Login() {
                 type="text" 
                 id="username"
                 data-testid="input-username"
-                placeholder="Mark02"
+                placeholder="Enter username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full"
@@ -82,7 +82,7 @@ export default function Login() {
                 type="password" 
                 id="password"
                 data-testid="input-password"
-                placeholder="Markstorey@2015"
+                placeholder="Enter password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full"
