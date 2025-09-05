@@ -1,0 +1,123 @@
+# CleanTraffic PHP Protection - Security Configuration
+# Protects sensitive files and prevents unauthorized access
+
+# Prevent access to sensitive files
+<Files "*.json">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+<Files "*.txt">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+<Files "*.log">
+    Order Allow,Deny
+    Deny from all
+</Files>
+
+# Allow access to main files
+<Files "index.html">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "redirect.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+# Protect admin PHP files from direct access
+<Files "admin_auth.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "check_auth.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "get_config.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "update_config.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "get_visitors.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+<Files "test_api.php">
+    Order Allow,Deny
+    Allow from all
+</Files>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options nosniff
+    Header always set X-Frame-Options DENY
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive"
+</IfModule>
+
+# Disable directory browsing
+Options -Indexes
+
+# Prevent access to version control and backup files
+<FilesMatch "^\.">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+<FilesMatch "\.(bak|backup|old|orig|save|swp|tmp)$">
+    Order Allow,Deny
+    Deny from all
+</FilesMatch>
+
+# Error pages
+ErrorDocument 403 /index.html
+ErrorDocument 404 /index.html
+
+# PHP security settings
+<IfModule mod_php5.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_flag expose_php Off
+</IfModule>
+
+<IfModule mod_php7.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_flag expose_php Off
+</IfModule>
+
+<IfModule mod_php8.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_flag expose_php Off
+</IfModule>
+
+# Cache control for admin interface
+<Files "index.html">
+    <IfModule mod_headers.c>
+        Header set Cache-Control "no-cache, no-store, must-revalidate"
+        Header set Pragma "no-cache"
+        Header set Expires "0"
+    </IfModule>
+</Files>
+
+# Prevent hotlinking
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP_REFERER} !^$
+    RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
+    RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
+</IfModule>
