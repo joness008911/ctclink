@@ -460,6 +460,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // CleanTraffic PHP Package Download
+  app.get('/download/cleantraffic-package', (req, res) => {
+    const path = require('path');
+    const packagePath = path.join(__dirname, '../client/public/CleanTraffic-PHP-Protection-Package.tar.gz');
+    const fileName = 'CleanTraffic-PHP-Protection-Package.tar.gz';
+    
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'application/gzip');
+    res.download(packagePath, fileName, (err) => {
+      if (err) {
+        console.error('Download error:', err);
+        res.status(404).send('File not found');
+      }
+    });
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
