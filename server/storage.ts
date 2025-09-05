@@ -6,9 +6,15 @@ import {
   type DetectionRules,
   type InsertDetectionRules,
   type ApiKey,
-  type InsertApiKey
+  type InsertApiKey,
+  users,
+  classifications,
+  detectionRules,
+  apiKeys
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { db } from "./db";
+import { eq, desc, sql, count } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -279,4 +285,211 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export class DatabaseStorage implements IStorage {
+  constructor() {
+    this.initializeDefaults();
+  }
+
+  private async initializeDefaults() {
+    try {
+      // Check if admin user exists, if not create one
+      const existingAdmin = await this.getUserByUsername("Mark02");
+      if (!existingAdmin) {
+        await this.createUser({
+          username: "Mark02",
+          password: "Markstorey@2015" // In production, this should be hashed
+        });
+      }
+
+      // Check if detection rules exist, if not create defaults
+      const existingRules = await this.getDetectionRules();
+      if (!existingRules) {
+        await this.updateDetectionRules({
+          name: "Default Rules",
+          enabled: true,
+          rules: {
+            isp: true,
+            mobile: true,
+            vpn: true,
+            proxy: true,
+            tor: true,
+            datacenter: true
+          }
+        });
+      }
+    } catch (error) {
+      console.log("Database initialization will be handled on first request");
+    }
+  }
+
+  async getUser(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const [newUser] = await db.insert(users).values(user).returning();
+    return newUser;
+  }
+
+  async createClassification(classification: InsertClassification): Promise<Classification> {
+    const [newClassification] = await db.insert(classifications).values(classification).returning();
+    return newClassification;
+  }
+
+  async getRecentClassifications(limit: number = 10): Promise<Classification[]> {
+    const results = await db
+      .select()
+      .from(classifications)
+      .orderBy(desc(classifications.timestamp))
+      .limit(limit);
+    return results;
+  }
+
+  async getClassificationStats(): Promise<{
+    totalClassifications: number;
+    humanVisitors: number;
+    botTraffic: number;
+    apiRequests: number;
+  }> {
+    const [stats] = await db
+      .select({
+        total: count(),
+        humans: sql<number>`count(case when ${classifications.visitorType} = 'Human' then 1 end)`,
+        bots: sql<number>`count(case when ${classifications.visitorType} = 'Bot' then 1 end)`
+      })
+      .from(classifications);
+
+    return {
+      totalClassifications: stats.total,
+      humanVisitors: stats.humans || 0,
+      botTraffic: stats.bots || 0,
+      apiRequests: stats.total
+    };
+  }
+
+  async getDetectionRules(): Promise<DetectionRules | undefined> {
+    const [rules] = await db.select().from(detectionRules).limit(1);
+    return rules;
+  }
+
+  async updateDetectionRules(rules: InsertDetectionRules): Promise<DetectionRules> {
+    // Delete existing rules and insert new ones (simple approach for single rule set)
+    await db.delete(detectionRules);
+    const [newRules] = await db.insert(detectionRules).values(rules).returning();
+    return newRules;
+  }
+
+  async createApiKey(apiKey: InsertApiKey): Promise<ApiKey> {
+    // Calculate expiration date
+    let expiresAt: Date | null = null;
+    if (apiKey.expirationPeriod !== 'unlimited') {
+      const now = new Date();
+      switch (apiKey.expirationPeriod) {
+        case 'daily':
+          expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          break;
+        case 'weekly':
+          expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'monthly':
+          expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          break;
+      }
+    }
+
+    const [newApiKey] = await db.insert(apiKeys).values({
+      ...apiKey,
+      expiresAt
+    }).returning();
+    return newApiKey;
+  }
+
+  async getApiKeys(): Promise<ApiKey[]> {
+    return await db.select().from(apiKeys).orderBy(desc(apiKeys.createdAt));
+  }
+
+  async getApiKey(keyValue: string): Promise<ApiKey | undefined> {
+    const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.keyValue, keyValue));
+    return apiKey;
+  }
+
+  async deleteApiKey(id: string): Promise<boolean> {
+    const result = await db.delete(apiKeys).where(eq(apiKeys.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | undefined> {
+    const [updatedKey] = await db
+      .update(apiKeys)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(apiKeys.id, id))
+      .returning();
+    return updatedKey;
+  }
+
+  async incrementApiKeyUsage(keyValue: string): Promise<boolean> {
+    const result = await db
+      .update(apiKeys)
+      .set({
+        callCount: sql`${apiKeys.callCount} + 1`,
+        lastUsed: new Date()
+      })
+      .where(eq(apiKeys.keyValue, keyValue));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async pauseApiKey(id: string): Promise<boolean> {
+    const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    if (apiKey) {
+      const newStatus = apiKey.status === 'active' ? 'paused' : 'active';
+      await db
+        .update(apiKeys)
+        .set({ status: newStatus, updatedAt: new Date() })
+        .where(eq(apiKeys.id, id));
+      return true;
+    }
+    return false;
+  }
+
+  async renewApiKey(id: string): Promise<ApiKey | undefined> {
+    const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    if (apiKey) {
+      let expiresAt: Date | null = null;
+      if (apiKey.expirationPeriod !== 'unlimited') {
+        const now = new Date();
+        switch (apiKey.expirationPeriod) {
+          case 'daily':
+            expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            break;
+          case 'weekly':
+            expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'monthly':
+            expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+            break;
+        }
+      }
+
+      const [renewed] = await db
+        .update(apiKeys)
+        .set({
+          expiresAt,
+          callCount: 0,
+          status: 'active',
+          updatedAt: new Date()
+        })
+        .where(eq(apiKeys.id, id))
+        .returning();
+      return renewed;
+    }
+    return undefined;
+  }
+}
+
+export const storage = new DatabaseStorage();
