@@ -13,6 +13,9 @@ import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Trust proxy to get real client IP
+  app.set('trust proxy', true);
+  
   // Session middleware
   app.use(session({
     secret: process.env.SESSION_SECRET || 'antibot-detection-secret-key-change-in-production',
@@ -166,7 +169,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   async function handleClassification(req: any, res: any) {
     try {
-      const clientIp = (req.ip || req.connection?.remoteAddress || (Array.isArray(req.headers['x-forwarded-for']) ? req.headers['x-forwarded-for'][0] : req.headers['x-forwarded-for']) || 'unknown') as string;
+      // Get real visitor IP, not internal server IP
+      let clientIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection?.remoteAddress || req.ip || 'unknown';
+      
+      // Handle comma-separated forwarded IPs (take the first one)
+      if (typeof clientIp === 'string' && clientIp.includes(',')) {
+        clientIp = clientIp.split(',')[0].trim();
+      }
+      
+      // Convert array to string if needed
+      if (Array.isArray(clientIp)) {
+        clientIp = clientIp[0];
+      }
       const userAgent = req.headers['user-agent'] || '';
       
       // Parse user agent for browser and device info
@@ -199,18 +213,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           locationData = await geoResponse.json();
           
           // Determine visitor type based on connection type
-          const connType = locationData.connection_type?.toLowerCase() || '';
-          connectionType = locationData.connection_type || 'Unknown';
+          const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
+          connectionType = locationData.as_info?.as_usage_type || 'Unknown';
           
-          if (connType.includes('isp') || connType.includes('mobile')) {
+          if (usageType.includes('isp') || usageType.includes('mob')) {
             visitorType = 'Human';
-            detectionMethod = connType.includes('mobile') ? 'Mobile ISP' : 'ISP Connection';
-          } else if (connType.includes('vpn') || connType.includes('proxy') || 
-                   connType.includes('tor') || connType.includes('datacenter')) {
+            detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP/MOB'}`;
+          } else if (usageType.includes('dch') || usageType.includes('vpn') || 
+                   usageType.includes('proxy') || usageType.includes('tor')) {
             visitorType = 'Bot';
-            detectionMethod = connType.includes('vpn') ? 'VPN Detected' : 
-                           connType.includes('proxy') ? 'Proxy Detected' :
-                           connType.includes('tor') ? 'Tor Network' : 'Datacenter';
+            detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'DCH/VPN'}`;
+          } else {
+            // Default classification based on other indicators
+            if (locationData.isp?.toLowerCase().includes('datacenter') || 
+                locationData.isp?.toLowerCase().includes('hosting') ||
+                locationData.isp?.toLowerCase().includes('cloud')) {
+              visitorType = 'Bot';
+              detectionMethod = 'ISP Pattern: Datacenter/Hosting';
+            } else {
+              visitorType = 'Human';
+              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
+            }
           }
         }
       } catch (geoError) {
@@ -219,10 +242,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const classification = await storage.createClassification({
         ipAddress: clientIp,
-        location: locationData.city && locationData.country_name ? 
-                 `${locationData.city}, ${locationData.country_name}` : 'Unknown',
+        location: locationData.city_name && locationData.country_name ? 
+                 `${locationData.city_name}, ${locationData.country_name}` : 'Unknown',
         country: locationData.country_name || 'Unknown',
-        city: locationData.city || 'Unknown',
+        city: locationData.city_name || 'Unknown',
         visitorType,
         detectionMethod,
         connectionType,
