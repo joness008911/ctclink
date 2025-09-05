@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Key, Plus, Trash2, Copy, Eye, EyeOff } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Key, Plus, Trash2, Copy, Eye, EyeOff, Pause, Play, RefreshCw, Calendar, BarChart3, Settings } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -16,23 +18,23 @@ export default function ApiKeyManagement() {
   const [showForm, setShowForm] = useState(false);
   const [keyName, setKeyName] = useState("");
   const [keyValue, setKeyValue] = useState("");
+  const [expirationPeriod, setExpirationPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'unlimited'>('unlimited');
+  const [callLimit, setCallLimit] = useState(1000);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
 
   const { data: apiKeys = [], isLoading } = useQuery<ApiKey[]>({
     queryKey: ["/api/api-keys"],
-    refetchInterval: 10000,
+    refetchInterval: 5000, // Refresh more frequently to show real-time updates
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: async (data: { keyName: string; keyValue: string }) => {
+    mutationFn: async (data: { keyName: string; keyValue: string; expirationPeriod: string; callLimit: number }) => {
       const response = await apiRequest("POST", "/api/api-keys", data);
       return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
-      setKeyName("");
-      setKeyValue("");
-      setShowForm(false);
+      resetForm();
       toast({
         title: "Success",
         description: "API key created successfully",
@@ -68,10 +70,60 @@ export default function ApiKeyManagement() {
     },
   });
 
+  const pauseKeyMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiRequest("POST", `/api/api-keys/${id}/pause`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
+      toast({
+        title: "Success",
+        description: "API key status updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update API key status",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const renewKeyMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await apiRequest("POST", `/api/api-keys/${id}/renew`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
+      toast({
+        title: "Success",
+        description: "API key renewed successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to renew API key",
+        variant: "destructive",
+      });
+    },
+  });
+
   const generateRandomKey = () => {
     const prefix = "ak_";
     const randomPart = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     setKeyValue(prefix + randomPart);
+  };
+
+  const resetForm = () => {
+    setShowForm(false);
+    setKeyName("");
+    setKeyValue("");
+    setExpirationPeriod('unlimited');
+    setCallLimit(1000);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -84,7 +136,12 @@ export default function ApiKeyManagement() {
       });
       return;
     }
-    createKeyMutation.mutate({ keyName: keyName.trim(), keyValue: keyValue.trim() });
+    createKeyMutation.mutate({ 
+      keyName: keyName.trim(), 
+      keyValue: keyValue.trim(),
+      expirationPeriod,
+      callLimit
+    });
   };
 
   const copyToClipboard = (text: string) => {
@@ -116,6 +173,45 @@ export default function ApiKeyManagement() {
     return key.substring(0, 4) + "*".repeat(key.length - 8) + key.substring(key.length - 4);
   };
 
+  const getStatusBadge = (apiKey: ApiKey) => {
+    const now = new Date();
+    const isExpired = apiKey.expiresAt && now > new Date(apiKey.expiresAt);
+    const isLimitReached = apiKey.callCount >= apiKey.callLimit;
+    
+    if (isExpired) {
+      return <Badge variant="destructive">Expired</Badge>;
+    }
+    if (apiKey.status === 'paused') {
+      return <Badge variant="secondary">Paused</Badge>;
+    }
+    if (isLimitReached) {
+      return <Badge variant="destructive">Limit Reached</Badge>;
+    }
+    if (apiKey.status === 'active') {
+      return <Badge variant="default">Active</Badge>;
+    }
+    return <Badge variant="outline">{apiKey.status}</Badge>;
+  };
+
+  const getExpirationText = (apiKey: ApiKey) => {
+    if (apiKey.expirationPeriod === 'unlimited') return 'Never expires';
+    if (!apiKey.expiresAt) return 'No expiration set';
+    
+    const expiryDate = new Date(apiKey.expiresAt);
+    const now = new Date();
+    const diffTime = expiryDate.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) return 'Expired';
+    if (diffDays === 0) return 'Expires today';
+    if (diffDays === 1) return 'Expires tomorrow';
+    return `Expires in ${diffDays} days`;
+  };
+
+  const getUsagePercentage = (apiKey: ApiKey) => {
+    return Math.min((apiKey.callCount / apiKey.callLimit) * 100, 100);
+  };
+
   if (isLoading) {
     return (
       <Card className="shadow border border-border">
@@ -125,7 +221,7 @@ export default function ApiKeyManagement() {
         <CardContent>
           <div className="animate-pulse space-y-4">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-16 bg-gray-200 rounded"></div>
+              <div key={i} className="h-32 bg-gray-200 rounded"></div>
             ))}
           </div>
         </CardContent>
@@ -154,20 +250,59 @@ export default function ApiKeyManagement() {
           </Button>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4 border border-border rounded-lg p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="keyName" className="block text-sm font-medium text-foreground mb-2">
+                  Key Name
+                </Label>
+                <Input
+                  id="keyName"
+                  type="text"
+                  placeholder="e.g., Production API"
+                  value={keyName}
+                  onChange={(e) => setKeyName(e.target.value)}
+                  className="w-full"
+                  data-testid="input-key-name"
+                  disabled={createKeyMutation.isPending}
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="expirationPeriod" className="block text-sm font-medium text-foreground mb-2">
+                  Expiration Period
+                </Label>
+                <Select value={expirationPeriod} onValueChange={(value: any) => setExpirationPeriod(value)}>
+                  <SelectTrigger data-testid="select-expiration">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unlimited">Unlimited</SelectItem>
+                    <SelectItem value="daily">Daily (24 hours)</SelectItem>
+                    <SelectItem value="weekly">Weekly (7 days)</SelectItem>
+                    <SelectItem value="monthly">Monthly (30 days)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
             <div>
-              <Label htmlFor="keyName" className="block text-sm font-medium text-foreground mb-2">
-                Key Name
+              <Label htmlFor="callLimit" className="block text-sm font-medium text-foreground mb-2">
+                Call Limit
               </Label>
-              <Input
-                id="keyName"
-                type="text"
-                placeholder="e.g., Production API"
-                value={keyName}
-                onChange={(e) => setKeyName(e.target.value)}
-                className="w-full"
-                data-testid="input-key-name"
-                disabled={createKeyMutation.isPending}
-              />
+              <Select value={callLimit.toString()} onValueChange={(value) => setCallLimit(parseInt(value))}>
+                <SelectTrigger data-testid="select-call-limit">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100 calls</SelectItem>
+                  <SelectItem value="500">500 calls</SelectItem>
+                  <SelectItem value="1000">1,000 calls</SelectItem>
+                  <SelectItem value="5000">5,000 calls</SelectItem>
+                  <SelectItem value="10000">10,000 calls</SelectItem>
+                  <SelectItem value="50000">50,000 calls</SelectItem>
+                  <SelectItem value="100000">100,000 calls</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             
             <div>
@@ -208,11 +343,7 @@ export default function ApiKeyManagement() {
               <Button 
                 type="button"
                 variant="outline"
-                onClick={() => {
-                  setShowForm(false);
-                  setKeyName("");
-                  setKeyValue("");
-                }}
+                onClick={resetForm}
                 disabled={createKeyMutation.isPending}
                 data-testid="button-cancel-key"
               >
@@ -241,18 +372,40 @@ export default function ApiKeyManagement() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h5 className="font-medium text-foreground">{apiKey.keyName}</h5>
-                    <p className="text-sm text-muted-foreground">
-                      Created: {new Date(apiKey.createdAt).toLocaleDateString()}
-                    </p>
+                    <div className="text-sm text-muted-foreground space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-3 w-3" />
+                        <span>Created: {new Date(apiKey.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-3 w-3" />
+                        <span>{getExpirationText(apiKey)}</span>
+                      </div>
+                      {apiKey.lastUsed && (
+                        <div className="flex items-center gap-2">
+                          <BarChart3 className="h-3 w-3" />
+                          <span>Last used: {new Date(apiKey.lastUsed).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Badge variant={apiKey.enabled ? "default" : "secondary"}>
-                      {apiKey.enabled ? "Active" : "Disabled"}
-                    </Badge>
-                    <Badge variant="outline">
-                      {apiKey.usageCount} uses
+                    {getStatusBadge(apiKey)}
+                    <Badge variant="outline" className="text-xs">
+                      {apiKey.expirationPeriod}
                     </Badge>
                   </div>
+                </div>
+
+                {/* Usage Progress Bar */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">API Calls</span>
+                    <span className="text-foreground font-medium">
+                      {apiKey.callCount.toLocaleString()} / {apiKey.callLimit.toLocaleString()}
+                    </span>
+                  </div>
+                  <Progress value={getUsagePercentage(apiKey)} className="h-2" />
                 </div>
                 
                 <div className="flex items-center space-x-2">
@@ -278,15 +431,35 @@ export default function ApiKeyManagement() {
                 </div>
                 
                 <div className="flex items-center justify-between">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => copyApiUrl(apiKey.keyValue)}
-                    className="text-xs"
-                    data-testid={`button-copy-url-${apiKey.id}`}
-                  >
-                    Copy API URL
-                  </Button>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => copyApiUrl(apiKey.keyValue)}
+                      className="text-xs"
+                      data-testid={`button-copy-url-${apiKey.id}`}
+                    >
+                      Copy API URL
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => pauseKeyMutation.mutate(apiKey.id)}
+                      disabled={pauseKeyMutation.isPending}
+                      data-testid={`button-pause-key-${apiKey.id}`}
+                    >
+                      {apiKey.status === 'paused' ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => renewKeyMutation.mutate(apiKey.id)}
+                      disabled={renewKeyMutation.isPending}
+                      data-testid={`button-renew-key-${apiKey.id}`}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
+                  </div>
                   <Button
                     variant="destructive"
                     size="sm"

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, boolean, jsonb, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -38,7 +38,12 @@ export const apiKeys = pgTable("api_keys", {
   keyName: text("key_name").notNull(),
   keyValue: text("key_value").notNull().unique(),
   enabled: boolean("enabled").default(true).notNull(),
-  usageCount: text("usage_count").default("0").notNull(),
+  status: text("status").default("active").notNull(), // active, paused, expired
+  expirationPeriod: text("expiration_period").default("unlimited").notNull(), // daily, weekly, monthly, unlimited
+  expiresAt: timestamp("expires_at"),
+  callLimit: integer("call_limit").default(1000).notNull(),
+  callCount: integer("call_count").default(0).notNull(),
+  lastUsed: timestamp("last_used"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -62,6 +67,11 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
+  lastUsed: true,
+  callCount: true,
+}).extend({
+  expirationPeriod: z.enum(["daily", "weekly", "monthly", "unlimited"]).default("unlimited"),
+  callLimit: z.number().min(100).max(100000).default(1000),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

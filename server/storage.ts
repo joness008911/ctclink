@@ -31,7 +31,10 @@ export interface IStorage {
   getApiKeys(): Promise<ApiKey[]>;
   getApiKey(keyValue: string): Promise<ApiKey | undefined>;
   deleteApiKey(id: string): Promise<boolean>;
-  incrementApiKeyUsage(keyValue: string): Promise<void>;
+  updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | undefined>;
+  incrementApiKeyUsage(keyValue: string): Promise<boolean>;
+  pauseApiKey(id: string): Promise<boolean>;
+  renewApiKey(id: string): Promise<ApiKey | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -148,10 +151,33 @@ export class MemStorage implements IStorage {
 
   async createApiKey(insertApiKey: InsertApiKey): Promise<ApiKey> {
     const id = randomUUID();
+    
+    // Calculate expiration date
+    let expiresAt: Date | null = null;
+    if (insertApiKey.expirationPeriod !== 'unlimited') {
+      const now = new Date();
+      switch (insertApiKey.expirationPeriod) {
+        case 'daily':
+          expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          break;
+        case 'weekly':
+          expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'monthly':
+          expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+          break;
+      }
+    }
+    
     const apiKey: ApiKey = {
       ...insertApiKey,
       enabled: insertApiKey.enabled ?? true,
-      usageCount: insertApiKey.usageCount ?? "0",
+      status: insertApiKey.status ?? 'active',
+      expirationPeriod: insertApiKey.expirationPeriod ?? 'unlimited',
+      expiresAt,
+      callLimit: insertApiKey.callLimit ?? 1000,
+      callCount: 0,
+      lastUsed: null,
       id,
       createdAt: new Date(),
       updatedAt: new Date()
@@ -173,14 +199,83 @@ export class MemStorage implements IStorage {
     return this.apiKeys.delete(id);
   }
 
-  async incrementApiKeyUsage(keyValue: string): Promise<void> {
+  async updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | undefined> {
+    const apiKey = this.apiKeys.get(id);
+    if (apiKey) {
+      const updatedKey = { ...apiKey, ...updates, updatedAt: new Date() };
+      this.apiKeys.set(id, updatedKey);
+      return updatedKey;
+    }
+    return undefined;
+  }
+
+  async incrementApiKeyUsage(keyValue: string): Promise<boolean> {
     const apiKey = await this.getApiKey(keyValue);
     if (apiKey) {
-      const currentUsage = parseInt(apiKey.usageCount) || 0;
-      apiKey.usageCount = (currentUsage + 1).toString();
+      // Check if key is expired
+      if (apiKey.expiresAt && new Date() > apiKey.expiresAt) {
+        await this.updateApiKey(apiKey.id, { status: 'expired' });
+        return false;
+      }
+      
+      // Check if call limit reached
+      if (apiKey.callCount >= apiKey.callLimit) {
+        return false;
+      }
+      
+      // Check if key is paused or inactive
+      if (apiKey.status !== 'active') {
+        return false;
+      }
+      
+      // Increment usage
+      apiKey.callCount += 1;
+      apiKey.lastUsed = new Date();
       apiKey.updatedAt = new Date();
       this.apiKeys.set(apiKey.id, apiKey);
+      return true;
     }
+    return false;
+  }
+
+  async pauseApiKey(id: string): Promise<boolean> {
+    const apiKey = this.apiKeys.get(id);
+    if (apiKey) {
+      apiKey.status = apiKey.status === 'paused' ? 'active' : 'paused';
+      apiKey.updatedAt = new Date();
+      this.apiKeys.set(id, apiKey);
+      return true;
+    }
+    return false;
+  }
+
+  async renewApiKey(id: string): Promise<ApiKey | undefined> {
+    const apiKey = this.apiKeys.get(id);
+    if (apiKey) {
+      let expiresAt: Date | null = null;
+      if (apiKey.expirationPeriod !== 'unlimited') {
+        const now = new Date();
+        switch (apiKey.expirationPeriod) {
+          case 'daily':
+            expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            break;
+          case 'weekly':
+            expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            break;
+          case 'monthly':
+            expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+            break;
+        }
+      }
+      
+      apiKey.expiresAt = expiresAt;
+      apiKey.callCount = 0; // Reset usage count
+      apiKey.status = 'active';
+      apiKey.updatedAt = new Date();
+      this.apiKeys.set(id, apiKey);
+      return apiKey;
+    }
+    return undefined;
   }
 }
 

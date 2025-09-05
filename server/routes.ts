@@ -113,13 +113,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
         keyName,
         keyValue,
         enabled: true,
-        usageCount: "0"
+        expirationPeriod: 'unlimited',
+        callLimit: 1000
       });
       
       res.json(apiKey);
     } catch (error) {
       console.error("Create API key error:", error);
       res.status(500).json({ message: "Failed to create API key" });
+    }
+  });
+
+  // Update API key (protected)
+  app.patch("/api/api-keys/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { keyName, expirationPeriod, callLimit, enabled, status } = req.body;
+      
+      const updatedKey = await storage.updateApiKey(id, {
+        keyName,
+        expirationPeriod,
+        callLimit,
+        enabled,
+        status
+      });
+      
+      if (!updatedKey) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json(updatedKey);
+    } catch (error) {
+      console.error("Update API key error:", error);
+      res.status(500).json({ message: "Failed to update API key" });
+    }
+  });
+
+  // Pause/Resume API key (protected)
+  app.post("/api/api-keys/:id/pause", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.pauseApiKey(id);
+      
+      if (!success) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json({ message: "API key status toggled successfully" });
+    } catch (error) {
+      console.error("Pause API key error:", error);
+      res.status(500).json({ message: "Failed to toggle API key status" });
+    }
+  });
+
+  // Renew API key (protected)
+  app.post("/api/api-keys/:id/renew", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const renewedKey = await storage.renewApiKey(id);
+      
+      if (!renewedKey) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json(renewedKey);
+    } catch (error) {
+      console.error("Renew API key error:", error);
+      res.status(500).json({ message: "Failed to renew API key" });
     }
   });
 
@@ -154,8 +214,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Increment usage count
-      await storage.incrementApiKeyUsage(apiKey);
+      // Check and increment usage count
+      const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
+      if (!usageAllowed) {
+        return res.status(429).json({ 
+          error: "API key expired, paused, or call limit reached",
+          status: "rate_limited"
+        });
+      }
     }
     
     // Continue with classification logic
@@ -169,20 +235,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   async function handleClassification(req: any, res: any) {
     try {
-      // Debug: Log all headers to understand what's available
-      console.log('Request headers:', {
-        'x-forwarded-for': req.headers['x-forwarded-for'],
-        'x-real-ip': req.headers['x-real-ip'],
-        'cf-connecting-ip': req.headers['cf-connecting-ip'],
-        'x-client-ip': req.headers['x-client-ip'],
-        'true-client-ip': req.headers['true-client-ip'],
-        'x-forwarded': req.headers['x-forwarded'],
-        'x-cluster-client-ip': req.headers['x-cluster-client-ip'],
-        'fastly-client-ip': req.headers['fastly-client-ip'],
-        'req.ip': req.ip,
-        'connection.remoteAddress': req.connection?.remoteAddress,
-        'socket.remoteAddress': req.socket?.remoteAddress
-      });
       
       // Try multiple methods to get real visitor IP
       let clientIp = req.headers['cf-connecting-ip'] || 
@@ -206,7 +258,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         clientIp = clientIp[0];
       }
       
-      console.log('Final detected IP:', clientIp);
       const userAgent = req.headers['user-agent'] || '';
       
       // Parse user agent for browser and device info
@@ -234,11 +285,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let connectionType = 'Unknown';
 
       try {
-        console.log(`Calling IP2Location API with IP: ${clientIp}`);
         const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
         if (geoResponse.ok) {
           locationData = await geoResponse.json();
-          console.log('IP2Location API response:', JSON.stringify(locationData, null, 2));
           
           // Determine visitor type based on connection type
           const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
@@ -263,8 +312,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
               detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
             }
           }
-        } else {
-          console.error('IP2Location API error:', geoResponse.status, geoResponse.statusText);
         }
       } catch (geoError) {
         console.error("Geolocation API error:", geoError);
@@ -295,7 +342,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isp: classification.isp || 'Unknown'
       };
       
-      console.log('Final response:', JSON.stringify(response, null, 2));
       res.json(response);
     } catch (error) {
       console.error("Classification error:", error);
