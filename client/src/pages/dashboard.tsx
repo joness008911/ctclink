@@ -6,6 +6,7 @@ import StatsCards from "@/components/stats-cards";
 import ClassificationTable from "@/components/classification-table";
 import DetectionRules from "@/components/detection-rules";
 import ApiKeyManagement from "@/components/api-key-management";
+import Ip2GeoKeyManagement from "@/components/ip2geo-key-management";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
@@ -104,6 +105,8 @@ export default function Dashboard() {
                   </Card>
 
                   <DetectionRules />
+
+                  <Ip2GeoKeyManagement />
 
                   <ApiKeyManagement />
 

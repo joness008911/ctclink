@@ -397,6 +397,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get IP2Geolocation API key status
+  app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
+    try {
+      const hasKey = !!process.env.IP2GEOLOCATION_API_KEY;
+      const keyPreview = process.env.IP2GEOLOCATION_API_KEY 
+        ? `${process.env.IP2GEOLOCATION_API_KEY.substring(0, 8)}...${process.env.IP2GEOLOCATION_API_KEY.slice(-4)}`
+        : null;
+      
+      res.json({ 
+        hasKey,
+        keyPreview,
+        lastUpdated: process.env.IP2GEO_KEY_UPDATED || 'Never'
+      });
+    } catch (error) {
+      console.error("Get IP2Geo key status error:", error);
+      res.status(500).json({ message: "Failed to fetch API key status" });
+    }
+  });
+
+  // Update IP2Geolocation API key
+  app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      
+      if (!apiKey || typeof apiKey !== 'string' || apiKey.length < 10) {
+        return res.status(400).json({ message: "Valid API key required" });
+      }
+
+      // Test the API key with a simple request
+      try {
+        const testResponse = await fetch(`https://api.ip2location.io/?key=${apiKey}&ip=8.8.8.8&format=json`);
+        const testData = await testResponse.json();
+        
+        if (!testResponse.ok || testData.error_code) {
+          return res.status(400).json({ 
+            message: "Invalid API key or API request failed",
+            error: testData.error_message || 'API key validation failed'
+          });
+        }
+      } catch (testError) {
+        return res.status(400).json({ 
+          message: "Failed to validate API key",
+          error: 'Could not connect to IP2Location API'
+        });
+      }
+
+      // Update the environment variable
+      process.env.IP2GEOLOCATION_API_KEY = apiKey;
+      process.env.IP2GEO_KEY_UPDATED = new Date().toISOString();
+      
+      const keyPreview = `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`;
+      
+      res.json({ 
+        message: "API key updated successfully",
+        keyPreview,
+        lastUpdated: process.env.IP2GEO_KEY_UPDATED
+      });
+    } catch (error) {
+      console.error("Update IP2Geo key error:", error);
+      res.status(500).json({ message: "Failed to update API key" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
