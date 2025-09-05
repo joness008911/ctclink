@@ -33,8 +33,8 @@ export default function Dashboard() {
         <header className="bg-background shadow-sm border-b border-border">
           <div className="flex items-center justify-between px-6 py-4">
             <div>
-              <h2 className="text-2xl font-bold text-foreground">Dashboard</h2>
-              <p className="text-muted-foreground">Real-time visitor classification monitoring</p>
+              <h2 className="text-2xl font-bold text-foreground">CleanTraffic Dashboard</h2>
+              <p className="text-muted-foreground">Pure, clean visitor data with real-time analytics</p>
             </div>
             <div className="flex items-center space-x-4">
               <div className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-medium">

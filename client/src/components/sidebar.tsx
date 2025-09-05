@@ -50,8 +50,8 @@ export default function Sidebar() {
             <Shield className="text-xl h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold">Classification Hub</h1>
-            <p className="text-sm opacity-80">Admin Dashboard</p>
+            <h1 className="text-lg font-semibold">CleanTraffic</h1>
+            <p className="text-sm opacity-80">Pure, clean visitor data</p>
           </div>
         </div>
       </div>

@@ -1,8 +1,8 @@
-# Anti-Bot Detection System
+# CleanTraffic - Pure, Clean Visitor Data
 
 ## Overview
 
-This is a full-stack web application for detecting and classifying bot traffic versus human visitors. The system provides real-time visitor classification monitoring with a dashboard interface for administrators to view statistics, manage detection rules, and monitor classification results. Built as an Express.js API backend with a React frontend using shadcn/ui components.
+CleanTraffic is a full-stack web application for detecting and classifying bot traffic versus human visitors. The system provides real-time visitor classification monitoring with a dashboard interface for administrators to view statistics, manage detection rules, and monitor classification results. Built as an Express.js API backend with a React frontend using shadcn/ui components.
 
 ## User Preferences
 
