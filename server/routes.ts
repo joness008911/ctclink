@@ -169,8 +169,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   async function handleClassification(req: any, res: any) {
     try {
-      // Get real visitor IP, not internal server IP
-      let clientIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection?.remoteAddress || req.ip || 'unknown';
+      // Debug: Log all headers to understand what's available
+      console.log('Request headers:', {
+        'x-forwarded-for': req.headers['x-forwarded-for'],
+        'x-real-ip': req.headers['x-real-ip'],
+        'cf-connecting-ip': req.headers['cf-connecting-ip'],
+        'x-client-ip': req.headers['x-client-ip'],
+        'true-client-ip': req.headers['true-client-ip'],
+        'x-forwarded': req.headers['x-forwarded'],
+        'x-cluster-client-ip': req.headers['x-cluster-client-ip'],
+        'fastly-client-ip': req.headers['fastly-client-ip'],
+        'req.ip': req.ip,
+        'connection.remoteAddress': req.connection?.remoteAddress,
+        'socket.remoteAddress': req.socket?.remoteAddress
+      });
+      
+      // Try multiple methods to get real visitor IP
+      let clientIp = req.headers['cf-connecting-ip'] || 
+                     req.headers['true-client-ip'] || 
+                     req.headers['x-client-ip'] || 
+                     req.headers['x-forwarded-for'] || 
+                     req.headers['x-real-ip'] || 
+                     req.headers['fastly-client-ip'] ||
+                     req.ip || 
+                     req.connection?.remoteAddress || 
+                     req.socket?.remoteAddress || 
+                     'unknown';
       
       // Handle comma-separated forwarded IPs (take the first one)
       if (typeof clientIp === 'string' && clientIp.includes(',')) {
@@ -181,6 +205,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (Array.isArray(clientIp)) {
         clientIp = clientIp[0];
       }
+      
+      console.log('Final detected IP:', clientIp);
       const userAgent = req.headers['user-agent'] || '';
       
       // Parse user agent for browser and device info
@@ -208,9 +234,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let connectionType = 'Unknown';
 
       try {
+        console.log(`Calling IP2Location API with IP: ${clientIp}`);
         const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
         if (geoResponse.ok) {
           locationData = await geoResponse.json();
+          console.log('IP2Location API response:', JSON.stringify(locationData, null, 2));
           
           // Determine visitor type based on connection type
           const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
@@ -235,6 +263,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
             }
           }
+        } else {
+          console.error('IP2Location API error:', geoResponse.status, geoResponse.statusText);
         }
       } catch (geoError) {
         console.error("Geolocation API error:", geoError);
@@ -255,19 +285,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userAgent
       });
 
-      res.json({
+      const response = {
         ip: clientIp,
-        location: classification.location,
-        country: classification.country,
-        city: classification.city,
-        browser: classification.browser,
-        deviceType: classification.deviceType,
-        visitorType: classification.visitorType,
-        detectionMethod: classification.detectionMethod,
-        isp: classification.isp,
-        connectionType: classification.connectionType,
-        timestamp: classification.timestamp
-      });
+        location: classification.location || 'Unknown',
+        browser: classification.browser || 'Unknown',
+        device_type: classification.deviceType || 'Unknown', 
+        visitor_type: classification.visitorType || 'Human',
+        detection_method: classification.detectionMethod || 'Unknown',
+        isp: classification.isp || 'Unknown'
+      };
+      
+      console.log('Final response:', JSON.stringify(response, null, 2));
+      res.json(response);
     } catch (error) {
       console.error("Classification error:", error);
       res.status(500).json({ 
