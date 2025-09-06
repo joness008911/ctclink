@@ -280,25 +280,25 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
         }
     }
     
-    // Check for duplicate within last 30 seconds only (much shorter window)
+    // Only prevent duplicate within last 2 seconds (browser quirks protection only)
     $isDuplicate = false;
     foreach ($visitors as $visitor) {
         if ($visitor['ip'] === $ip && $visitor['user_agent'] === $userAgent) {
             $visitorTime = strtotime($visitor['timestamp']);
-            if (($currentTime - $visitorTime) < 30) { // 30 seconds instead of 5 minutes
+            if (($currentTime - $visitorTime) < 2) { // Only 2 seconds to prevent browser double-requests
                 $isDuplicate = true;
                 break;
             }
         }
     }
     
-    // Only log if not a duplicate
+    // Log every visit unless it's a true browser duplicate (within 2 seconds)
     if (!$isDuplicate) {
         $visitors[] = $visitorData;
         
-        // Keep only last 1000 visitors to prevent file from growing too large
-        if (count($visitors) > 1000) {
-            $visitors = array_slice($visitors, -1000);
+        // Keep only last 5000 visitors to prevent file from growing too large (increased from 1000)
+        if (count($visitors) > 5000) {
+            $visitors = array_slice($visitors, -5000);
         }
         
         // Save back to file with atomic write for better reliability
