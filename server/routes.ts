@@ -462,22 +462,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // CleanTraffic PHP Package Download
   app.get('/download/cleantraffic-package', (req, res) => {
-    const fs = require('fs');
-    const packagePath = './CleanTraffic-PHP-Protection-Package.tar.gz';
-    const fileName = 'CleanTraffic-PHP-Protection-Package.tar.gz';
-    
-    // Check if file exists
-    if (!fs.existsSync(packagePath)) {
-      return res.status(404).send('File not found');
-    }
-    
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.setHeader('Content-Type', 'application/gzip');
-    res.sendFile(packagePath, { root: process.cwd() }, (err) => {
-      if (err) {
-        console.error('Download error:', err);
-        res.status(404).send('File not found');
-      }
+    import('fs').then(fs => {
+      import('path').then(path => {
+        const packagePath = path.resolve('./CleanTraffic-PHP-Protection-Package.tar.gz');
+        const fileName = 'CleanTraffic-PHP-Protection-Package.tar.gz';
+        
+        // Check if file exists
+        if (!fs.existsSync(packagePath)) {
+          return res.status(404).send('File not found');
+        }
+        
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+        res.setHeader('Content-Type', 'application/gzip');
+        res.sendFile(packagePath, (err) => {
+          if (err) {
+            console.error('Download error:', err);
+            res.status(404).send('File not found');
+          }
+        });
+      });
     });
   });
 
