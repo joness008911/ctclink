@@ -462,13 +462,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // CleanTraffic PHP Package Download
   app.get('/download/cleantraffic-package', (req, res) => {
-    const path = require('path');
-    const packagePath = path.join(__dirname, '../client/public/CleanTraffic-PHP-Protection-Package.tar.gz');
+    const fs = require('fs');
+    const packagePath = './CleanTraffic-PHP-Protection-Package.tar.gz';
     const fileName = 'CleanTraffic-PHP-Protection-Package.tar.gz';
+    
+    // Check if file exists
+    if (!fs.existsSync(packagePath)) {
+      return res.status(404).send('File not found');
+    }
     
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', 'application/gzip');
-    res.download(packagePath, fileName, (err) => {
+    res.sendFile(packagePath, { root: process.cwd() }, (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).send('File not found');
