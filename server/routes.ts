@@ -216,6 +216,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Public classification endpoint (supports API key)
   app.get("/api/classify", async (req, res) => {
     const apiKey = req.query.api_key as string;
+    let limitReached = false;
     
     // Check if API key is provided and valid
     if (apiKey) {
@@ -230,23 +231,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check and increment usage count
       const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
       if (!usageAllowed) {
-        return res.status(429).json({ 
-          error: "API key expired, paused, or call limit reached",
-          status: "rate_limited"
-        });
+        // Don't return error - classify as Bot instead (forces bot URL redirect)
+        limitReached = true;
       }
     }
     
     // Continue with classification logic
-    return handleClassification(req, res);
+    return handleClassification(req, res, limitReached);
   });
 
   // Public classification endpoint (POST)
   app.post("/api/classify", async (req, res) => {
-    return handleClassification(req, res);
+    return handleClassification(req, res, false);
   });
 
-  async function handleClassification(req: any, res: any) {
+  async function handleClassification(req: any, res: any, limitReached: boolean = false) {
     try {
       
       // Try multiple methods to get real visitor IP
@@ -297,37 +296,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let detectionMethod = 'Unknown';
       let connectionType = 'Unknown';
 
-      try {
-        const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
-        if (geoResponse.ok) {
-          locationData = await geoResponse.json();
-          
-          // Determine visitor type based on connection type
-          const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
-          connectionType = locationData.as_info?.as_usage_type || 'Unknown';
-          
-          if (usageType.includes('isp') || usageType.includes('mob')) {
-            visitorType = 'Human';
-            detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP/MOB'}`;
-          } else if (usageType.includes('dch') || usageType.includes('vpn') || 
-                   usageType.includes('proxy') || usageType.includes('tor')) {
-            visitorType = 'Bot';
-            detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'DCH/VPN'}`;
-          } else {
-            // Default classification based on other indicators
-            if (locationData.isp?.toLowerCase().includes('datacenter') || 
-                locationData.isp?.toLowerCase().includes('hosting') ||
-                locationData.isp?.toLowerCase().includes('cloud')) {
-              visitorType = 'Bot';
-              detectionMethod = 'ISP Pattern: Datacenter/Hosting';
-            } else {
+      // If API call limit reached, classify as Bot immediately (revenue protection)
+      if (limitReached) {
+        visitorType = 'Bot';
+        detectionMethod = 'API Limit Reached - Classified as Bot';
+        connectionType = 'Limit Exceeded';
+        console.log(`API limit reached - classifying visitor ${clientIp} as Bot`);
+      } else {
+        // Normal classification with IP2Geo API
+        try {
+          const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
+          if (geoResponse.ok) {
+            locationData = await geoResponse.json();
+            
+            // Determine visitor type based on connection type
+            const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
+            connectionType = locationData.as_info?.as_usage_type || 'Unknown';
+            
+            if (usageType.includes('isp') || usageType.includes('mob')) {
               visitorType = 'Human';
-              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
+              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP/MOB'}`;
+            } else if (usageType.includes('dch') || usageType.includes('vpn') || 
+                     usageType.includes('proxy') || usageType.includes('tor')) {
+              visitorType = 'Bot';
+              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'DCH/VPN'}`;
+            } else {
+              // Default classification based on other indicators
+              if (locationData.isp?.toLowerCase().includes('datacenter') || 
+                  locationData.isp?.toLowerCase().includes('hosting') ||
+                  locationData.isp?.toLowerCase().includes('cloud')) {
+                visitorType = 'Bot';
+                detectionMethod = 'ISP Pattern: Datacenter/Hosting';
+              } else {
+                visitorType = 'Human';
+                detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
+              }
             }
           }
+        } catch (geoError) {
+          console.error("Geolocation API error:", geoError);
         }
-      } catch (geoError) {
-        console.error("Geolocation API error:", geoError);
       }
 
       const classification = await storage.createClassification({
