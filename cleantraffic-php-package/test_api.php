@@ -17,7 +17,8 @@ if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated']
 }
 
 $CLEANTRAFFIC_API_ENDPOINT = 'https://b5c9b90c-2b1a-4515-8f6e-08614985a083-00-1nd7hrl46szbn.worf.replit.dev/api/classify';
-$API_KEY_FILE = __DIR__ . '/api_key.txt';
+$BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
+$API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 
 try {
     // Check if API key exists

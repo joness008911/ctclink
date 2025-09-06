@@ -16,9 +16,10 @@ if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated']
     exit();
 }
 
-$REDIRECT_URL_FILE = __DIR__ . '/redirect_url.txt';
-$BOT_URL_FILE = __DIR__ . '/bot_url.txt';
-$API_KEY_FILE = __DIR__ . '/api_key.txt';
+$BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
+$REDIRECT_URL_FILE = $BASE_DIR . '/redirect_url.txt';
+$BOT_URL_FILE = $BASE_DIR . '/bot_url.txt';
+$API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 
 $config = [
     'humanUrl' => '',

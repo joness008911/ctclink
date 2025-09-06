@@ -21,14 +21,15 @@ header('Cache-Control: no-cache, no-store, must-revalidate');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// Configuration
+// Configuration - Dynamic path detection for root OR subfolder installation
+$BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
 $CLEANTRAFFIC_API_ENDPOINT = 'https://b5c9b90c-2b1a-4515-8f6e-08614985a083-00-1nd7hrl46szbn.worf.replit.dev/api/classify';
 $DEFAULT_BOT_URL = 'https://google.com';
 $DEFAULT_HUMAN_URL = 'https://example.com';
-$VISITORS_FILE = __DIR__ . '/visitors.json';
-$REDIRECT_URL_FILE = __DIR__ . '/redirect_url.txt';
-$BOT_URL_FILE = __DIR__ . '/bot_url.txt';
-$API_KEY_FILE = __DIR__ . '/api_key.txt';
+$VISITORS_FILE = $BASE_DIR . '/visitors.json';
+$REDIRECT_URL_FILE = $BASE_DIR . '/redirect_url.txt';
+$BOT_URL_FILE = $BASE_DIR . '/bot_url.txt';
+$API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 $MAX_RETRIES = 3;
 
 // ANTI-CRAWLING: Immediate bot detection for social media crawlers

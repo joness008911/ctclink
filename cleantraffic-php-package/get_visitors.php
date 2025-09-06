@@ -16,7 +16,8 @@ if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated']
     exit();
 }
 
-$VISITORS_FILE = __DIR__ . '/visitors.json';
+$BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
+$VISITORS_FILE = $BASE_DIR . '/visitors.json';
 
 try {
     $visitors = [];

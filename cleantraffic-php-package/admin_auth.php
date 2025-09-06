@@ -9,7 +9,8 @@ session_start();
 header('Content-Type: application/json');
 header('X-Robots-Tag: noindex, nofollow');
 
-$PASSWORD_FILE = __DIR__ . '/admin_password.txt';
+$BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
+$PASSWORD_FILE = $BASE_DIR . '/admin_password.txt';
 $DEFAULT_PASSWORD = 'admin123';
 
 /**
