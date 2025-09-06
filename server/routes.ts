@@ -97,10 +97,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create API key (protected)
   app.post("/api/api-keys", requireAuth, async (req, res) => {
     try {
-      const { keyName, keyValue } = req.body;
+      const { keyName, keyValue, expirationPeriod, callLimit } = req.body;
       
       if (!keyName || !keyValue) {
         return res.status(400).json({ message: "Key name and value are required" });
+      }
+
+      // Validate expirationPeriod
+      const validPeriods = ['daily', 'weekly', 'monthly', 'unlimited'];
+      const period = expirationPeriod || 'unlimited';
+      if (!validPeriods.includes(period)) {
+        return res.status(400).json({ message: "Invalid expiration period" });
+      }
+
+      // Validate callLimit
+      const limit = parseInt(callLimit) || 1000;
+      if (limit < 100 || limit > 100000) {
+        return res.status(400).json({ message: "Call limit must be between 100 and 100,000" });
       }
 
       // Check if key already exists
@@ -113,8 +126,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         keyName,
         keyValue,
         enabled: true,
-        expirationPeriod: 'unlimited',
-        callLimit: 1000
+        expirationPeriod: period,
+        callLimit: limit
       });
       
       res.json(apiKey);
