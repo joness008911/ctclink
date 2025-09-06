@@ -1116,6 +1116,7 @@
             html += '<th><i class="fas fa-map-marker-alt"></i> Location</th>';
             html += '<th><i class="fas fa-tags"></i> Classification</th>';
             html += '<th><i class="fas fa-desktop"></i> Browser</th>';
+            html += '<th><i class="fas fa-wifi"></i> ISP</th>';
             html += '<th><i class="fas fa-exclamation-triangle"></i> Status</th>';
             html += '</tr></thead><tbody>';
 
@@ -1132,6 +1133,7 @@
                     <td>${visitor.location || 'Unknown'}</td>
                     <td><span class="classification ${classification}">${classification}</span></td>
                     <td>${visitor.browser || 'Unknown'}</td>
+                    <td>${visitor.isp || 'Unknown'}</td>
                     <td><span class="status ${statusClass}">${statusText}</span></td>
                 </tr>`;
             });

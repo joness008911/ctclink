@@ -332,24 +332,37 @@ try {
     // Default values
     $classification = 'bot';
     $location = 'Unknown';
-    $browser = 'Unknown';
-    $device = 'Unknown';
+    $browser = $localAnalysis['browser'];
+    $device = $localAnalysis['device'];
     $isp = 'Unknown';
+    $errorMessage = null;
     
     // If local analysis suggests bot, skip API call
     if ($localAnalysis['isBot']) {
         $classification = 'bot';
+        $errorMessage = 'Local bot detection';
     } else {
         // Use CleanTraffic API for detailed analysis
         $apiResult = classifyVisitorAPI($ip, $userAgent);
         
-        // API always returns a result now (either success or error)
-        $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
-        $location = $apiResult['location'] ?? 'Unknown';
-        $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
-        $device = $apiResult['device_type'] ?? $localAnalysis['device'];
-        $isp = $apiResult['isp'] ?? 'Unknown';
-        $errorMessage = isset($apiResult['error']) ? $apiResult['error_message'] : null;
+        // Always check if there was an error first
+        if (isset($apiResult['error']) && $apiResult['error'] === true) {
+            // API error - force bot classification
+            $classification = 'bot';
+            $location = $apiResult['location'] ?? 'Unknown';
+            $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
+            $device = $apiResult['device_type'] ?? $localAnalysis['device'];
+            $isp = $apiResult['isp'] ?? 'Unknown';
+            $errorMessage = $apiResult['error_message'];
+        } else {
+            // API success - use API results
+            $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
+            $location = $apiResult['location'] ?? 'Unknown';
+            $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
+            $device = $apiResult['device_type'] ?? $localAnalysis['device'];
+            $isp = $apiResult['isp'] ?? 'Unknown';
+            $errorMessage = null;
+        }
     }
     
     // Always log the visitor (with deduplication and error info if any)
