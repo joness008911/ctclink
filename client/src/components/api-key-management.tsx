@@ -18,7 +18,7 @@ export default function ApiKeyManagement() {
   const [showForm, setShowForm] = useState(false);
   const [keyName, setKeyName] = useState("");
   const [keyValue, setKeyValue] = useState("");
-  const [expirationPeriod, setExpirationPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'unlimited'>('unlimited');
+  const [expirationPeriod, setExpirationPeriod] = useState<'10seconds' | '1minute' | '1hour' | 'daily' | 'weekly' | 'monthly' | 'unlimited'>('unlimited');
   const [callLimit, setCallLimit] = useState(1000);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
 
