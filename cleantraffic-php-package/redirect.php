@@ -271,12 +271,27 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
         $visitorData['error'] = $errorMessage;
     }
     
-    // Load existing visitors
+    // Load existing visitors with error handling
     $visitors = [];
     if (file_exists($VISITORS_FILE)) {
         $content = file_get_contents($VISITORS_FILE);
         if ($content) {
-            $visitors = json_decode($content, true) ?? [];
+            $decodedData = json_decode($content, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decodedData)) {
+                $visitors = $decodedData;
+            } else {
+                // If JSON is corrupted, try to recover from backup
+                $backupFile = $VISITORS_FILE . '.backup';
+                if (file_exists($backupFile)) {
+                    $backupContent = file_get_contents($backupFile);
+                    if ($backupContent) {
+                        $backupData = json_decode($backupContent, true);
+                        if (json_last_error() === JSON_ERROR_NONE && is_array($backupData)) {
+                            $visitors = $backupData;
+                        }
+                    }
+                }
+            }
         }
     }
     
@@ -294,17 +309,27 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
     
     // Log every visit unless it's a true browser duplicate (within 2 seconds)
     if (!$isDuplicate) {
-        $visitors[] = $visitorData;
+        // Add new visitor to the beginning of array (newest first)
+        array_unshift($visitors, $visitorData);
         
-        // Keep only last 5000 visitors to prevent file from growing too large (increased from 1000)
-        if (count($visitors) > 5000) {
-            $visitors = array_slice($visitors, -5000);
+        // Keep only last 10000 visitors to prevent file from growing too large (increased for better history)
+        if (count($visitors) > 10000) {
+            $visitors = array_slice($visitors, 0, 10000);
+        }
+        
+        // Create backup before saving
+        if (file_exists($VISITORS_FILE)) {
+            copy($VISITORS_FILE, $VISITORS_FILE . '.backup');
         }
         
         // Save back to file with atomic write for better reliability
-        $tempFile = $VISITORS_FILE . '.tmp';
-        file_put_contents($tempFile, json_encode($visitors, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-        rename($tempFile, $VISITORS_FILE);
+        $jsonData = json_encode($visitors, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($jsonData !== false) {
+            $tempFile = $VISITORS_FILE . '.tmp';
+            if (file_put_contents($tempFile, $jsonData) !== false) {
+                rename($tempFile, $VISITORS_FILE);
+            }
+        }
     }
 }
 
