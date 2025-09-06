@@ -452,6 +452,29 @@ export class DatabaseStorage implements IStorage {
   }
 
   async incrementApiKeyUsage(keyValue: string): Promise<boolean> {
+    const apiKey = await this.getApiKey(keyValue);
+    if (!apiKey) {
+      return false;
+    }
+    
+    // Check if key is expired
+    if (apiKey.expiresAt && new Date() > apiKey.expiresAt) {
+      await this.updateApiKey(apiKey.id, { status: 'expired' });
+      return false;
+    }
+    
+    // Check if call limit reached
+    if (apiKey.callCount >= apiKey.callLimit) {
+      await this.updateApiKey(apiKey.id, { status: 'expired' });
+      return false;
+    }
+    
+    // Check if key is paused or inactive
+    if (apiKey.status !== 'active') {
+      return false;
+    }
+    
+    // Increment usage count
     const result = await db
       .update(apiKeys)
       .set({
