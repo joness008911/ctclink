@@ -136,24 +136,21 @@ function classifyVisitorAPI($ip, $userAgent) {
         return null;
     }
     
-    $data = json_encode([
-        'ip' => $ip,
-        'user_agent' => $userAgent
-    ]);
+    // Build URL with api_key parameter (matching working endpoint format)
+    $url = $CLEANTRAFFIC_API_ENDPOINT . '?api_key=' . urlencode($apiKey);
     
     for ($attempt = 1; $attempt <= $MAX_RETRIES; $attempt++) {
         $ch = curl_init();
         curl_setopt_array($ch, [
-            CURLOPT_URL => $CLEANTRAFFIC_API_ENDPOINT,
+            CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $data,
+            CURLOPT_HTTPGET => true,  // Use GET method like working endpoint
             CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'X-API-Key: ' . $apiKey,
-                'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent: ' . $userAgent,  // Pass real visitor user agent
                 'Accept: application/json',
-                'Cache-Control: no-cache'
+                'Cache-Control: no-cache',
+                'X-Forwarded-For: ' . $ip,  // Pass visitor IP
+                'X-Real-IP: ' . $ip          // Alternative IP header
             ],
             CURLOPT_TIMEOUT => 10,
             CURLOPT_CONNECTTIMEOUT => 5,
