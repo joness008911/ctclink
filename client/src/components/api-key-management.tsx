@@ -287,22 +287,23 @@ export default function ApiKeyManagement() {
             
             <div>
               <Label htmlFor="callLimit" className="block text-sm font-medium text-foreground mb-2">
-                Call Limit
+                Call Limit (Custom)
               </Label>
-              <Select value={callLimit.toString()} onValueChange={(value) => setCallLimit(parseInt(value))}>
-                <SelectTrigger data-testid="select-call-limit">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="100">100 calls</SelectItem>
-                  <SelectItem value="500">500 calls</SelectItem>
-                  <SelectItem value="1000">1,000 calls</SelectItem>
-                  <SelectItem value="5000">5,000 calls</SelectItem>
-                  <SelectItem value="10000">10,000 calls</SelectItem>
-                  <SelectItem value="50000">50,000 calls</SelectItem>
-                  <SelectItem value="100000">100,000 calls</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="callLimit"
+                type="number"
+                min="1"
+                max="100000"
+                placeholder="Enter custom call limit (e.g., 3, 10, 30, 1000)"
+                value={callLimit}
+                onChange={(e) => setCallLimit(parseInt(e.target.value) || 1000)}
+                className="w-full"
+                data-testid="input-call-limit"
+                disabled={createKeyMutation.isPending}
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                Enter any number between 1 and 100,000 calls
+              </div>
             </div>
             
             <div>
