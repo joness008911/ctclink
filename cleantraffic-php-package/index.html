@@ -366,6 +366,25 @@
             color: #742a2a;
         }
 
+        .status {
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-size: 0.75em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
         .logout-btn {
             position: absolute;
             top: 25px;
@@ -1097,17 +1116,23 @@
             html += '<th><i class="fas fa-map-marker-alt"></i> Location</th>';
             html += '<th><i class="fas fa-tags"></i> Classification</th>';
             html += '<th><i class="fas fa-desktop"></i> Browser</th>';
+            html += '<th><i class="fas fa-exclamation-triangle"></i> Status</th>';
             html += '</tr></thead><tbody>';
 
             data.slice(0, 50).forEach(visitor => {
                 const time = new Date(visitor.timestamp).toLocaleString();
                 const classification = visitor.classification || 'unknown';
+                const hasError = visitor.error ? true : false;
+                const statusText = hasError ? visitor.error : 'OK';
+                const statusClass = hasError ? 'error' : 'success';
+                
                 html += `<tr>
                     <td>${time}</td>
                     <td><code>${visitor.ip}</code></td>
                     <td>${visitor.location || 'Unknown'}</td>
                     <td><span class="classification ${classification}">${classification}</span></td>
                     <td>${visitor.browser || 'Unknown'}</td>
+                    <td><span class="status ${statusClass}">${statusText}</span></td>
                 </tr>`;
             });
 

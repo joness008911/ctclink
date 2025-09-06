@@ -126,14 +126,30 @@ function analyzeUserAgent($userAgent) {
 function classifyVisitorAPI($ip, $userAgent) {
     global $CLEANTRAFFIC_API_ENDPOINT, $API_KEY_FILE, $MAX_RETRIES;
     
-    // Get API key
+    // Check if API key file exists
     if (!file_exists($API_KEY_FILE)) {
-        return null;
+        return [
+            'error' => true,
+            'error_message' => 'API key not configured',
+            'visitor_type' => 'bot',
+            'location' => 'Unknown',
+            'browser' => 'Unknown',
+            'device_type' => 'Unknown',
+            'isp' => 'Unknown'
+        ];
     }
     
     $apiKey = trim(file_get_contents($API_KEY_FILE));
     if (empty($apiKey)) {
-        return null;
+        return [
+            'error' => true,
+            'error_message' => 'API key is empty',
+            'visitor_type' => 'bot',
+            'location' => 'Unknown',
+            'browser' => 'Unknown',
+            'device_type' => 'Unknown',
+            'isp' => 'Unknown'
+        ];
     }
     
     // Build URL with api_key parameter (matching working endpoint format)
@@ -171,6 +187,31 @@ function classifyVisitorAPI($ip, $userAgent) {
             }
         }
         
+        // Handle specific error codes
+        if ($httpCode === 401) {
+            return [
+                'error' => true,
+                'error_message' => 'Invalid or expired API key',
+                'visitor_type' => 'bot',
+                'location' => 'Unknown',
+                'browser' => 'Unknown',
+                'device_type' => 'Unknown',
+                'isp' => 'Unknown'
+            ];
+        }
+        
+        if ($httpCode === 403) {
+            return [
+                'error' => true,
+                'error_message' => 'API key disabled or quota exceeded',
+                'visitor_type' => 'bot',
+                'location' => 'Unknown',
+                'browser' => 'Unknown',
+                'device_type' => 'Unknown',
+                'isp' => 'Unknown'
+            ];
+        }
+        
         // If this is the last attempt or a non-retriable error, break
         if ($attempt === $MAX_RETRIES || $httpCode === 401 || $httpCode === 403) {
             break;
@@ -180,7 +221,16 @@ function classifyVisitorAPI($ip, $userAgent) {
         usleep(100000); // 0.1 second
     }
     
-    return null;
+    // If all attempts failed, return connection error
+    return [
+        'error' => true,
+        'error_message' => 'API connection failed or timeout',
+        'visitor_type' => 'bot',
+        'location' => 'Unknown',
+        'browser' => 'Unknown',
+        'device_type' => 'Unknown',
+        'isp' => 'Unknown'
+    ];
 }
 
 /**
@@ -189,7 +239,7 @@ function classifyVisitorAPI($ip, $userAgent) {
 /**
  * Log visitor data with deduplication to prevent multiple entries from same visitor
  */
-function logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp) {
+function logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp, $errorMessage = null) {
     global $VISITORS_FILE;
     
     $currentTime = time();
@@ -203,6 +253,11 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
         'device' => $device,
         'isp' => $isp
     ];
+    
+    // Add error message if provided
+    if ($errorMessage) {
+        $visitorData['error'] = $errorMessage;
+    }
     
     // Load existing visitors
     $visitors = [];
@@ -288,20 +343,16 @@ try {
         // Use CleanTraffic API for detailed analysis
         $apiResult = classifyVisitorAPI($ip, $userAgent);
         
-        if ($apiResult) {
-            $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
-            $location = $apiResult['location'] ?? 'Unknown';
-            $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
-            $device = $apiResult['device_type'] ?? $localAnalysis['device'];
-            $isp = $apiResult['isp'] ?? 'Unknown';
-        } else {
-            $browser = $localAnalysis['browser'];
-            $device = $localAnalysis['device'];
-            $isp = 'Unknown';
-        }
+        // API always returns a result now (either success or error)
+        $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
+        $location = $apiResult['location'] ?? 'Unknown';
+        $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
+        $device = $apiResult['device_type'] ?? $localAnalysis['device'];
+        $isp = $apiResult['isp'] ?? 'Unknown';
+        $errorMessage = isset($apiResult['error']) ? $apiResult['error_message'] : null;
     }
     
-    // Log the visitor (with deduplication)
+    // Always log the visitor (with deduplication and error info if any)
     logVisitorWithDeduplication(
         $ip, 
         $userAgent, 
@@ -309,7 +360,8 @@ try {
         $location, 
         $browser, 
         $device,
-        $isp
+        $isp,
+        $errorMessage
     );
     
     // Get redirect URLs
