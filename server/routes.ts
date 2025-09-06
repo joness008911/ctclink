@@ -104,7 +104,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Validate expirationPeriod
-      const validPeriods = ['daily', 'weekly', 'monthly', 'unlimited'];
+      const validPeriods = ['10seconds', '1minute', '1hour', 'daily', 'weekly', 'monthly', 'unlimited'];
       const period = expirationPeriod || 'unlimited';
       if (!validPeriods.includes(period)) {
         return res.status(400).json({ message: "Invalid expiration period" });
