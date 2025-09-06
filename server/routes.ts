@@ -110,10 +110,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Invalid expiration period" });
       }
 
-      // Validate callLimit
+      // Validate callLimit (allow low limits for testing)
       const limit = parseInt(callLimit) || 1000;
-      if (limit < 100 || limit > 100000) {
-        return res.status(400).json({ message: "Call limit must be between 100 and 100,000" });
+      if (limit < 1 || limit > 100000) {
+        return res.status(400).json({ message: "Call limit must be between 1 and 100,000" });
       }
 
       // Check if key already exists

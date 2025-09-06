@@ -71,7 +71,7 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   callCount: true,
 }).extend({
   expirationPeriod: z.enum(["daily", "weekly", "monthly", "unlimited"]).default("unlimited"),
-  callLimit: z.number().min(100).max(100000).default(1000),
+  callLimit: z.number().min(1).max(100000).default(1000),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
