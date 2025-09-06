@@ -212,8 +212,20 @@ function classifyVisitorAPI($ip, $userAgent) {
             ];
         }
         
+        if ($httpCode === 429) {
+            return [
+                'error' => true,
+                'error_message' => 'API key paused or rate limit exceeded',
+                'visitor_type' => 'bot',
+                'location' => 'Unknown',
+                'browser' => 'Unknown',
+                'device_type' => 'Unknown',
+                'isp' => 'Unknown'
+            ];
+        }
+        
         // If this is the last attempt or a non-retriable error, break
-        if ($attempt === $MAX_RETRIES || $httpCode === 401 || $httpCode === 403) {
+        if ($attempt === $MAX_RETRIES || $httpCode === 401 || $httpCode === 403 || $httpCode === 429) {
             break;
         }
         
@@ -268,12 +280,12 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
         }
     }
     
-    // Check for duplicate within last 5 minutes
+    // Check for duplicate within last 30 seconds only (much shorter window)
     $isDuplicate = false;
     foreach ($visitors as $visitor) {
         if ($visitor['ip'] === $ip && $visitor['user_agent'] === $userAgent) {
             $visitorTime = strtotime($visitor['timestamp']);
-            if (($currentTime - $visitorTime) < 300) { // 5 minutes = 300 seconds
+            if (($currentTime - $visitorTime) < 30) { // 30 seconds instead of 5 minutes
                 $isDuplicate = true;
                 break;
             }
@@ -289,8 +301,10 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
             $visitors = array_slice($visitors, -1000);
         }
         
-        // Save back to file
-        file_put_contents($VISITORS_FILE, json_encode($visitors, JSON_PRETTY_PRINT));
+        // Save back to file with atomic write for better reliability
+        $tempFile = $VISITORS_FILE . '.tmp';
+        file_put_contents($tempFile, json_encode($visitors, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        rename($tempFile, $VISITORS_FILE);
     }
 }
 
