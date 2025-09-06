@@ -277,6 +277,9 @@ export default function ApiKeyManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="unlimited">Unlimited</SelectItem>
+                    <SelectItem value="10seconds">10 Seconds (Testing)</SelectItem>
+                    <SelectItem value="1minute">1 Minute (Testing)</SelectItem>
+                    <SelectItem value="1hour">1 Hour (Testing)</SelectItem>
                     <SelectItem value="daily">Daily (24 hours)</SelectItem>
                     <SelectItem value="weekly">Weekly (7 days)</SelectItem>
                     <SelectItem value="monthly">Monthly (30 days)</SelectItem>

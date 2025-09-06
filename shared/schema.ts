@@ -70,7 +70,7 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   lastUsed: true,
   callCount: true,
 }).extend({
-  expirationPeriod: z.enum(["daily", "weekly", "monthly", "unlimited"]).default("unlimited"),
+  expirationPeriod: z.enum(["10seconds", "1minute", "1hour", "daily", "weekly", "monthly", "unlimited"]).default("unlimited"),
   callLimit: z.number().min(1).max(100000).default(1000),
 });
 

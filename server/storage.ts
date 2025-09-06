@@ -163,6 +163,15 @@ export class MemStorage implements IStorage {
     if (insertApiKey.expirationPeriod !== 'unlimited') {
       const now = new Date();
       switch (insertApiKey.expirationPeriod) {
+        case '10seconds':
+          expiresAt = new Date(now.getTime() + 10 * 1000);
+          break;
+        case '1minute':
+          expiresAt = new Date(now.getTime() + 60 * 1000);
+          break;
+        case '1hour':
+          expiresAt = new Date(now.getTime() + 60 * 60 * 1000);
+          break;
         case 'daily':
           expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
           break;
