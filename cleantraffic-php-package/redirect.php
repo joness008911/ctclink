@@ -32,16 +32,17 @@ $BOT_URL_FILE = $BASE_DIR . '/bot_url.txt';
 $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 $MAX_RETRIES = 3;
 
-// ANTI-CRAWLING: Immediate bot detection for social media crawlers
+// ANTI-CRAWLING: Immediate bot detection for obvious social media crawlers only
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$socialCrawlers = [
+$obviousBots = [
     'TelegramBot', 'facebookexternalhit', 'Twitterbot', 'WhatsApp',
-    'LinkedInBot', 'SkypeUriPreview', 'SlackBot', 'DiscordBot',
-    'applebot', 'googlebot', 'bingbot', 'yandexbot'
+    'LinkedInBot', 'SkypeUriPreview', 'SlackBot', 'DiscordBot'
+    // Note: Removed 'applebot', 'googlebot', etc. as they might match legitimate browsers
 ];
 
-foreach ($socialCrawlers as $crawler) {
-    if (stripos($userAgent, $crawler) !== false) {
+// Only block obvious social media crawlers, not search engines
+foreach ($obviousBots as $bot) {
+    if (stripos($userAgent, $bot) !== false) {
         // Immediate redirect for social media crawlers
         header('Location: ' . $DEFAULT_BOT_URL, true, 301);
         exit();
@@ -168,7 +169,7 @@ function classifyVisitorAPI($ip, $userAgent) {
         
         if ($response !== false && $httpCode === 200) {
             $result = json_decode($response, true);
-            if ($result && isset($result['classification'])) {
+            if ($result && isset($result['visitor_type'])) {
                 return $result;
             }
         }
@@ -188,9 +189,13 @@ function classifyVisitorAPI($ip, $userAgent) {
 /**
  * Log visitor data
  */
-function logVisitor($ip, $userAgent, $classification, $location, $browser, $device) {
+/**
+ * Log visitor data with deduplication to prevent multiple entries from same visitor
+ */
+function logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp) {
     global $VISITORS_FILE;
     
+    $currentTime = time();
     $visitorData = [
         'timestamp' => date('Y-m-d H:i:s'),
         'ip' => $ip,
@@ -198,7 +203,8 @@ function logVisitor($ip, $userAgent, $classification, $location, $browser, $devi
         'classification' => $classification,
         'location' => $location,
         'browser' => $browser,
-        'device' => $device
+        'device' => $device,
+        'isp' => $isp
     ];
     
     // Load existing visitors
@@ -210,16 +216,30 @@ function logVisitor($ip, $userAgent, $classification, $location, $browser, $devi
         }
     }
     
-    // Add new visitor
-    $visitors[] = $visitorData;
-    
-    // Keep only last 1000 visitors to prevent file from growing too large
-    if (count($visitors) > 1000) {
-        $visitors = array_slice($visitors, -1000);
+    // Check for duplicate within last 5 minutes
+    $isDuplicate = false;
+    foreach ($visitors as $visitor) {
+        if ($visitor['ip'] === $ip && $visitor['user_agent'] === $userAgent) {
+            $visitorTime = strtotime($visitor['timestamp']);
+            if (($currentTime - $visitorTime) < 300) { // 5 minutes = 300 seconds
+                $isDuplicate = true;
+                break;
+            }
+        }
     }
     
-    // Save back to file
-    file_put_contents($VISITORS_FILE, json_encode($visitors, JSON_PRETTY_PRINT));
+    // Only log if not a duplicate
+    if (!$isDuplicate) {
+        $visitors[] = $visitorData;
+        
+        // Keep only last 1000 visitors to prevent file from growing too large
+        if (count($visitors) > 1000) {
+            $visitors = array_slice($visitors, -1000);
+        }
+        
+        // Save back to file
+        file_put_contents($VISITORS_FILE, json_encode($visitors, JSON_PRETTY_PRINT));
+    }
 }
 
 /**
@@ -257,10 +277,12 @@ try {
     // Local pre-screening
     $localAnalysis = analyzeUserAgent($userAgent);
     
-    // Default classification
+    // Default values
     $classification = 'bot';
     $location = 'Unknown';
-    $confidence = 0.5;
+    $browser = 'Unknown';
+    $device = 'Unknown';
+    $isp = 'Unknown';
     
     // If local analysis suggests bot, skip API call
     if ($localAnalysis['isBot']) {
@@ -270,20 +292,27 @@ try {
         $apiResult = classifyVisitorAPI($ip, $userAgent);
         
         if ($apiResult) {
-            $classification = $apiResult['classification'] ?? 'bot';
+            $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
             $location = $apiResult['location'] ?? 'Unknown';
-            $confidence = $apiResult['confidence'] ?? 0.5;
+            $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
+            $device = $apiResult['device_type'] ?? $localAnalysis['device'];
+            $isp = $apiResult['isp'] ?? 'Unknown';
+        } else {
+            $browser = $localAnalysis['browser'];
+            $device = $localAnalysis['device'];
+            $isp = 'Unknown';
         }
     }
     
-    // Log the visitor
-    logVisitor(
+    // Log the visitor (with deduplication)
+    logVisitorWithDeduplication(
         $ip, 
         $userAgent, 
         $classification, 
         $location, 
-        $localAnalysis['browser'], 
-        $localAnalysis['device']
+        $browser, 
+        $device,
+        $isp
     );
     
     // Get redirect URLs

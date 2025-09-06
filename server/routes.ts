@@ -464,8 +464,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/download/cleantraffic-package', (req, res) => {
     import('fs').then(fs => {
       import('path').then(path => {
-        const packagePath = path.resolve('./CleanTraffic-PHP-Protection-Package-Updated.tar.gz');
-        const fileName = 'CleanTraffic-PHP-Protection-Package-Updated.tar.gz';
+        const packagePath = path.resolve('./CleanTraffic-PHP-Protection-Package-Fixed.tar.gz');
+        const fileName = 'CleanTraffic-PHP-Protection-Package-Fixed.tar.gz';
         
         // Check if file exists
         if (!fs.existsSync(packagePath)) {
