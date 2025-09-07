@@ -7,7 +7,7 @@ declare module 'express-session' {
   }
 }
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, ip2geoCache } from "./storage";
 import session from "express-session";
 import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
@@ -303,12 +303,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         connectionType = 'Limit Exceeded';
         console.log(`API limit reached - classifying visitor ${clientIp} as Bot`);
       } else {
-        // Normal classification with IP2Geo API
+        // Normal classification with IP2Geo API (with caching for performance)
         try {
-          const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
-          if (geoResponse.ok) {
-            locationData = await geoResponse.json();
-            
+          // Check cache first for faster response
+          const cachedData = ip2geoCache.get(clientIp);
+          if (cachedData) {
+            locationData = cachedData;
+            console.log(`Using cached data for IP: ${clientIp}`);
+          } else {
+            // Make API call if not cached
+            const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
+            if (geoResponse.ok) {
+              locationData = await geoResponse.json();
+              // Cache the response for 30 minutes
+              ip2geoCache.set(clientIp, locationData);
+              console.log(`Cached new data for IP: ${clientIp}`);
+            }
+          }
+          
+          if (locationData && Object.keys(locationData).length > 0) {
             // Determine visitor type based on connection type
             const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
             connectionType = locationData.as_info?.as_usage_type || 'Unknown';

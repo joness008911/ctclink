@@ -16,6 +16,48 @@ import { randomUUID } from "crypto";
 import { db } from "./db";
 import { eq, desc, sql, count } from "drizzle-orm";
 
+// IP2Geo Cache for performance optimization
+interface CachedIPData {
+  data: any;
+  timestamp: number;
+  ttl: number; // Time to live in milliseconds
+}
+
+class IP2GeoCache {
+  private cache = new Map<string, CachedIPData>();
+  private readonly DEFAULT_TTL = 30 * 60 * 1000; // 30 minutes
+  
+  set(ip: string, data: any, ttl = this.DEFAULT_TTL): void {
+    this.cache.set(ip, {
+      data,
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+  
+  get(ip: string): any | null {
+    const cached = this.cache.get(ip);
+    if (!cached) return null;
+    
+    if (Date.now() - cached.timestamp > cached.ttl) {
+      this.cache.delete(ip);
+      return null;
+    }
+    
+    return cached.data;
+  }
+  
+  clear(): void {
+    this.cache.clear();
+  }
+  
+  size(): number {
+    return this.cache.size;
+  }
+}
+
+export const ip2geoCache = new IP2GeoCache();
+
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
