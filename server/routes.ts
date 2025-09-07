@@ -11,6 +11,7 @@ import { storage, ip2geoCache } from "./storage";
 import session from "express-session";
 import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
+import path from "path";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
@@ -36,6 +37,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(401).json({ message: "Unauthorized" });
     }
   };
+
+  // Download endpoint for PHP package
+  app.get("/download/cleantraffic-php-package", (req, res) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package.tar.gz', (err) => {
+      if (err) {
+        console.error('Download error:', err);
+        res.status(404).json({ message: "File not found" });
+      }
+    });
+  });
 
   // Login endpoint
   app.post("/api/login", async (req, res) => {
@@ -90,7 +102,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(apiKeys);
     } catch (error) {
       console.error("Get API keys error:", error);
-      res.status(500).json({ message: "Failed to fetch API keys" });
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
@@ -116,83 +128,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Call limit must be between 1 and 100,000" });
       }
 
-      // Check if key already exists
+      // Check if key value already exists
       const existingKey = await storage.getApiKey(keyValue);
       if (existingKey) {
-        return res.status(409).json({ message: "API key already exists" });
+        return res.status(400).json({ message: "API key value already exists" });
       }
 
       const apiKey = await storage.createApiKey({
         keyName,
         keyValue,
-        enabled: true,
         expirationPeriod: period,
         callLimit: limit
       });
-      
+
       res.json(apiKey);
     } catch (error) {
       console.error("Create API key error:", error);
-      res.status(500).json({ message: "Failed to create API key" });
-    }
-  });
-
-  // Update API key (protected)
-  app.patch("/api/api-keys/:id", requireAuth, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { keyName, expirationPeriod, callLimit, enabled, status } = req.body;
-      
-      const updatedKey = await storage.updateApiKey(id, {
-        keyName,
-        expirationPeriod,
-        callLimit,
-        enabled,
-        status
-      });
-      
-      if (!updatedKey) {
-        return res.status(404).json({ message: "API key not found" });
-      }
-      
-      res.json(updatedKey);
-    } catch (error) {
-      console.error("Update API key error:", error);
-      res.status(500).json({ message: "Failed to update API key" });
-    }
-  });
-
-  // Pause/Resume API key (protected)
-  app.post("/api/api-keys/:id/pause", requireAuth, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const success = await storage.pauseApiKey(id);
-      
-      if (!success) {
-        return res.status(404).json({ message: "API key not found" });
-      }
-      
-      res.json({ message: "API key status toggled successfully" });
-    } catch (error) {
-      console.error("Pause API key error:", error);
-      res.status(500).json({ message: "Failed to toggle API key status" });
-    }
-  });
-
-  // Renew API key (protected)
-  app.post("/api/api-keys/:id/renew", requireAuth, async (req, res) => {
-    try {
-      const { id } = req.params;
-      const renewedKey = await storage.renewApiKey(id);
-      
-      if (!renewedKey) {
-        return res.status(404).json({ message: "API key not found" });
-      }
-      
-      res.json(renewedKey);
-    } catch (error) {
-      console.error("Renew API key error:", error);
-      res.status(500).json({ message: "Failed to renew API key" });
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
@@ -209,11 +161,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "API key deleted successfully" });
     } catch (error) {
       console.error("Delete API key error:", error);
-      res.status(500).json({ message: "Failed to delete API key" });
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Public classification endpoint (supports API key)
+  // Pause/Resume API key (protected)
+  app.post("/api/api-keys/:id/pause", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const paused = await storage.pauseApiKey(id);
+      
+      if (!paused) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json({ message: "API key status updated successfully" });
+    } catch (error) {
+      console.error("Pause API key error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Renew API key (protected)
+  app.post("/api/api-keys/:id/renew", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const renewed = await storage.renewApiKey(id);
+      
+      if (!renewed) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json(renewed);
+    } catch (error) {
+      console.error("Renew API key error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Classification endpoint (GET with API key support)
   app.get("/api/classify", async (req, res) => {
     const apiKey = req.query.api_key as string;
     let limitReached = false;
@@ -394,18 +380,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(classifications);
     } catch (error) {
       console.error("Get classifications error:", error);
-      res.status(500).json({ message: "Failed to fetch classifications" });
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Get dashboard stats
+  // Get classification statistics
   app.get("/api/stats", requireAuth, async (req, res) => {
     try {
       const stats = await storage.getClassificationStats();
       res.json(stats);
     } catch (error) {
       console.error("Get stats error:", error);
-      res.status(500).json({ message: "Failed to fetch stats" });
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
@@ -415,8 +401,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rules = await storage.getDetectionRules();
       res.json(rules);
     } catch (error) {
-      console.error("Get rules error:", error);
-      res.status(500).json({ message: "Failed to fetch detection rules" });
+      console.error("Get detection rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
@@ -426,96 +412,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const rules = await storage.updateDetectionRules(req.body);
       res.json(rules);
     } catch (error) {
-      console.error("Update rules error:", error);
-      res.status(500).json({ message: "Failed to update detection rules" });
+      console.error("Update detection rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Get IP2Geolocation API key status
+  // Check IP2Geolocation API key status
   app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
     try {
-      const hasKey = !!process.env.IP2GEOLOCATION_API_KEY;
-      const keyPreview = process.env.IP2GEOLOCATION_API_KEY 
-        ? `${process.env.IP2GEOLOCATION_API_KEY.substring(0, 8)}...${process.env.IP2GEOLOCATION_API_KEY.slice(-4)}`
-        : null;
+      const apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY;
       
-      res.json({ 
-        hasKey,
-        keyPreview,
-        lastUpdated: process.env.IP2GEO_KEY_UPDATED || 'Never'
-      });
-    } catch (error) {
-      console.error("Get IP2Geo key status error:", error);
-      res.status(500).json({ message: "Failed to fetch API key status" });
-    }
-  });
-
-  // Update IP2Geolocation API key
-  app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
-    try {
-      const { apiKey } = req.body;
-      
-      if (!apiKey || typeof apiKey !== 'string' || apiKey.length < 10) {
-        return res.status(400).json({ message: "Valid API key required" });
-      }
-
-      // Test the API key with a simple request
-      try {
-        const testResponse = await fetch(`https://api.ip2location.io/?key=${apiKey}&ip=8.8.8.8&format=json`);
-        const testData = await testResponse.json();
-        
-        if (!testResponse.ok || testData.error_code) {
-          return res.status(400).json({ 
-            message: "Invalid API key or API request failed",
-            error: testData.error_message || 'API key validation failed'
-          });
-        }
-      } catch (testError) {
-        return res.status(400).json({ 
-          message: "Failed to validate API key",
-          error: 'Could not connect to IP2Location API'
+      if (!apiKey) {
+        return res.json({
+          hasKey: false,
+          message: "IP2Geolocation API key not configured"
         });
       }
-
-      // Update the environment variable
-      process.env.IP2GEOLOCATION_API_KEY = apiKey;
-      process.env.IP2GEO_KEY_UPDATED = new Date().toISOString();
       
-      const keyPreview = `${apiKey.substring(0, 8)}...${apiKey.slice(-4)}`;
-      
-      res.json({ 
-        message: "API key updated successfully",
-        keyPreview,
-        lastUpdated: process.env.IP2GEO_KEY_UPDATED
+      res.json({
+        hasKey: true,
+        keyPreview: `${apiKey.substring(0, 5)}...${apiKey.substring(apiKey.length - 5)}`,
+        message: "API key configured successfully"
       });
     } catch (error) {
-      console.error("Update IP2Geo key error:", error);
-      res.status(500).json({ message: "Failed to update API key" });
+      console.error("Check IP2Geo API key error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
-  });
-
-  // CleanTraffic PHP Package Download
-  app.get('/download/cleantraffic-package', (req, res) => {
-    import('fs').then(fs => {
-      import('path').then(path => {
-        const packagePath = path.resolve('./CleanTraffic-PHP-Protection-Package-Ultimate.tar.gz');
-        const fileName = 'CleanTraffic-PHP-Protection-Package-Ultimate.tar.gz';
-        
-        // Check if file exists
-        if (!fs.existsSync(packagePath)) {
-          return res.status(404).send('File not found');
-        }
-        
-        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-        res.setHeader('Content-Type', 'application/gzip');
-        res.sendFile(packagePath, (err) => {
-          if (err) {
-            console.error('Download error:', err);
-            res.status(404).send('File not found');
-          }
-        });
-      });
-    });
   });
 
   const httpServer = createServer(app);
