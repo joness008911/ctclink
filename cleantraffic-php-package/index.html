@@ -40,13 +40,20 @@
 
         .header h1 {
             color: #4a5568;
-            font-size: 3em;
+            font-size: 2.5em;
             margin-bottom: 10px;
             background: linear-gradient(135deg, #667eea, #764ba2);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
             font-weight: 700;
+        }
+        
+        .header h1:after {
+            content: " 🚀 COMPACT";
+            font-size: 0.4em;
+            color: #ff6b6b;
+            font-weight: bold;
         }
 
         .header p {
@@ -177,18 +184,18 @@
 
         .dashboard-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 8px;
+            margin-bottom: 15px;
         }
 
         .card {
             background: rgba(255, 255, 255, 0.95);
-            border-radius: 12px;
-            padding: 18px;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
             backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 2px solid #667eea;
             transition: all 0.3s ease;
         }
 
