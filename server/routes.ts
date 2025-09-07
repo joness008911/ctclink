@@ -40,8 +40,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Download endpoint for PHP package
   app.get("/download/cleantraffic-php-package", (req, res) => {
-    const filePath = path.join(process.cwd(), 'cleantraffic-php-package.tar.gz');
-    res.download(filePath, 'cleantraffic-php-package.tar.gz', (err) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-updated.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-updated.tar.gz', (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).json({ message: "File not found" });
