@@ -38,10 +38,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // Download endpoint for PHP package
+  // Download endpoint for PHP package (latest version with bot protection)
   app.get("/download/cleantraffic-php-package", (req, res) => {
-    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-SUPER-COMPACT.tar.gz');
-    res.download(filePath, 'cleantraffic-php-package-SUPER-COMPACT.tar.gz', (err) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BOT-PROTECTED.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-BOT-PROTECTED.tar.gz', (err) => {
+      if (err) {
+        console.error('Download error:', err);
+        res.status(404).json({ message: "File not found" });
+      }
+    });
+  });
+
+  // Direct download endpoint for bot-protected package
+  app.get("/cleantraffic-php-package-BOT-PROTECTED.tar.gz", (req, res) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BOT-PROTECTED.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-BOT-PROTECTED.tar.gz', (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).json({ message: "File not found" });
