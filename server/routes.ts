@@ -38,10 +38,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // Download endpoint for PHP package (latest version with bot protection)
+  // Download endpoint for PHP package (latest version with behavioral detection)
   app.get("/download/cleantraffic-php-package", (req, res) => {
-    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BOT-PROTECTED.tar.gz');
-    res.download(filePath, 'cleantraffic-php-package-BOT-PROTECTED.tar.gz', (err) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz', (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).json({ message: "File not found" });
@@ -49,7 +49,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Direct download endpoint for bot-protected package
+  // Direct download endpoint for behavioral enhanced package (latest)
+  app.get("/cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz", (req, res) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz', (err) => {
+      if (err) {
+        console.error('Download error:', err);
+        res.status(404).json({ message: "File not found" });
+      }
+    });
+  });
+
+  // Legacy bot-protected package download
   app.get("/cleantraffic-php-package-BOT-PROTECTED.tar.gz", (req, res) => {
     const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BOT-PROTECTED.tar.gz');
     res.download(filePath, 'cleantraffic-php-package-BOT-PROTECTED.tar.gz', (err) => {

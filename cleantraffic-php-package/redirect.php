@@ -81,6 +81,91 @@ function getVisitorIP() {
 }
 
 /**
+ * Parse and validate behavioral data from client-side detection
+ */
+function parseBehavioralData($rawData) {
+    if (empty($rawData)) {
+        return [
+            'botScore' => 50, // Neutral score if no data
+            'isBot' => false,
+            'behaviorAnalyzed' => false,
+            'reason' => 'No behavioral data provided'
+        ];
+    }
+    
+    $data = json_decode($rawData, true);
+    if (!$data) {
+        return [
+            'botScore' => 60, // Slightly suspicious if invalid data
+            'isBot' => false,
+            'behaviorAnalyzed' => false,
+            'reason' => 'Invalid behavioral data format'
+        ];
+    }
+    
+    // Validate and sanitize behavioral data
+    return [
+        'botScore' => max(0, min(100, intval($data['botScore'] ?? 50))),
+        'isBot' => (bool)($data['isBot'] ?? false),
+        'mouseMovements' => max(0, intval($data['mouseMovements'] ?? 0)),
+        'keystrokes' => max(0, intval($data['keystrokes'] ?? 0)),
+        'scrollEvents' => max(0, intval($data['scrollEvents'] ?? 0)),
+        'totalInteractions' => max(0, intval($data['totalInteractions'] ?? 0)),
+        'suspiciousActivities' => max(0, intval($data['suspiciousActivities'] ?? 0)),
+        'browserFingerprint' => $data['browserFingerprint'] ?? [],
+        'behaviorAnalyzed' => true,
+        'reason' => 'Behavioral analysis completed'
+    ];
+}
+
+/**
+ * Enhanced visitor analysis combining User-Agent and behavioral data
+ */
+function analyzeVisitorWithBehavior($userAgent, $behavioralData) {
+    $uaAnalysis = analyzeUserAgent($userAgent);
+    
+    if (!$behavioralData) {
+        return [
+            'botScore' => 50,
+            'isBot' => $uaAnalysis['isBot'],
+            'reason' => 'User-Agent analysis only',
+            'browser' => $uaAnalysis['browser'],
+            'device' => $uaAnalysis['device']
+        ];
+    }
+    
+    // Combine UA analysis with behavioral data
+    $finalScore = $behavioralData['botScore'];
+    
+    // Increase score for suspicious user agents
+    if ($uaAnalysis['isBot']) {
+        $finalScore += 25;
+    }
+    
+    // Behavioral red flags
+    if ($behavioralData['suspiciousActivities'] > 0) {
+        $finalScore += 20;
+    }
+    
+    if ($behavioralData['totalInteractions'] === 0) {
+        $finalScore += 15;
+    }
+    
+    if ($behavioralData['mouseMovements'] === 0 && $behavioralData['keystrokes'] === 0) {
+        $finalScore += 25;
+    }
+    
+    return [
+        'botScore' => min(100, $finalScore),
+        'isBot' => $finalScore > 70,
+        'reason' => 'Enhanced behavioral + User-Agent analysis',
+        'browser' => $uaAnalysis['browser'],
+        'device' => $uaAnalysis['device'],
+        'behaviorData' => $behavioralData
+    ];
+}
+
+/**
  * Local bot detection using User-Agent analysis
  */
 function analyzeUserAgent($userAgent) {
@@ -121,9 +206,9 @@ function analyzeUserAgent($userAgent) {
 }
 
 /**
- * Classify visitor using CleanTraffic API
+ * Classify visitor using CleanTraffic API with enhanced behavioral data
  */
-function classifyVisitorAPI($ip, $userAgent) {
+function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAnalysis = null) {
     global $CLEANTRAFFIC_API_ENDPOINT, $API_KEY_FILE, $MAX_RETRIES;
     
     // Check if API key file exists
@@ -365,8 +450,22 @@ try {
     $ip = getVisitorIP();
     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
     
-    // Local pre-screening
-    $localAnalysis = analyzeUserAgent($userAgent);
+    // Parse behavioral data if provided (from visitor.html)
+    $rawBehavioralData = $_POST['behavioral_data'] ?? '';
+    $referrer = $_POST['referrer'] ?? $_SERVER['HTTP_REFERER'] ?? '';
+    $pageLoadTime = $_POST['page_load_time'] ?? 0;
+    
+    // Process behavioral data
+    $behavioralData = null;
+    if (!empty($rawBehavioralData)) {
+        $behavioralData = parseBehavioralData($rawBehavioralData);
+    }
+    
+    // Enhanced visitor analysis with behavioral data
+    $enhancedAnalysis = analyzeVisitorWithBehavior($userAgent, $behavioralData);
+    
+    // Local pre-screening (now uses enhanced analysis)
+    $localAnalysis = $enhancedAnalysis;
     
     // Default values
     $classification = 'bot';
@@ -381,8 +480,8 @@ try {
         $classification = 'bot';
         $errorMessage = 'Local bot detection';
     } else {
-        // Use CleanTraffic API for detailed analysis
-        $apiResult = classifyVisitorAPI($ip, $userAgent);
+        // Use CleanTraffic API for detailed analysis with behavioral data
+        $apiResult = classifyVisitorAPI($ip, $userAgent, $behavioralData, $enhancedAnalysis);
         
         // Always check if there was an error first
         if (isset($apiResult['error']) && $apiResult['error'] === true) {

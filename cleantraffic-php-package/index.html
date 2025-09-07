@@ -1195,5 +1195,25 @@
             .catch(error => console.error('Auth check error:', error));
         };
     </script>
+
+    <!-- CleanTraffic Advanced Bot Detection - Phase 2 -->
+    <script src="bot-detector.js"></script>
+    <script>
+        // Initialize behavioral detection for admin interface
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('🔍 Admin interface bot detection active');
+            
+            // Monitor admin behavior for security
+            setTimeout(() => {
+                if (window.botDetector && window.botDetector.detectionComplete) {
+                    const results = window.botDetector.getResults();
+                    if (results.isBot) {
+                        console.warn('⚠️ Bot-like behavior detected in admin interface');
+                        // Could add additional security measures here
+                    }
+                }
+            }, 5000);
+        });
+    </script>
 </body>
 </html>
