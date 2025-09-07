@@ -119,49 +119,47 @@ function parseBehavioralData($rawData) {
 }
 
 /**
- * Enhanced visitor analysis combining User-Agent and behavioral data
+ * Quick header-based behavioral analysis (instant, no delays)
  */
 function analyzeVisitorWithBehavior($userAgent, $behavioralData) {
     $uaAnalysis = analyzeUserAgent($userAgent);
+    $botScore = 50; // Neutral starting score
     
-    if (!$behavioralData) {
-        return [
-            'botScore' => 50,
-            'isBot' => $uaAnalysis['isBot'],
-            'reason' => 'User-Agent analysis only',
-            'browser' => $uaAnalysis['browser'],
-            'device' => $uaAnalysis['device']
-        ];
+    // Header-based bot detection (instant)
+    if (empty($behavioralData['acceptLanguage'])) {
+        $botScore += 15; // Missing Accept-Language header
     }
     
-    // Combine UA analysis with behavioral data
-    $finalScore = $behavioralData['botScore'];
+    if (empty($behavioralData['acceptEncoding'])) {
+        $botScore += 10; // Missing Accept-Encoding header
+    }
     
-    // Increase score for suspicious user agents
+    if (!$behavioralData['hasReferrer'] && $behavioralData['requestMethod'] === 'GET') {
+        $botScore += 5; // Direct access without referrer
+    }
+    
+    // User agent analysis boost
     if ($uaAnalysis['isBot']) {
-        $finalScore += 25;
+        $botScore += 25; // Suspicious user agent
     }
     
-    // Behavioral red flags
-    if ($behavioralData['suspiciousActivities'] > 0) {
-        $finalScore += 20;
+    // Check for minimal headers (bot pattern)
+    $headerCount = 0;
+    foreach (['HTTP_ACCEPT', 'HTTP_ACCEPT_LANGUAGE', 'HTTP_ACCEPT_ENCODING', 'HTTP_CACHE_CONTROL'] as $header) {
+        if (!empty($_SERVER[$header])) $headerCount++;
     }
     
-    if ($behavioralData['totalInteractions'] === 0) {
-        $finalScore += 15;
-    }
-    
-    if ($behavioralData['mouseMovements'] === 0 && $behavioralData['keystrokes'] === 0) {
-        $finalScore += 25;
+    if ($headerCount < 2) {
+        $botScore += 20; // Too few headers
     }
     
     return [
-        'botScore' => min(100, $finalScore),
-        'isBot' => $finalScore > 70,
-        'reason' => 'Enhanced behavioral + User-Agent analysis',
+        'botScore' => min(100, $botScore),
+        'isBot' => $botScore > 70,
+        'reason' => 'Header-based + User-Agent analysis',
         'browser' => $uaAnalysis['browser'],
         'device' => $uaAnalysis['device'],
-        'behaviorData' => $behavioralData
+        'headerCount' => $headerCount
     ];
 }
 
@@ -450,16 +448,21 @@ try {
     $ip = getVisitorIP();
     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
     
-    // Parse behavioral data if provided (from visitor.html)
-    $rawBehavioralData = $_POST['behavioral_data'] ?? '';
-    $referrer = $_POST['referrer'] ?? $_SERVER['HTTP_REFERER'] ?? '';
-    $pageLoadTime = $_POST['page_load_time'] ?? 0;
+    // Quick behavioral analysis based on request headers and patterns
+    $referrer = $_SERVER['HTTP_REFERER'] ?? '';
+    $requestTime = microtime(true);
     
-    // Process behavioral data
-    $behavioralData = null;
-    if (!empty($rawBehavioralData)) {
-        $behavioralData = parseBehavioralData($rawBehavioralData);
-    }
+    // Instant behavioral analysis from request metadata
+    $behavioralData = [
+        'botScore' => 50, // Neutral starting score
+        'hasReferrer' => !empty($referrer),
+        'acceptLanguage' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+        'acceptEncoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '',
+        'connection' => $_SERVER['HTTP_CONNECTION'] ?? '',
+        'requestMethod' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
+        'queryString' => $_SERVER['QUERY_STRING'] ?? '',
+        'requestTime' => $requestTime
+    ];
     
     // Enhanced visitor analysis with behavioral data
     $enhancedAnalysis = analyzeVisitorWithBehavior($userAgent, $behavioralData);

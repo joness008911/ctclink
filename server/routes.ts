@@ -38,10 +38,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // Download endpoint for PHP package (latest version with behavioral detection)
+  // Download endpoint for PHP package (latest version - instant redirect)
   app.get("/download/cleantraffic-php-package", (req, res) => {
-    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz');
-    res.download(filePath, 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz', (err) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-INSTANT-REDIRECT.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-INSTANT-REDIRECT.tar.gz', (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).json({ message: "File not found" });
@@ -49,10 +49,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Direct download endpoint for behavioral enhanced package (latest)
-  app.get("/cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz", (req, res) => {
-    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz');
-    res.download(filePath, 'cleantraffic-php-package-BEHAVIORAL-ENHANCED.tar.gz', (err) => {
+  // Direct download endpoint for instant redirect package (latest)
+  app.get("/cleantraffic-php-package-INSTANT-REDIRECT.tar.gz", (req, res) => {
+    const filePath = path.join(process.cwd(), 'cleantraffic-php-package-INSTANT-REDIRECT.tar.gz');
+    res.download(filePath, 'cleantraffic-php-package-INSTANT-REDIRECT.tar.gz', (err) => {
       if (err) {
         console.error('Download error:', err);
         res.status(404).json({ message: "File not found" });
