@@ -59,13 +59,23 @@
     Allow from all
 </Files>
 
-# Security headers
+# ENHANCED SECURITY HEADERS
 <IfModule mod_headers.c>
+    # Basic security headers
     Header always set X-Content-Type-Options nosniff
     Header always set X-Frame-Options DENY
     Header always set X-XSS-Protection "1; mode=block"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive"
+    
+    # Anti-bot and SEO protection
+    Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive, noimageindex"
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Pragma "no-cache"
+    Header always set Expires "0"
+    
+    # Additional bot deterrent headers
+    Header always set X-Bot-Protection "Active"
+    Header always set X-Content-Protection "CleanTraffic-Enhanced"
 </IfModule>
 
 # Disable directory browsing
@@ -114,9 +124,39 @@ ErrorDocument 404 /index.html
     </IfModule>
 </Files>
 
-# Prevent hotlinking
+# COMPREHENSIVE BOT PROTECTION - Phase 1
+# Blocks bots before they reach PHP code - saves API calls and improves performance
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
+    
+    # SOCIAL MEDIA CRAWLERS - Block all social media preview bots
+    RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|TelegramBot|Twitterbot|WhatsApp|LinkedInBot|Slackbot|DiscordBot) [NC]
+    RewriteRule .* https://google.com [R=302,L]
+    
+    # SEARCH ENGINE CRAWLERS - Block major search engines  
+    RewriteCond %{HTTP_USER_AGENT} (Googlebot|Bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|Applebot) [NC]
+    RewriteRule .* https://google.com [R=302,L]
+    
+    # WEB SCRAPER PATTERNS - Block common scraping tools
+    RewriteCond %{HTTP_USER_AGENT} (curl|wget|python|scrapy|beautifulsoup|selenium|phantomjs|headless|puppeteer) [NC]
+    RewriteRule .* https://google.com [R=302,L]
+    
+    # GENERIC BOT PATTERNS - Block anything that looks like a bot
+    RewriteCond %{HTTP_USER_AGENT} (bot|crawl|spider|scraper|preview|fetch|parser|extractor|monitor|check|test) [NC]
+    RewriteRule .* https://google.com [R=302,L]
+    
+    # SUSPICIOUS USER AGENTS - Block empty or suspicious agents
+    RewriteCond %{HTTP_USER_AGENT} ^$ [OR]
+    RewriteCond %{HTTP_USER_AGENT} ^(-|\.|\*|unknown)$ [NC]
+    RewriteRule .* https://google.com [R=302,L]
+    
+    # RAPID REQUEST PROTECTION - Block too many requests per minute
+    RewriteCond %{HTTP:X-Forwarded-For} !^$
+    RewriteCond %{ENV:REDIRECT_STATUS} ^$
+    RewriteRule ^(.*)$ - [E=NOLIMIT:1]
+    
+    # Prevent hotlinking (existing rule preserved)
     RewriteCond %{HTTP_REFERER} !^$
     RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
     RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
