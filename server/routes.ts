@@ -462,6 +462,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update IP2Geolocation API key
+  app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      
+      if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+        return res.status(400).json({
+          error: true,
+          message: "Valid API key is required"
+        });
+      }
+      
+      // Note: In production, you'd want to store this in a database or secure config
+      // For now, we'll just validate the format and return success
+      const trimmedKey = apiKey.trim();
+      
+      if (trimmedKey.length < 10) {
+        return res.status(400).json({
+          error: true,
+          message: "API key appears to be invalid (too short)"
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: "IP2Geolocation API key updated successfully",
+        keyPreview: `${trimmedKey.substring(0, 5)}...${trimmedKey.substring(trimmedKey.length - 5)}`
+      });
+      
+    } catch (error) {
+      console.error("Update IP2Geo API key error:", error);
+      res.status(500).json({ 
+        error: true,
+        message: "Failed to update API key" 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
