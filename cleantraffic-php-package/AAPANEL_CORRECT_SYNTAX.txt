@@ -1,0 +1,55 @@
+========================================
+AAPANEL CORRECT REWRITE SYNTAX
+========================================
+
+✅ FOUND THE ISSUE: Missing "rewrite" directive!
+
+aaPanel expects this exact format:
+rewrite regex replacement flag;
+
+========================================
+COPY AND PASTE THESE EXACT LINES:
+========================================
+
+rewrite ^/([A-Za-z0-9]{5,12})/?$ /r.php?id=$1 last;
+
+========================================
+HOW TO ADD:
+========================================
+
+1. Go to aaPanel → Website → Your Domain
+2. Click "URL Rewrite" tab
+3. Clear everything and paste ONLY this line:
+
+rewrite ^/([A-Za-z0-9]{5,12})/?$ /r.php?id=$1 last;
+
+4. Click Save
+5. Test: yourdomain.com/33BQ03y98404
+
+========================================
+IF YOU STILL GET ERRORS:
+========================================
+
+Try this even simpler version:
+
+rewrite ^/([A-Za-z0-9]{5,12})$ /r.php?id=$1 last;
+
+========================================
+ALTERNATIVE PHP-ONLY SOLUTION:
+========================================
+
+If Nginx rewrite still fails, create a file called index.php:
+
+<?php
+// Simple PHP router for clean URLs
+$uri = $_SERVER['REQUEST_URI'];
+if (preg_match('/^\/([A-Za-z0-9]{5,12})\/?$/', $uri, $matches)) {
+    $_GET['id'] = $matches[1];
+    include 'r.php';
+    exit;
+}
+// Route everything else to redirect.php
+include 'redirect.php';
+?>
+
+========================================
