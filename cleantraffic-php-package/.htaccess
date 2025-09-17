@@ -133,8 +133,8 @@
     Header always set X-Content-Protection "CleanTraffic-Enhanced"
 </IfModule>
 
-# Disable directory browsing
-Options -Indexes
+# Disable directory browsing and MultiViews (MultiViews can interfere with clean URLs)
+Options -Indexes -MultiViews
 
 # Prevent access to version control and backup files
 <FilesMatch "^\.">
@@ -199,6 +199,9 @@ ErrorDocument 404 index.html
     # RewriteBase /your-subfolder-name/
     # Example: If installed in /b/ folder, use: RewriteBase /b/
     RewriteBase /b/
+    
+    # TEST RULE - Visit example.com/b/ztest to check if rewrite works
+    RewriteRule ^ztest$ redirect.php [L]
     
     # SOCIAL MEDIA CRAWLERS - Block all social media preview bots
     RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|TelegramBot|Twitterbot|WhatsApp|LinkedInBot|Slackbot|DiscordBot) [NC]

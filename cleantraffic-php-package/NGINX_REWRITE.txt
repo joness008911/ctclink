@@ -1,0 +1,25 @@
+========================================
+NGINX REWRITE RULES (For aaPanel Nginx Setup)
+========================================
+
+If your aaPanel is using Nginx (most common), add these rules:
+
+1. Go to aaPanel → Website → Your Site → Rewrite (Nginx)
+
+2. Add these rules:
+
+# Clean URL routing for CleanTraffic in /b/ subfolder
+location ~ ^/b/([A-Za-z0-9]{5,12})/?$ {
+    rewrite ^ /b/r.php?id=$1 last;
+}
+
+# Fallback for other requests in /b/
+location /b/ {
+    try_files $uri $uri/ /b/redirect.php?$args;
+}
+
+3. Click Save and Reload Nginx
+
+========================================
+NOTE: Only use this if .htaccess test doesn't work!
+========================================
