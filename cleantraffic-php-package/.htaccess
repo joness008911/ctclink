@@ -195,6 +195,11 @@ ErrorDocument 404 index.html
 <IfModule mod_rewrite.c>
     RewriteEngine On
     
+    # SUBFOLDER COMPATIBILITY - Uncomment and modify if installed in a subfolder
+    # RewriteBase /your-subfolder-name/
+    # Example: If installed in /b/ folder, use: RewriteBase /b/
+    RewriteBase /b/
+    
     # SOCIAL MEDIA CRAWLERS - Block all social media preview bots
     RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|TelegramBot|Twitterbot|WhatsApp|LinkedInBot|Slackbot|DiscordBot) [NC]
     RewriteRule .* https://google.com [R=302,L]
