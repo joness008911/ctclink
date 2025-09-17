@@ -1,17 +1,70 @@
-# CleanTraffic PHP Protection - Security Configuration
-# Protects sensitive files and prevents unauthorized access
+# CLEANTRAFFIC ANTI-CRAWLING PROTECTION
+# Simple, clean approach for all hosting environments
 
-# Prevent access to sensitive files - Apache 2.4 compatible
-<Files "*.json">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Deny from all
-    </IfModule>
-</Files>
+# Enable URL rewriting
+RewriteEngine On
 
+# Block Telegram bot
+RewriteCond %{HTTP_USER_AGENT} TelegramBot [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block Facebook crawler
+RewriteCond %{HTTP_USER_AGENT} facebookexternalhit [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block Twitter bot
+RewriteCond %{HTTP_USER_AGENT} Twitterbot [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block WhatsApp crawler
+RewriteCond %{HTTP_USER_AGENT} WhatsApp [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block LinkedIn bot
+RewriteCond %{HTTP_USER_AGENT} LinkedInBot [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block Slack bot
+RewriteCond %{HTTP_USER_AGENT} Slackbot [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block Discord bot
+RewriteCond %{HTTP_USER_AGENT} DiscordBot [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block generic crawlers and bots
+RewriteCond %{HTTP_USER_AGENT} (bot|crawl|spider|scraper|preview|fetch|parser|extractor|monitor|check|test) [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block search engines
+RewriteCond %{HTTP_USER_AGENT} (Googlebot|Bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|Applebot) [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Block suspicious or empty user agents
+RewriteCond %{HTTP_USER_AGENT} ^$ [OR]
+RewriteCond %{HTTP_USER_AGENT} ^(-|\.|\*|unknown)$ [NC]
+RewriteRule .* https://google.com [R=302,L]
+
+# Handle random URL patterns - redirect to r.php (AFTER bot blocking)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^([a-zA-Z0-9]{5,12})/?$ r.php?id=$1 [QSA,L]
+
+# Everything else goes to redirect.php
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_URI} !^/(index\.html|r\.php|admin_auth\.php|check_auth\.php|get_config\.php|update_config\.php|get_visitors\.php|test_api\.php)$
+RewriteRule ^(.*)$ redirect.php [QSA,L]
+
+# Security headers (if mod_headers is available)
+<IfModule mod_headers.c>
+    Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive, noimageindex"
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+    Header always set Pragma "no-cache" 
+    Header always set Expires "0"
+</IfModule>
+
+# Block access to sensitive files
 <Files "*.txt">
     <IfModule mod_authz_core.c>
         Require all denied
@@ -22,7 +75,7 @@
     </IfModule>
 </Files>
 
-<Files "*.log">
+<Files "*.json">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -42,208 +95,3 @@
         Allow from all
     </IfModule>
 </Files>
-
-<Files "redirect.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-# Protect admin PHP files from direct access
-<Files "admin_auth.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-<Files "check_auth.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-<Files "get_config.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-<Files "update_config.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-<Files "get_visitors.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-<Files "test_api.php">
-    <IfModule mod_authz_core.c>
-        Require all granted
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Allow from all
-    </IfModule>
-</Files>
-
-# ENHANCED SECURITY HEADERS
-<IfModule mod_headers.c>
-    # Basic security headers
-    Header always set X-Content-Type-Options nosniff
-    Header always set X-Frame-Options DENY
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    
-    # Anti-bot and SEO protection
-    Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive, noimageindex"
-    Header always set Cache-Control "no-cache, no-store, must-revalidate"
-    Header always set Pragma "no-cache"
-    Header always set Expires "0"
-    
-    # Additional bot deterrent headers
-    Header always set X-Bot-Protection "Active"
-    Header always set X-Content-Protection "CleanTraffic-Enhanced"
-</IfModule>
-
-# Disable directory browsing and MultiViews (MultiViews can interfere with clean URLs)
-Options -Indexes -MultiViews
-
-# Prevent access to version control and backup files
-<FilesMatch "^\.">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Deny from all
-    </IfModule>
-</FilesMatch>
-
-<FilesMatch "\.(bak|backup|old|orig|save|swp|tmp)$">
-    <IfModule mod_authz_core.c>
-        Require all denied
-    </IfModule>
-    <IfModule !mod_authz_core.c>
-        Order Allow,Deny
-        Deny from all
-    </IfModule>
-</FilesMatch>
-
-# Error pages - use 404.php to handle clean URLs
-ErrorDocument 404 /404.php
-
-# PHP security settings
-<IfModule mod_php5.c>
-    php_flag display_errors Off
-    php_flag log_errors On
-    php_flag expose_php Off
-</IfModule>
-
-<IfModule mod_php7.c>
-    php_flag display_errors Off
-    php_flag log_errors On
-    php_flag expose_php Off
-</IfModule>
-
-<IfModule mod_php8.c>
-    php_flag display_errors Off
-    php_flag log_errors On
-    php_flag expose_php Off
-</IfModule>
-
-# Cache control for admin interface
-<Files "index.html">
-    <IfModule mod_headers.c>
-        Header set Cache-Control "no-cache, no-store, must-revalidate"
-        Header set Pragma "no-cache"
-        Header set Expires "0"
-    </IfModule>
-</Files>
-
-# COMPREHENSIVE BOT PROTECTION - Phase 1
-# Blocks bots before they reach PHP code - saves API calls and improves performance
-
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    
-    # SUBFOLDER COMPATIBILITY - Uncomment and modify if installed in a subfolder
-    # RewriteBase /your-subfolder-name/
-    # Example: If installed in /b/ folder, use: RewriteBase /b/
-    
-    # TEST RULE - Visit example.com/b/ztest to check if rewrite works
-    RewriteRule ^ztest$ redirect.php [L]
-    
-    # SOCIAL MEDIA CRAWLERS - Block all social media preview bots
-    RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|TelegramBot|Twitterbot|WhatsApp|LinkedInBot|Slackbot|DiscordBot) [NC]
-    RewriteRule .* https://google.com [R=302,L]
-    
-    # SEARCH ENGINE CRAWLERS - Block major search engines  
-    RewriteCond %{HTTP_USER_AGENT} (Googlebot|Bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|Applebot) [NC]
-    RewriteRule .* https://google.com [R=302,L]
-    
-    # WEB SCRAPER PATTERNS - Block common scraping tools
-    RewriteCond %{HTTP_USER_AGENT} (curl|wget|python|scrapy|beautifulsoup|selenium|phantomjs|headless|puppeteer) [NC]
-    RewriteRule .* https://google.com [R=302,L]
-    
-    # GENERIC BOT PATTERNS - Block anything that looks like a bot
-    RewriteCond %{HTTP_USER_AGENT} (bot|crawl|spider|scraper|preview|fetch|parser|extractor|monitor|check|test) [NC]
-    RewriteRule .* https://google.com [R=302,L]
-    
-    # SUSPICIOUS USER AGENTS - Block empty or suspicious agents
-    RewriteCond %{HTTP_USER_AGENT} ^$ [OR]
-    RewriteCond %{HTTP_USER_AGENT} ^(-|\.|\*|unknown)$ [NC]
-    RewriteRule .* https://google.com [R=302,L]
-    
-    # RAPID REQUEST PROTECTION - Block too many requests per minute
-    RewriteCond %{HTTP:X-Forwarded-For} !^$
-    RewriteCond %{ENV:REDIRECT_STATUS} ^$
-    RewriteRule ^(.*)$ - [E=NOLIMIT:1]
-    
-    # Prevent hotlinking (existing rule preserved)
-    RewriteCond %{HTTP_REFERER} !^$
-    RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
-    RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
-    
-    # RANDOM URL ROUTING - Handle clean campaign URLs (5-12 alphanumeric chars)
-    # aaPanel/Apache compatibility - Single rule that works across environments
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^([A-Za-z0-9]{5,12})/?$ r.php?id=$1 [QSA,L]
-    
-    # VISITOR ROUTING - Direct redirect with background behavioral analysis
-    # Allow direct access to admin and system files
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteCond %{REQUEST_URI} !^/(index\.html|redirect\.php|r\.php|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
-    
-    # Route all traffic directly to redirect.php for instant classification
-    RewriteRule ^(.*)$ redirect.php [QSA,L]
-</IfModule>
