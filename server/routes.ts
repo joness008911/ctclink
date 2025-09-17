@@ -474,8 +474,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Note: In production, you'd want to store this in a database or secure config
-      // For now, we'll just validate the format and return success
       const trimmedKey = apiKey.trim();
       
       if (trimmedKey.length < 10) {
@@ -485,9 +483,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Test the API key by making a validation request
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
+        const testResponse = await fetch(`https://api.ip2location.io/?key=${trimmedKey}&ip=8.8.8.8&format=json`, {
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        
+        const testData = await testResponse.json();
+        
+        // Check for specific error indicators or missing expected fields
+        if (!testResponse.ok || testData.error || !testData.country_code) {
+          return res.status(400).json({
+            error: true,
+            message: "API key validation failed - key appears to be invalid or expired"
+          });
+        }
+      } catch (validationError: any) {
+        if (validationError.name === 'AbortError') {
+          return res.status(400).json({
+            error: true,
+            message: "API key validation timed out - please try again"
+          });
+        }
+        return res.status(400).json({
+          error: true,
+          message: "Failed to validate API key with IP2Location service"
+        });
+      }
+      
+      // Update both environment variables for this process to ensure consistent behavior
+      // (Classification reads IP2GEO_API_KEY first, so we must update it)
+      process.env.IP2GEO_API_KEY = trimmedKey;
+      process.env.IP2GEOLOCATION_API_KEY = trimmedKey;
+      
+      // Clear any cached IP data since we have a new API key
+      if (typeof ip2geoCache !== 'undefined' && ip2geoCache.clear) {
+        ip2geoCache.clear();
+        console.log("Cleared IP geolocation cache after API key update");
+      }
+      
       res.json({
         success: true,
-        message: "IP2Geolocation API key updated successfully",
+        message: "IP2Geolocation API key updated and validated successfully",
         keyPreview: `${trimmedKey.substring(0, 5)}...${trimmedKey.substring(trimmedKey.length - 5)}`
       });
       
