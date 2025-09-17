@@ -1,66 +1,11 @@
-# CLEANTRAFFIC ANTI-CRAWLING PROTECTION
-# Simple, clean approach for all hosting environments
+# CleanTraffic PHP Protection - Security Configuration
+# Simple, reliable protection that works everywhere
 
-# Enable URL rewriting
-RewriteEngine On
-
-# Block Telegram bot
-RewriteCond %{HTTP_USER_AGENT} TelegramBot [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block Facebook crawler
-RewriteCond %{HTTP_USER_AGENT} facebookexternalhit [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block Twitter bot
-RewriteCond %{HTTP_USER_AGENT} Twitterbot [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block WhatsApp crawler
-RewriteCond %{HTTP_USER_AGENT} WhatsApp [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block LinkedIn bot
-RewriteCond %{HTTP_USER_AGENT} LinkedInBot [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block Slack bot
-RewriteCond %{HTTP_USER_AGENT} Slackbot [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block Discord bot
-RewriteCond %{HTTP_USER_AGENT} DiscordBot [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block generic crawlers and bots
-RewriteCond %{HTTP_USER_AGENT} (bot|crawl|spider|scraper|preview|fetch|parser|extractor|monitor|check|test) [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block search engines
-RewriteCond %{HTTP_USER_AGENT} (Googlebot|Bingbot|Slurp|DuckDuckBot|Baiduspider|YandexBot|Applebot) [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Block suspicious or empty user agents
-RewriteCond %{HTTP_USER_AGENT} ^$ [OR]
-RewriteCond %{HTTP_USER_AGENT} ^(-|\.|\*|unknown)$ [NC]
-RewriteRule .* https://google.com [R=302,L]
-
-# Handle random URL patterns - redirect to r.php (AFTER bot blocking)
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^([a-zA-Z0-9]{5,12})/?$ r.php?id=$1 [QSA,L]
-
-# Everything else goes to redirect.php
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteCond %{REQUEST_URI} !^/(index\.html|r\.php|admin_auth\.php|check_auth\.php|get_config\.php|update_config\.php|get_visitors\.php|test_api\.php)$
-RewriteRule ^(.*)$ redirect.php [QSA,L]
-
-# Security headers (if mod_headers is available)
+# Security headers (if available)
 <IfModule mod_headers.c>
     Header always set X-Robots-Tag "noindex, nofollow, nosnippet, noarchive, noimageindex"
     Header always set Cache-Control "no-cache, no-store, must-revalidate"
-    Header always set Pragma "no-cache" 
+    Header always set Pragma "no-cache"
     Header always set Expires "0"
 </IfModule>
 
@@ -85,8 +30,28 @@ RewriteRule ^(.*)$ redirect.php [QSA,L]
     </IfModule>
 </Files>
 
+<Files "*.log">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
+</Files>
+
 # Allow access to main files
 <Files "index.html">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
+</Files>
+
+<Files "redirect.php">
     <IfModule mod_authz_core.c>
         Require all granted
     </IfModule>

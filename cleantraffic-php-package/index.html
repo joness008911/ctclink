@@ -1077,7 +1077,7 @@
         // Update redirect link
         function updateRedirectLink() {
             const currentUrl = window.location.href.replace('index.html', '').replace(/\/$/, '');
-            const redirectUrl = currentUrl + '/' + currentCleanSlug;
+            const redirectUrl = currentUrl + '/redirect.php?c=' + currentCleanSlug;
             document.getElementById('redirectLink').innerHTML = 
                 `<i class="fas fa-link"></i> ${redirectUrl} <button onclick="regenerateCleanUrl()" class="copy-btn" style="font-size: 10px; padding: 4px 8px; margin-left: 8px;">🔄 New</button>`;
         }
@@ -1092,10 +1092,10 @@
         // Copy protection link
         function copyProtectionLink() {
             const currentUrl = window.location.href.replace('index.html', '').replace(/\/$/, '');
-            const redirectUrl = currentUrl + '/' + currentCleanSlug;
+            const redirectUrl = currentUrl + '/redirect.php?c=' + currentCleanSlug;
             
             navigator.clipboard.writeText(redirectUrl).then(() => {
-                showNotification('Clean campaign link copied to clipboard!', 'success');
+                showNotification('Campaign link copied to clipboard!', 'success');
             }).catch(() => {
                 showNotification('Failed to copy link.', 'error');
             });
@@ -1104,7 +1104,7 @@
         // Open protection link
         function openProtectionLink() {
             const currentUrl = window.location.href.replace('index.html', '').replace(/\/$/, '');
-            const redirectUrl = currentUrl + '/' + currentCleanSlug;
+            const redirectUrl = currentUrl + '/redirect.php?c=' + currentCleanSlug;
             window.open(redirectUrl, '_blank');
         }
 
