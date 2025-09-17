@@ -1,62 +1,117 @@
 # CleanTraffic PHP Protection - Security Configuration
 # Protects sensitive files and prevents unauthorized access
 
-# Prevent access to sensitive files
+# Prevent access to sensitive files - Apache 2.4 compatible
 <Files "*.json">
-    Order Allow,Deny
-    Deny from all
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
 </Files>
 
 <Files "*.txt">
-    Order Allow,Deny
-    Deny from all
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
 </Files>
 
 <Files "*.log">
-    Order Allow,Deny
-    Deny from all
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
 </Files>
 
 # Allow access to main files
 <Files "index.html">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "redirect.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 # Protect admin PHP files from direct access
 <Files "admin_auth.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "check_auth.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "get_config.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "update_config.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "get_visitors.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 <Files "test_api.php">
-    Order Allow,Deny
-    Allow from all
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Allow from all
+    </IfModule>
 </Files>
 
 # ENHANCED SECURITY HEADERS
@@ -83,18 +138,28 @@ Options -Indexes
 
 # Prevent access to version control and backup files
 <FilesMatch "^\.">
-    Order Allow,Deny
-    Deny from all
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
 </FilesMatch>
 
 <FilesMatch "\.(bak|backup|old|orig|save|swp|tmp)$">
-    Order Allow,Deny
-    Deny from all
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order Allow,Deny
+        Deny from all
+    </IfModule>
 </FilesMatch>
 
-# Error pages
-ErrorDocument 403 /index.html
-ErrorDocument 404 /index.html
+# Error pages - relative paths for subfolder compatibility
+ErrorDocument 403 index.html
+ErrorDocument 404 index.html
 
 # PHP security settings
 <IfModule mod_php5.c>
@@ -162,9 +227,10 @@ ErrorDocument 404 /index.html
     RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
     
     # RANDOM URL ROUTING - Handle clean campaign URLs (5-12 alphanumeric chars)
+    # aaPanel/Apache compatibility - Single rule that works across environments
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^([A-Za-z0-9]{5,12})/?$ r.php [QSA,L]
+    RewriteRule ^([A-Za-z0-9]{5,12})/?$ r.php?id=$1 [QSA,L]
     
     # VISITOR ROUTING - Direct redirect with background behavioral analysis
     # Allow direct access to admin and system files

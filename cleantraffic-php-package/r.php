@@ -5,10 +5,15 @@
  * It processes the request and forwards to redirect.php for visitor classification
  */
 
-// Get the requested path (without query string)
-$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$segments = explode('/', trim($path, '/'));
-$random_id = end($segments);
+// Get random ID from URL parameter (set by .htaccess rewrite)
+$random_id = $_GET['id'] ?? '';
+
+// If no ID from rewrite, extract from path as fallback
+if (empty($random_id)) {
+    $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+    $segments = explode('/', trim($path, '/'));
+    $random_id = end($segments);
+}
 
 // Validate random ID format (5-12 alphanumeric chars)
 if (!preg_match('/^[A-Za-z0-9]{5,12}$/', $random_id)) {
