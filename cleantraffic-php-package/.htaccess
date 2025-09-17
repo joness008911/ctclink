@@ -157,9 +157,8 @@ Options -Indexes -MultiViews
     </IfModule>
 </FilesMatch>
 
-# Error pages - relative paths for subfolder compatibility
-ErrorDocument 403 index.html
-ErrorDocument 404 index.html
+# Error pages - use 404.php to handle clean URLs
+ErrorDocument 404 /404.php
 
 # PHP security settings
 <IfModule mod_php5.c>
