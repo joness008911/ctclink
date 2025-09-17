@@ -198,7 +198,6 @@ ErrorDocument 404 index.html
     # SUBFOLDER COMPATIBILITY - Uncomment and modify if installed in a subfolder
     # RewriteBase /your-subfolder-name/
     # Example: If installed in /b/ folder, use: RewriteBase /b/
-    RewriteBase /b/
     
     # TEST RULE - Visit example.com/b/ztest to check if rewrite works
     RewriteRule ^ztest$ redirect.php [L]
