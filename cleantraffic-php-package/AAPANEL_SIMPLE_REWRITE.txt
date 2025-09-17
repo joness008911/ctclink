@@ -1,0 +1,51 @@
+========================================
+AAPANEL URL REWRITE RULES (SIMPLE FORMAT)
+========================================
+
+🚨 ISSUE: The full nginx location blocks don't work in aaPanel's "URL Rewrite" interface
+
+✅ SOLUTION: Use simple rewrite rules instead
+
+========================================
+COPY AND PASTE THESE RULES:
+========================================
+
+# Rule 1: Clean URLs for campaign links
+^/([A-Za-z0-9]{5,12})/?$ /r.php?id=$1 last;
+
+# Rule 2: Route everything else to redirect.php  
+^/(.*)$ /redirect.php last;
+
+========================================
+HOW TO ADD:
+========================================
+
+1. Go to aaPanel → Website → Your Domain
+2. Click "URL Rewrite" tab (NOT Configuration File)
+3. Delete any existing rules
+4. Paste ONLY these 2 lines:
+
+^/([A-Za-z0-9]{5,12})/?$ /r.php?id=$1 last;
+^/(.*)$ /redirect.php last;
+
+5. Click Save
+6. Test: yourdomain.com/33BQ03y98404
+
+========================================
+ALTERNATIVE (Even Simpler):
+========================================
+
+If the above still fails, try this single rule:
+
+^/([A-Za-z0-9]{5,12})$ /r.php?id=$1 last;
+
+========================================
+TROUBLESHOOTING:
+========================================
+
+If you still get regex errors:
+1. Use "Configuration File" instead of "URL Rewrite"
+2. Add the rules inside the server { } block
+3. Or contact me for a PHP-only solution
+
+========================================
