@@ -562,15 +562,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
       process.env.IP2GEO_API_KEY = trimmedKey;
       process.env.IP2GEOLOCATION_API_KEY = trimmedKey;
       
-      // Also store the key to a file for persistence across server restarts
+      // Try to persist the API key using Replit's secrets system
       try {
         const fs = require('fs');
         const path = require('path');
-        const keyFile = path.join(process.cwd(), 'server', '.api-key');
-        fs.writeFileSync(keyFile, trimmedKey, 'utf8');
-        console.log("API key saved to persistent file for server restart recovery");
+        
+        // Update .env file for persistence (Replit reads this)
+        const envPath = path.join(process.cwd(), '.env');
+        let envContent = '';
+        
+        try {
+          if (fs.existsSync(envPath)) {
+            envContent = fs.readFileSync(envPath, 'utf8');
+          }
+        } catch (readError) {
+          console.log("Creating new .env file");
+        }
+        
+        // Update or add the API key in .env format
+        const keyPattern = /^IP2GEOLOCATION_API_KEY=.*$/gm;
+        const newKeyLine = `IP2GEOLOCATION_API_KEY=${trimmedKey}`;
+        
+        if (keyPattern.test(envContent)) {
+          envContent = envContent.replace(keyPattern, newKeyLine);
+        } else {
+          envContent = envContent.trim() + '\n' + newKeyLine + '\n';
+        }
+        
+        fs.writeFileSync(envPath, envContent, 'utf8');
+        console.log("API key updated in .env file for Replit persistence");
+        
       } catch (writeError) {
-        console.warn("Could not write API key to file:", writeError);
+        console.warn("Could not update .env file:", writeError);
         // This is not fatal, continue with memory-only storage
       }
       
