@@ -290,8 +290,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
-      // Get IP geolocation data
-      const ip2geoApiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+      // Get IP geolocation data - check environment variables first, then file backup
+      let ip2geoApiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+      
+      // If no API key in environment, try to load from persistent file
+      if (!ip2geoApiKey) {
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const keyFile = path.join(process.cwd(), 'server', '.api-key');
+          if (fs.existsSync(keyFile)) {
+            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+            if (fileKey) {
+              ip2geoApiKey = fileKey;
+              // Update environment variables with recovered key
+              process.env.IP2GEO_API_KEY = fileKey;
+              process.env.IP2GEOLOCATION_API_KEY = fileKey;
+              console.log("Recovered API key from persistent file after server restart");
+            }
+          }
+        } catch (readError) {
+          console.warn("Could not read API key from file:", readError);
+        }
+      }
       if (!ip2geoApiKey) {
         return res.status(500).json({ 
           message: "IP2Geolocation API key not configured",
@@ -442,7 +463,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Check IP2Geolocation API key status
   app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
     try {
-      const apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY;
+      // Get current API key - check environment variables first, then file backup
+      let apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY;
+      
+      // If no API key in environment, try to load from persistent file
+      if (!apiKey) {
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const keyFile = path.join(process.cwd(), 'server', '.api-key');
+          if (fs.existsSync(keyFile)) {
+            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+            if (fileKey) {
+              apiKey = fileKey;
+              // Update environment variables with recovered key
+              process.env.IP2GEO_API_KEY = fileKey;
+              process.env.IP2GEOLOCATION_API_KEY = fileKey;
+            }
+          }
+        } catch (readError) {
+          console.warn("Could not read API key from file:", readError);
+        }
+      }
       
       if (!apiKey) {
         return res.json({
@@ -519,6 +561,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // (Classification reads IP2GEO_API_KEY first, so we must update it)
       process.env.IP2GEO_API_KEY = trimmedKey;
       process.env.IP2GEOLOCATION_API_KEY = trimmedKey;
+      
+      // Also store the key to a file for persistence across server restarts
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        fs.writeFileSync(keyFile, trimmedKey, 'utf8');
+        console.log("API key saved to persistent file for server restart recovery");
+      } catch (writeError) {
+        console.warn("Could not write API key to file:", writeError);
+        // This is not fatal, continue with memory-only storage
+      }
       
       // Clear any cached IP data since we have a new API key
       if (typeof ip2geoCache !== 'undefined' && ip2geoCache.clear) {
