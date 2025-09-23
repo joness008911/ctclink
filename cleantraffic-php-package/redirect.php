@@ -251,8 +251,8 @@ function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAn
                 'X-Forwarded-For: ' . $ip,  // Pass visitor IP
                 'X-Real-IP: ' . $ip          // Alternative IP header
             ],
-            CURLOPT_TIMEOUT => 10,
-            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 3,
+            CURLOPT_CONNECTTIMEOUT => 2,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0
@@ -312,30 +312,59 @@ function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAn
             break;
         }
         
-        // Wait before retry
-        usleep(100000); // 0.1 second
+        // Wait before retry (shorter for faster response)
+        usleep(50000); // 0.05 second
     }
     
-    // If all attempts failed, return connection error
+    // If all attempts failed, use fast local detection instead of logging "Unknown"
+    return performFastLocalDetection($userAgent, $ip);
+}
+
+/**
+ * Fast local detection fallback when API fails
+ */
+function performFastLocalDetection($userAgent, $ip) {
+    // Quick bot detection patterns
+    $botPatterns = [
+        'bot', 'crawler', 'spider', 'scraper', 'curl', 'wget', 'python', 'java',
+        'php', 'ruby', 'perl', 'go-http', 'nodejs', 'axios', 'postman'
+    ];
+    
+    $userAgentLower = strtolower($userAgent);
+    foreach ($botPatterns as $pattern) {
+        if (strpos($userAgentLower, $pattern) !== false) {
+            return [
+                'visitor_type' => 'bot',
+                'location' => 'Local Detection',
+                'browser' => 'Bot',
+                'device_type' => 'Bot',
+                'isp' => 'Local Detection',
+                'detection_method' => 'User Agent Pattern'
+            ];
+        }
+    }
+    
+    // If no bot patterns found, classify as human
     return [
-        'error' => true,
-        'error_message' => 'API connection failed or timeout',
-        'visitor_type' => 'bot',
-        'location' => 'Unknown',
-        'browser' => 'Unknown',
-        'device_type' => 'Unknown',
-        'isp' => 'Unknown'
+        'visitor_type' => 'human', 
+        'location' => 'Local Detection',
+        'browser' => 'Human',
+        'device_type' => 'desktop',
+        'isp' => 'Local Detection',
+        'detection_method' => 'Local Fallback'
     ];
 }
 
 /**
- * Log visitor data
- */
-/**
- * Log visitor data with deduplication to prevent multiple entries from same visitor
+ * Log visitor data with filtering - only log meaningful classifications
  */
 function logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp, $errorMessage = null) {
     global $VISITORS_FILE;
+    
+    // Filter out meaningless "Unknown" entries - don't log API failures
+    if ($location === 'Unknown' && $isp === 'Unknown' && $browser === 'Unknown') {
+        return; // Skip logging API failures/timeouts
+    }
     
     $currentTime = time();
     $visitorData = [
