@@ -361,9 +361,11 @@ function performFastLocalDetection($userAgent, $ip) {
 function logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp, $errorMessage = null) {
     global $VISITORS_FILE;
     
-    // Filter out meaningless "Unknown" entries - don't log API failures
-    if ($location === 'Unknown' && $isp === 'Unknown' && $browser === 'Unknown') {
-        return; // Skip logging API failures/timeouts
+    // Skip ALL local detections - only log API classifications
+    if ($location === 'Local Detection' || $isp === 'Local Detection' || 
+        $errorMessage === 'Local bot detection' || 
+        ($location === 'Unknown' && $isp === 'Unknown' && $browser === 'Unknown')) {
+        return; // Skip logging local detections and API failures
     }
     
     $currentTime = time();
@@ -507,25 +509,24 @@ try {
     $isp = 'Unknown';
     $errorMessage = null;
     
-    // If local analysis suggests bot, skip API call
+    // If local analysis suggests bot, skip API call and DON'T LOG
     if ($localAnalysis['isBot']) {
-        $classification = 'bot';
-        $errorMessage = 'Local bot detection';
+        // Redirect silently without logging
+        list($humanUrl, $botUrl) = getRedirectUrls();
+        header('Location: ' . $botUrl, true, 302);
+        exit();
     } else {
         // Use CleanTraffic API for detailed analysis with behavioral data
         $apiResult = classifyVisitorAPI($ip, $userAgent, $behavioralData, $enhancedAnalysis);
         
         // Always check if there was an error first
         if (isset($apiResult['error']) && $apiResult['error'] === true) {
-            // API error - force bot classification
-            $classification = 'bot';
-            $location = $apiResult['location'] ?? 'Unknown';
-            $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
-            $device = $apiResult['device_type'] ?? $localAnalysis['device'];
-            $isp = $apiResult['isp'] ?? 'Unknown';
-            $errorMessage = $apiResult['error_message'];
+            // API error - redirect silently without logging
+            list($humanUrl, $botUrl) = getRedirectUrls();
+            header('Location: ' . $botUrl, true, 302);
+            exit();
         } else {
-            // API success - use API results
+            // API success - use API results and log them
             $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
             $location = $apiResult['location'] ?? 'Unknown';
             $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
@@ -535,7 +536,7 @@ try {
         }
     }
     
-    // Always log the visitor (with deduplication and error info if any)
+    // Only log visitors classified by API (not local detections)
     logVisitorWithDeduplication(
         $ip, 
         $userAgent, 
