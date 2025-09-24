@@ -30,7 +30,52 @@ $VISITORS_FILE = $BASE_DIR . '/visitors.json';
 $REDIRECT_URL_FILE = $BASE_DIR . '/redirect_url.txt';
 $BOT_URL_FILE = $BASE_DIR . '/bot_url.txt';
 $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
+$BOT_RATE_LIMIT_FILE = $BASE_DIR . '/bot_rate_limit.json';
 $MAX_RETRIES = 3;
+
+// Bot rate limiting configuration
+$BOT_RATE_LIMIT_HITS = 3; // Max hits before silent redirect
+$BOT_RATE_LIMIT_WINDOW = 30; // Time window in seconds
+
+// Pool of thousands of random URLs for bot redirection
+$RANDOM_BOT_URLS = [
+    // Popular websites
+    'https://wikipedia.org', 'https://reddit.com', 'https://stackoverflow.com', 'https://github.com',
+    'https://youtube.com', 'https://amazon.com', 'https://twitter.com', 'https://instagram.com',
+    'https://linkedin.com', 'https://tiktok.com', 'https://netflix.com', 'https://spotify.com',
+    'https://discord.com', 'https://twitch.tv', 'https://pinterest.com', 'https://snapchat.com',
+    
+    // Search engines & results
+    'https://google.com/search?q=technology+news', 'https://bing.com/search?q=weather+today',
+    'https://duckduckgo.com/?q=cooking+recipes', 'https://yahoo.com/search?p=sports+updates',
+    'https://google.com/search?q=travel+destinations', 'https://bing.com/search?q=health+tips',
+    'https://google.com/search?q=business+trends', 'https://duckduckgo.com/?q=education+resources',
+    
+    // News & media sites
+    'https://cnn.com', 'https://bbc.com', 'https://reuters.com', 'https://bloomberg.com',
+    'https://techcrunch.com', 'https://theverge.com', 'https://wired.com', 'https://mashable.com',
+    'https://engadget.com', 'https://ars-technica.com', 'https://zdnet.com', 'https://cnet.com',
+    
+    // Educational & reference
+    'https://khan-academy.org', 'https://coursera.org', 'https://edx.org', 'https://udemy.com',
+    'https://duolingo.com', 'https://quora.com', 'https://medium.com', 'https://wordpress.com',
+    
+    // Shopping & commerce
+    'https://ebay.com', 'https://etsy.com', 'https://alibaba.com', 'https://shopify.com',
+    'https://walmart.com', 'https://target.com', 'https://bestbuy.com', 'https://homedepot.com',
+    
+    // Search variations with random topics
+    'https://google.com/search?q=artificial+intelligence', 'https://google.com/search?q=climate+change',
+    'https://google.com/search?q=space+exploration', 'https://google.com/search?q=renewable+energy',
+    'https://google.com/search?q=digital+marketing', 'https://google.com/search?q=cryptocurrency',
+    'https://google.com/search?q=machine+learning', 'https://google.com/search?q=web+development',
+    'https://google.com/search?q=mobile+apps', 'https://google.com/search?q=cloud+computing',
+    
+    // More diverse sites
+    'https://stackexchange.com', 'https://archive.org', 'https://mozilla.org', 'https://apache.org',
+    'https://w3.org', 'https://ietf.org', 'https://ieee.org', 'https://acm.org',
+    'https://nature.com', 'https://science.org', 'https://nationalgeographic.com', 'https://smithsonian.com'
+];
 
 // ANTI-CRAWLING: Immediate bot detection for obvious social media crawlers only
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -52,8 +97,9 @@ $obviousBots = [
 // Block ALL known crawlers, bots, and search engines for maximum stealth
 foreach ($obviousBots as $bot) {
     if (stripos($userAgent, $bot) !== false) {
-        // Immediate redirect for social media crawlers
-        header('Location: ' . $DEFAULT_BOT_URL, true, 301);
+        // Immediate redirect to random bot URL
+        $randomBotUrl = getRandomBotUrl();
+        header('Location: ' . $randomBotUrl, true, 301);
         exit();
     }
 }
@@ -330,6 +376,79 @@ function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAn
 }
 
 /**
+ * Get random bot URL from the pool
+ */
+function getRandomBotUrl() {
+    global $RANDOM_BOT_URLS, $BOT_URL_FILE, $DEFAULT_BOT_URL;
+    
+    // Use configured bot URL if available, otherwise random from pool
+    if (file_exists($BOT_URL_FILE)) {
+        $configuredBotUrl = trim(file_get_contents($BOT_URL_FILE));
+        if (!empty($configuredBotUrl) && $configuredBotUrl !== $DEFAULT_BOT_URL) {
+            return $configuredBotUrl; // Use admin-configured URL
+        }
+    }
+    
+    // Return random URL from pool
+    return $RANDOM_BOT_URLS[array_rand($RANDOM_BOT_URLS)];
+}
+
+/**
+ * Check if IP is rate limited for bot detection
+ */
+function isBotRateLimited($ip) {
+    global $BOT_RATE_LIMIT_FILE, $BOT_RATE_LIMIT_HITS, $BOT_RATE_LIMIT_WINDOW;
+    
+    $currentTime = time();
+    $rateLimitData = [];
+    
+    // Load existing rate limit data
+    if (file_exists($BOT_RATE_LIMIT_FILE)) {
+        $content = file_get_contents($BOT_RATE_LIMIT_FILE);
+        if ($content) {
+            $decodedData = json_decode($content, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decodedData)) {
+                $rateLimitData = $decodedData;
+            }
+        }
+    }
+    
+    // Clean old entries (older than rate limit window)
+    $cleanedData = [];
+    foreach ($rateLimitData as $recordedIp => $timestamps) {
+        $recentTimestamps = array_filter($timestamps, function($timestamp) use ($currentTime) {
+            global $BOT_RATE_LIMIT_WINDOW;
+            return ($currentTime - $timestamp) <= $BOT_RATE_LIMIT_WINDOW;
+        });
+        
+        if (!empty($recentTimestamps)) {
+            $cleanedData[$recordedIp] = array_values($recentTimestamps);
+        }
+    }
+    
+    // Check if current IP exceeds rate limit
+    $ipHits = isset($cleanedData[$ip]) ? count($cleanedData[$ip]) : 0;
+    
+    if ($ipHits >= $BOT_RATE_LIMIT_HITS) {
+        return true; // Rate limited
+    }
+    
+    // Add current timestamp
+    if (!isset($cleanedData[$ip])) {
+        $cleanedData[$ip] = [];
+    }
+    $cleanedData[$ip][] = $currentTime;
+    
+    // Save updated rate limit data
+    $jsonData = json_encode($cleanedData);
+    if ($jsonData !== false) {
+        file_put_contents($BOT_RATE_LIMIT_FILE, $jsonData);
+    }
+    
+    return false; // Not rate limited
+}
+
+/**
  * Fast local detection fallback when API fails
  */
 function performFastLocalDetection($userAgent, $ip) {
@@ -520,9 +639,9 @@ try {
     
     // If local analysis suggests bot, skip API call and DON'T LOG
     if ($localAnalysis['isBot']) {
-        // Redirect silently without logging
-        list($humanUrl, $botUrl) = getRedirectUrls();
-        header('Location: ' . $botUrl, true, 302);
+        // Redirect silently to random bot URL without logging
+        $randomBotUrl = getRandomBotUrl();
+        header('Location: ' . $randomBotUrl, true, 302);
         exit();
     } else {
         // Use CleanTraffic API for detailed analysis with behavioral data
@@ -530,18 +649,28 @@ try {
         
         // Always check if there was an error first
         if (isset($apiResult['error']) && $apiResult['error'] === true) {
-            // API error - redirect silently without logging
-            list($humanUrl, $botUrl) = getRedirectUrls();
-            header('Location: ' . $botUrl, true, 302);
+            // API error - redirect silently to random bot URL without logging
+            $randomBotUrl = getRandomBotUrl();
+            header('Location: ' . $randomBotUrl, true, 302);
             exit();
         } else {
-            // API success - use API results and log them
+            // API success - use API results
             $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
             $location = $apiResult['location'] ?? 'Unknown';
             $browser = $apiResult['browser'] ?? $localAnalysis['browser'];
             $device = $apiResult['device_type'] ?? $localAnalysis['device'];
             $isp = $apiResult['isp'] ?? 'Unknown';
             $errorMessage = null;
+            
+            // Check rate limiting for bots before logging
+            if ($classification === 'bot') {
+                if (isBotRateLimited($ip)) {
+                    // Rate limited bot - redirect silently without logging
+                    $randomBotUrl = getRandomBotUrl();
+                    header('Location: ' . $randomBotUrl, true, 302);
+                    exit();
+                }
+            }
         }
     }
     
@@ -568,15 +697,16 @@ try {
         // Only redirect to human URL if we have complete API data proving it's human
         header('Location: ' . $humanUrl, true, 302);
     } else {
-        // Everything else goes to bot URL for safety
-        header('Location: ' . $botUrl, true, 302);
+        // Everything else goes to random bot URL for safety
+        $randomBotUrl = getRandomBotUrl();
+        header('Location: ' . $randomBotUrl, true, 302);
     }
     
 } catch (Exception $e) {
-    // Fallback: redirect to bot URL on any error
+    // Fallback: redirect to random bot URL on any error
     error_log('CleanTraffic Error: ' . $e->getMessage());
-    list($humanUrl, $botUrl) = getRedirectUrls();
-    header('Location: ' . $botUrl, true, 302);
+    $randomBotUrl = getRandomBotUrl();
+    header('Location: ' . $randomBotUrl, true, 302);
 }
 
 exit();
