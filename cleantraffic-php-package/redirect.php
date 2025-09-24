@@ -560,10 +560,15 @@ try {
     // Get redirect URLs
     list($humanUrl, $botUrl) = getRedirectUrls();
     
-    // Perform redirection
-    if ($classification === 'human') {
+    // Perform redirection with safety check - ONLY verified humans get human URL
+    if ($classification === 'human' && 
+        !empty($location) && $location !== 'Unknown' && 
+        !empty($isp) && $isp !== 'Unknown' && 
+        $errorMessage === null) {
+        // Only redirect to human URL if we have complete API data proving it's human
         header('Location: ' . $humanUrl, true, 302);
     } else {
+        // Everything else goes to bot URL for safety
         header('Location: ' . $botUrl, true, 302);
     }
     
