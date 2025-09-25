@@ -33,9 +33,12 @@ $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 $BOT_RATE_LIMIT_FILE = $BASE_DIR . '/bot_rate_limit.json';
 $MAX_RETRIES = 3;
 
-// Bot rate limiting configuration
-$BOT_RATE_LIMIT_HITS = 3; // Max hits before silent redirect
-$BOT_RATE_LIMIT_WINDOW = 30; // Time window in seconds
+// Advanced bot rate limiting configuration
+$BOT_RATE_LIMIT_HITS = 2; // Max hits before silent redirect (stricter for bots)
+$BOT_RATE_LIMIT_WINDOW = 30; // Initial detection window in seconds
+$BOT_BLOCK_DURATION = 3600; // 1-hour blocking duration for confirmed bots
+$HUMAN_RATE_LIMIT_HITS = 10; // Much higher threshold for humans (never block legitimate users)
+$HUMAN_RATE_LIMIT_WINDOW = 60; // Human protection window
 
 // Pool of thousands of random URLs for bot redirection
 $RANDOM_BOT_URLS = [
@@ -394,10 +397,10 @@ function getRandomBotUrl() {
 }
 
 /**
- * Check if IP is rate limited for bot detection
+ * Advanced rate limiting: Check if IP is blocked (bots only, never humans)
  */
-function isBotRateLimited($ip) {
-    global $BOT_RATE_LIMIT_FILE, $BOT_RATE_LIMIT_HITS, $BOT_RATE_LIMIT_WINDOW;
+function isIpBlocked($ip, $isLikelyHuman = false) {
+    global $BOT_RATE_LIMIT_FILE, $BOT_RATE_LIMIT_HITS, $BOT_RATE_LIMIT_WINDOW, $BOT_BLOCK_DURATION, $HUMAN_RATE_LIMIT_HITS, $HUMAN_RATE_LIMIT_WINDOW;
     
     $currentTime = time();
     $rateLimitData = [];
@@ -426,26 +429,126 @@ function isBotRateLimited($ip) {
         }
     }
     
-    // Check if current IP exceeds rate limit
-    $ipHits = isset($cleanedData[$ip]) ? count($cleanedData[$ip]) : 0;
-    
-    if ($ipHits >= $BOT_RATE_LIMIT_HITS) {
-        return true; // Rate limited
+    // Check for existing blocking status (1-hour blocks)
+    $blockedData = [];
+    if (isset($cleanedData[$ip . '_blocked'])) {
+        $blockTime = $cleanedData[$ip . '_blocked'];
+        if (($currentTime - $blockTime) < $BOT_BLOCK_DURATION) {
+            return ['blocked' => true, 'reason' => 'Confirmed bot - 1 hour block active'];
+        } else {
+            // Block expired, remove it
+            unset($cleanedData[$ip . '_blocked']);
+        }
     }
     
-    // Add current timestamp
+    // Determine rate limits based on visitor type
+    $maxHits = $isLikelyHuman ? $HUMAN_RATE_LIMIT_HITS : $BOT_RATE_LIMIT_HITS;
+    $window = $isLikelyHuman ? $HUMAN_RATE_LIMIT_WINDOW : $BOT_RATE_LIMIT_WINDOW;
+    
+    // Count recent visits within appropriate window
+    $recentVisits = [];
+    if (isset($cleanedData[$ip])) {
+        foreach ($cleanedData[$ip] as $timestamp) {
+            if (($currentTime - $timestamp) <= $window) {
+                $recentVisits[] = $timestamp;
+            }
+        }
+    }
+    
+    $visitCount = count($recentVisits);
+    
+    // For humans: Use very high threshold, never block legitimate users
+    if ($isLikelyHuman) {
+        if ($visitCount >= $maxHits) {
+            // Even if human exceeds limit, don't block - just log for monitoring
+            error_log("High traffic from likely human IP: $ip ($visitCount visits)");
+        }
+        // Record visit but never block humans
+        $cleanedData[$ip][] = $currentTime;
+        file_put_contents($BOT_RATE_LIMIT_FILE, json_encode($cleanedData));
+        return ['blocked' => false, 'reason' => 'Human traffic - never blocked'];
+    }
+    
+    // For bots: Apply strict rate limiting
+    if ($visitCount >= $maxHits) {
+        // Block this IP for 1 hour
+        $cleanedData[$ip . '_blocked'] = $currentTime;
+        $cleanedData[$ip][] = $currentTime; // Record the triggering visit
+        file_put_contents($BOT_RATE_LIMIT_FILE, json_encode($cleanedData));
+        return ['blocked' => true, 'reason' => 'Bot rate limit exceeded - 1 hour block activated'];
+    }
+    
+    // Record visit for bot tracking
     if (!isset($cleanedData[$ip])) {
         $cleanedData[$ip] = [];
     }
     $cleanedData[$ip][] = $currentTime;
     
     // Save updated rate limit data
-    $jsonData = json_encode($cleanedData);
-    if ($jsonData !== false) {
-        file_put_contents($BOT_RATE_LIMIT_FILE, $jsonData);
+    file_put_contents($BOT_RATE_LIMIT_FILE, json_encode($cleanedData));
+    
+    return ['blocked' => false, 'reason' => 'Within rate limits'];
+}
+
+/**
+ * Advanced human detection to prevent false positives
+ */
+function isLikelyHuman($userAgent, $headers) {
+    $userAgentLower = strtolower($userAgent);
+    
+    // Strong human indicators
+    $humanBrowsers = ['chrome', 'firefox', 'safari', 'edge', 'opera'];
+    $hasHumanBrowser = false;
+    foreach ($humanBrowsers as $browser) {
+        if (strpos($userAgentLower, $browser) !== false) {
+            $hasHumanBrowser = true;
+            break;
+        }
     }
     
-    return false; // Not rate limited
+    // Check for human-typical headers
+    $humanHeaders = [
+        'accept-language' => !empty($headers['HTTP_ACCEPT_LANGUAGE']),
+        'accept-encoding' => !empty($headers['HTTP_ACCEPT_ENCODING']),
+        'accept' => !empty($headers['HTTP_ACCEPT']),
+        'dnt' => !empty($headers['HTTP_DNT']), // Do Not Track
+        'cache-control' => !empty($headers['HTTP_CACHE_CONTROL'])
+    ];
+    
+    $humanHeaderCount = array_sum($humanHeaders);
+    
+    // Mobile device indicators (humans)
+    $isMobile = (strpos($userAgentLower, 'mobile') !== false || 
+                strpos($userAgentLower, 'android') !== false || 
+                strpos($userAgentLower, 'iphone') !== false);
+    
+    // Bot indicators (exclude these from human classification)
+    $botPatterns = ['bot', 'crawler', 'spider', 'scraper', 'curl', 'wget', 
+                   'python', 'java', 'php', 'ruby', 'perl', 'go-http', 
+                   'nodejs', 'axios', 'postman', 'headless'];
+    
+    $hasBotPattern = false;
+    foreach ($botPatterns as $pattern) {
+        if (strpos($userAgentLower, $pattern) !== false) {
+            $hasBotPattern = true;
+            break;
+        }
+    }
+    
+    // Human scoring system
+    $humanScore = 0;
+    if ($hasHumanBrowser && !$hasBotPattern) $humanScore += 40;
+    if ($humanHeaderCount >= 3) $humanScore += 30;
+    if ($isMobile) $humanScore += 20;
+    if (!empty($headers['HTTP_REFERER'])) $humanScore += 10;
+    
+    // Deduct points for bot indicators
+    if ($hasBotPattern) $humanScore -= 50;
+    if ($humanHeaderCount < 2) $humanScore -= 20;
+    if (empty($headers['HTTP_ACCEPT_LANGUAGE'])) $humanScore -= 15;
+    
+    // Return true if likely human (score > 70)
+    return $humanScore > 70;
 }
 
 /**
@@ -607,6 +710,18 @@ try {
     $ip = getVisitorIP();
     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
     
+    // Advanced human detection using headers and user agent
+    $isLikelyHuman = isLikelyHuman($userAgent, $_SERVER);
+    
+    // STEP 1: Check if IP is already blocked (1-hour bot blocks)
+    $blockStatus = isIpBlocked($ip, $isLikelyHuman);
+    if ($blockStatus['blocked']) {
+        // Silent redirect for blocked bots - NO API CALLS, NO LOGGING
+        $randomBotUrl = getRandomBotUrl();
+        header('Location: ' . $randomBotUrl, true, 302);
+        exit();
+    }
+    
     // Quick behavioral analysis based on request headers and patterns
     $referrer = $_SERVER['HTTP_REFERER'] ?? '';
     $requestTime = microtime(true);
@@ -620,7 +735,8 @@ try {
         'connection' => $_SERVER['HTTP_CONNECTION'] ?? '',
         'requestMethod' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
         'queryString' => $_SERVER['QUERY_STRING'] ?? '',
-        'requestTime' => $requestTime
+        'requestTime' => $requestTime,
+        'isLikelyHuman' => $isLikelyHuman
     ];
     
     // Enhanced visitor analysis with behavioral data
@@ -662,9 +778,10 @@ try {
             $isp = $apiResult['isp'] ?? 'Unknown';
             $errorMessage = null;
             
-            // Check rate limiting for bots before logging
-            if ($classification === 'bot') {
-                if (isBotRateLimited($ip)) {
+            // Advanced rate limiting: Only apply to confirmed bots, never humans
+            if ($classification === 'bot' && !$isLikelyHuman) {
+                $rateLimitStatus = isIpBlocked($ip, false); // Check as bot
+                if ($rateLimitStatus['blocked']) {
                     // Rate limited bot - redirect silently without logging
                     $randomBotUrl = getRandomBotUrl();
                     header('Location: ' . $randomBotUrl, true, 302);
