@@ -755,11 +755,33 @@ try {
     
     // If local analysis suggests bot, skip API call and DON'T LOG
     if ($localAnalysis['isBot']) {
+        // For obvious bots, apply rate limiting BEFORE any processing
+        if (!$isLikelyHuman) {
+            $rateLimitStatus = isIpBlocked($ip, false);
+            if ($rateLimitStatus['blocked']) {
+                // Already blocked bot - silent redirect with NO processing
+                $randomBotUrl = getRandomBotUrl();
+                header('Location: ' . $randomBotUrl, true, 302);
+                exit();
+            }
+        }
+        
         // Redirect silently to random bot URL without logging
         $randomBotUrl = getRandomBotUrl();
         header('Location: ' . $randomBotUrl, true, 302);
         exit();
     } else {
+        // For potential humans, check rate limiting first to prevent API waste
+        if (!$isLikelyHuman) {
+            $rateLimitStatus = isIpBlocked($ip, false);
+            if ($rateLimitStatus['blocked']) {
+                // Blocked suspicious traffic - no API call needed
+                $randomBotUrl = getRandomBotUrl();
+                header('Location: ' . $randomBotUrl, true, 302);
+                exit();
+            }
+        }
+        
         // Use CleanTraffic API for detailed analysis with behavioral data
         $apiResult = classifyVisitorAPI($ip, $userAgent, $behavioralData, $enhancedAnalysis);
         
@@ -777,17 +799,6 @@ try {
             $device = $apiResult['device_type'] ?? $localAnalysis['device'];
             $isp = $apiResult['isp'] ?? 'Unknown';
             $errorMessage = null;
-            
-            // Advanced rate limiting: Only apply to confirmed bots, never humans
-            if ($classification === 'bot' && !$isLikelyHuman) {
-                $rateLimitStatus = isIpBlocked($ip, false); // Check as bot
-                if ($rateLimitStatus['blocked']) {
-                    // Rate limited bot - redirect silently without logging
-                    $randomBotUrl = getRandomBotUrl();
-                    header('Location: ' . $randomBotUrl, true, 302);
-                    exit();
-                }
-            }
         }
     }
     
