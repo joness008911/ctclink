@@ -23,7 +23,7 @@ header('Expires: 0');
 
 // Configuration - Dynamic path detection for root OR subfolder installation
 $BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
-$CLEANTRAFFIC_API_ENDPOINT = 'https://b5c9b90c-2b1a-4515-8f6e-08614985a083-00-1nd7hrl46szbn.worf.replit.dev/api/classify';
+$CLEANTRAFFIC_API_ENDPOINT = 'https://davidnmarx.com/api/classify';
 $DEFAULT_BOT_URL = 'https://google.com';
 $DEFAULT_HUMAN_URL = 'https://example.com';
 $VISITORS_FILE = $BASE_DIR . '/visitors.json';
