@@ -290,28 +290,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
-      // Get IP geolocation data - check environment variables first, then file backup
-      let ip2geoApiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+      // Get IP geolocation data - check persistent file FIRST, then environment backup
+      let ip2geoApiKey = '';
       
-      // If no API key in environment, try to load from persistent file
-      if (!ip2geoApiKey) {
-        try {
-          const fs = require('fs');
-          const path = require('path');
-          const keyFile = path.join(process.cwd(), 'server', '.api-key');
-          if (fs.existsSync(keyFile)) {
-            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-            if (fileKey) {
-              ip2geoApiKey = fileKey;
-              // Update environment variables with recovered key
-              process.env.IP2GEO_API_KEY = fileKey;
-              process.env.IP2GEOLOCATION_API_KEY = fileKey;
-              console.log("Recovered API key from persistent file after server restart");
-            }
+      // Always try to read from persistent file first (this gets latest updates)
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        if (fs.existsSync(keyFile)) {
+          const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+          if (fileKey) {
+            ip2geoApiKey = fileKey;
+            // Update environment variables to stay in sync
+            process.env.IP2GEO_API_KEY = fileKey;
+            process.env.IP2GEOLOCATION_API_KEY = fileKey;
           }
-        } catch (readError) {
-          console.warn("Could not read API key from file:", readError);
         }
+      } catch (readError) {
+        console.warn("Could not read API key from file:", readError);
+      }
+      
+      // Fallback to environment variables only if file read failed
+      if (!ip2geoApiKey) {
+        ip2geoApiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
       }
       if (!ip2geoApiKey) {
         return res.status(500).json({ 
@@ -463,27 +465,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Check IP2Geolocation API key status
   app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
     try {
-      // Get current API key - check environment variables first, then file backup
-      let apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY;
+      // Get current API key - check persistent file FIRST, then environment backup
+      let apiKey = '';
       
-      // If no API key in environment, try to load from persistent file
-      if (!apiKey) {
-        try {
-          const fs = require('fs');
-          const path = require('path');
-          const keyFile = path.join(process.cwd(), 'server', '.api-key');
-          if (fs.existsSync(keyFile)) {
-            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-            if (fileKey) {
-              apiKey = fileKey;
-              // Update environment variables with recovered key
-              process.env.IP2GEO_API_KEY = fileKey;
-              process.env.IP2GEOLOCATION_API_KEY = fileKey;
-            }
+      // Always try to read from persistent file first (this gets latest updates)
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        if (fs.existsSync(keyFile)) {
+          const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+          if (fileKey) {
+            apiKey = fileKey;
+            // Update environment variables to stay in sync
+            process.env.IP2GEO_API_KEY = fileKey;
+            process.env.IP2GEOLOCATION_API_KEY = fileKey;
           }
-        } catch (readError) {
-          console.warn("Could not read API key from file:", readError);
         }
+      } catch (readError) {
+        console.warn("Could not read API key from file:", readError);
+      }
+      
+      // Fallback to environment variables only if file read failed
+      if (!apiKey) {
+        apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
       }
       
       if (!apiKey) {
@@ -557,17 +562,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Update both environment variables for this process to ensure consistent behavior
-      // (Classification reads IP2GEO_API_KEY first, so we must update it)
+      // Update both environment variables for immediate effect
       process.env.IP2GEO_API_KEY = trimmedKey;
       process.env.IP2GEOLOCATION_API_KEY = trimmedKey;
       
-      // Try to persist the API key using Replit's secrets system
+      // Save to persistent file for consistent access (this is what classification reads first)
       try {
         const fs = require('fs');
         const path = require('path');
         
-        // Update .env file for persistence (Replit reads this)
+        // Save to our persistent key file
+        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        fs.writeFileSync(keyFile, trimmedKey, 'utf8');
+        console.log("API key saved to persistent file for immediate use");
+        
+        // Also update .env file for Replit persistence
         const envPath = path.join(process.cwd(), '.env');
         let envContent = '';
         
@@ -593,7 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log("API key updated in .env file for Replit persistence");
         
       } catch (writeError) {
-        console.warn("Could not update .env file:", writeError);
+        console.warn("Could not update persistent files:", writeError);
         // This is not fatal, continue with memory-only storage
       }
       
