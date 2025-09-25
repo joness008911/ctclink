@@ -267,6 +267,11 @@ function analyzeUserAgent($userAgent) {
 function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAnalysis = null) {
     global $CLEANTRAFFIC_API_ENDPOINT, $API_KEY_FILE, $MAX_RETRIES;
     
+    // Force fresh file reads by clearing any PHP file cache
+    if (function_exists('opcache_invalidate')) {
+        @opcache_invalidate($API_KEY_FILE, true);
+    }
+    
     // Check if API key file exists
     if (!file_exists($API_KEY_FILE)) {
         return [
@@ -280,6 +285,8 @@ function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAn
         ];
     }
     
+    // Clear any file cache to ensure fresh API key read
+    clearstatcache(true, $API_KEY_FILE);
     $apiKey = trim(file_get_contents($API_KEY_FILE));
     if (empty($apiKey)) {
         return [

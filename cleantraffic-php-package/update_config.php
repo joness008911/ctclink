@@ -42,26 +42,50 @@ try {
         }
     }
     
-    // Helper function to safely write files
+    // Helper function to safely write files with cache clearing
     function safeWriteFile($filename, $content) {
         // If file exists and not writable, try to fix permissions
         if (file_exists($filename) && !is_writable($filename)) {
             @chmod($filename, 0664);
         }
         
+        // Clear any existing cache for this file
+        clearstatcache(true, $filename);
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($filename, true);
+        }
+        
         // Try to write the file
-        $result = file_put_contents($filename, $content);
+        $result = file_put_contents($filename, $content, LOCK_EX);
         if ($result !== false) {
             @chmod($filename, 0644);
+            // Clear cache again after write
+            clearstatcache(true, $filename);
+            if (function_exists('opcache_invalidate')) {
+                @opcache_invalidate($filename, true);
+            }
             return true;
         }
         return false;
     }
     
-    // Update API key
+    // Update API key with enhanced cache clearing
     if (isset($input['apiKey']) && !empty($input['apiKey'])) {
-        if (safeWriteFile($API_KEY_FILE, trim($input['apiKey']))) {
+        $newApiKey = trim($input['apiKey']);
+        
+        // Remove old file first to prevent caching
+        if (file_exists($API_KEY_FILE)) {
+            @unlink($API_KEY_FILE);
+        }
+        
+        if (safeWriteFile($API_KEY_FILE, $newApiKey)) {
             $updated = true;
+            // Verify the write was successful
+            clearstatcache(true, $API_KEY_FILE);
+            $readBack = file_get_contents($API_KEY_FILE);
+            if (trim($readBack) !== $newApiKey) {
+                $errors[] = "API key verification failed - file may not have updated properly.";
+            }
         } else {
             $errors[] = "Cannot write API key file. Check file permissions or ownership.";
         }
