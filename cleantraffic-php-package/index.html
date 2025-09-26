@@ -395,25 +395,289 @@
         .empty-state p {
             font-size: 14px;
         }
+        /* Login Form Styles */
+        .login-form {
+            background: white;
+            border-radius: 20px;
+            padding: 50px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 450px;
+            margin: 50px auto;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .login-form h2 {
+            margin-bottom: 30px;
+            color: #0f172a;
+            font-size: 2em;
+            font-weight: 700;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #334155;
+            font-size: 0.95em;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.9);
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+            transform: translateY(-1px);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+            min-width: 100px;
+        }
+
+        /* Admin Sections */
+        .admin-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+            margin-top: 24px;
+        }
+
+        .admin-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .admin-card h3 {
+            color: #0f172a;
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .config-section {
+            margin-bottom: 24px;
+            padding: 20px;
+            background: #f8fafc;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .config-section h4 {
+            margin-bottom: 15px;
+            color: #334155;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 15px;
+        }
+
+        .input-group .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .redirect-link {
+            background: #f8fafc;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+            word-break: break-all;
+            font-family: 'Monaco', 'Consolas', monospace;
+            border: 2px dashed #e2e8f0;
+            font-size: 14px;
+            color: #475569;
+        }
+
+        .logout-btn {
+            position: fixed;
+            top: 25px;
+            right: 25px;
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+        }
+
+        .logout-btn:hover {
+            background: rgba(220, 38, 38, 0.9);
+            transform: translateY(-2px);
+        }
+
+        /* Notification Styles */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 10px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            max-width: 350px;
+        }
+
+        .notification.show {
+            transform: translateX(0);
+        }
+
+        .notification.success {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+        }
+
+        .notification.error {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+
+        /* Responsive Design Updates */
+        @media (max-width: 768px) {
+            .admin-grid {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .input-group {
+                flex-direction: column;
+            }
+
+            .input-group .form-group {
+                margin-bottom: 15px;
+            }
+
+            .logout-btn {
+                position: relative;
+                top: auto;
+                right: auto;
+                margin-top: 15px;
+            }
+        }
     </style>
 </head>
 <body data-testid="dashboard-body">
+    <!-- Logout Button -->
+    <button class="logout-btn" onclick="logout()" style="display: none;" id="logoutBtn" data-testid="button-logout">
+        <i class="fas fa-sign-out-alt"></i> Logout
+    </button>
+    
     <div class="container">
         <!-- Header -->
         <div class="header" data-testid="dashboard-header">
             <div class="header-left">
-                <h1><i class="fas fa-shield-alt"></i> CleanTraffic Dashboard</h1>
-                <p>Real-time visitor classification and bot detection analytics</p>
+                <h1><i class="fas fa-shield-alt"></i> CleanTraffic</h1>
+                <p>Advanced Bot Protection & Analytics Platform</p>
             </div>
             <div class="header-right">
-                <button class="refresh-btn" onclick="refreshData()" data-testid="button-refresh">
+                <button class="refresh-btn" onclick="refreshData()" style="display: none;" id="refreshBtn" data-testid="button-refresh">
                     <i class="fas fa-sync-alt"></i> Refresh
                 </button>
-                <div class="last-updated" data-testid="text-last-updated">
+                <div class="last-updated" style="display: none;" id="lastUpdatedDiv" data-testid="text-last-updated">
                     Last updated: <span id="lastUpdated">Loading...</span>
                 </div>
             </div>
         </div>
+
+        <!-- Login Form -->
+        <div class="login-form" id="loginForm" data-testid="form-login">
+            <h2><i class="fas fa-lock"></i> Admin Access</h2>
+            <form onsubmit="login(event)">
+                <div class="form-group">
+                    <label for="password"><i class="fas fa-key"></i> Admin Password:</label>
+                    <input type="password" id="password" required placeholder="Enter admin password" data-testid="input-password">
+                </div>
+                <button type="submit" class="btn" data-testid="button-login">
+                    <i class="fas fa-sign-in-alt"></i> Login
+                </button>
+            </form>
+            <p style="margin-top: 25px; color: #64748b; font-size: 0.9em;">
+                <i class="fas fa-info-circle"></i> Default password: <strong>admin123</strong><br>
+                <em>Change this immediately after first login for security</em>
+            </p>
+        </div>
+
+        <!-- Dashboard -->
+        <div class="dashboard" id="dashboard" style="display: none;">
 
         <!-- Statistics Cards -->
         <div class="stats-grid" data-testid="stats-grid">
@@ -512,6 +776,103 @@
                 </div>
             </div>
         </div>
+
+        <!-- Admin Configuration Sections -->
+        <div class="admin-grid">
+            <!-- System Configuration -->
+            <div class="admin-card" data-testid="card-system-config">
+                <h3><i class="fas fa-cogs"></i> System Configuration</h3>
+                
+                <!-- API Key Section -->
+                <div class="config-section">
+                    <h4><i class="fas fa-key"></i> IP2Geolocation API Configuration</h4>
+                    <div class="input-group">
+                        <div class="form-group">
+                            <label>API Key:</label>
+                            <input type="password" id="apiKey" placeholder="Enter your IP2Geolocation API key" data-testid="input-api-key">
+                        </div>
+                        <button class="btn btn-small" onclick="saveApiKey()" data-testid="button-save-api-key">
+                            <i class="fas fa-save"></i> Save
+                        </button>
+                    </div>
+                    <div class="card-actions">
+                        <button class="btn btn-secondary btn-small" onclick="testApi()" data-testid="button-test-api">
+                            <i class="fas fa-plug"></i> Test Connection
+                        </button>
+                        <span id="apiStatus" data-testid="text-api-status">Not configured</span>
+                    </div>
+                </div>
+
+                <!-- URL Configuration -->
+                <div class="config-section">
+                    <h4><i class="fas fa-link"></i> Redirect URLs</h4>
+                    <div class="input-group">
+                        <div class="form-group">
+                            <label>Human Visitors URL:</label>
+                            <input type="url" id="humanUrl" placeholder="https://your-website.com" data-testid="input-human-url">
+                        </div>
+                        <button class="btn btn-small" onclick="saveUrls()" data-testid="button-save-urls">
+                            <i class="fas fa-save"></i> Save
+                        </button>
+                    </div>
+                    <div class="input-group">
+                        <div class="form-group">
+                            <label>Bot Traffic URL:</label>
+                            <input type="url" id="botUrl" placeholder="https://google.com" data-testid="input-bot-url">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Password Change -->
+                <div class="config-section">
+                    <h4><i class="fas fa-lock"></i> Security Settings</h4>
+                    <div class="input-group">
+                        <div class="form-group">
+                            <label>New Admin Password:</label>
+                            <input type="password" id="newPassword" placeholder="Enter new password (min 6 chars)" data-testid="input-new-password">
+                        </div>
+                        <button class="btn btn-danger btn-small" onclick="changePassword()" data-testid="button-change-password">
+                            <i class="fas fa-key"></i> Change
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Protection Deployment -->
+            <div class="admin-card" data-testid="card-protection-deployment">
+                <h3><i class="fas fa-shield-alt"></i> Protection Deployment</h3>
+                <p style="margin-bottom: 15px; color: #64748b;">
+                    Share this link to protect your traffic. Visitors will be automatically classified and redirected.
+                </p>
+                
+                <h4 style="margin-bottom: 10px;">Your Protection Link:</h4>
+                <div class="redirect-link" id="redirectLink" data-testid="text-protection-link">
+                    <i class="fas fa-link"></i> Configuring...
+                </div>
+
+                <div class="card-actions">
+                    <button class="btn btn-secondary btn-small" onclick="copyProtectionLink()" data-testid="button-copy-link">
+                        <i class="fas fa-copy"></i> Copy Link
+                    </button>
+                    <button class="btn btn-small" onclick="generateProtectionLink()" data-testid="button-generate-link">
+                        <i class="fas fa-refresh"></i> Generate New
+                    </button>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="color: #334155; margin-bottom: 10px;"><i class="fas fa-info-circle"></i> Quick Setup:</h4>
+                    <ol style="color: #64748b; font-size: 14px; line-height: 1.6;">
+                        <li>Configure your API key above</li>
+                        <li>Set your redirect URLs</li>
+                        <li>Copy the protection link</li>
+                        <li>Share this link instead of your main website URL</li>
+                        <li>Bots will be automatically filtered out!</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+
+        </div> <!-- End dashboard -->
     </div>
 
     <script>
@@ -519,15 +880,310 @@
         let visitorTrendsChart = null;
         let detectionMethodsChart = null;
         let dashboardData = null;
+        let isAuthenticated = false;
 
         // Initialize dashboard
         document.addEventListener('DOMContentLoaded', function() {
             console.log('Initializing CleanTraffic Dashboard...');
+            checkAuthentication();
+        });
+
+        // Check if user is authenticated
+        async function checkAuthentication() {
+            try {
+                const response = await fetch('check_auth.php');
+                const data = await response.json();
+                
+                if (data.authenticated) {
+                    showDashboard();
+                } else {
+                    showLoginForm();
+                }
+            } catch (error) {
+                console.log('Auth check failed, showing login');
+                showLoginForm();
+            }
+        }
+
+        // Show login form
+        function showLoginForm() {
+            document.getElementById('loginForm').style.display = 'block';
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('logoutBtn').style.display = 'none';
+            isAuthenticated = false;
+        }
+
+        // Show dashboard
+        function showDashboard() {
+            document.getElementById('loginForm').style.display = 'none';
+            document.getElementById('dashboard').style.display = 'block';
+            document.getElementById('logoutBtn').style.display = 'block';
+            document.getElementById('refreshBtn').style.display = 'flex';
+            document.getElementById('lastUpdatedDiv').style.display = 'block';
+            isAuthenticated = true;
+            
+            // Load dashboard data and config
             loadDashboardData();
+            loadConfiguration();
+            updateProtectionLink();
             
             // Auto-refresh every 30 seconds
-            setInterval(loadDashboardData, 30000);
-        });
+            setInterval(() => {
+                if (isAuthenticated) {
+                    loadDashboardData();
+                }
+            }, 30000);
+        }
+
+        // Login function
+        async function login(event) {
+            event.preventDefault();
+            
+            const password = document.getElementById('password').value;
+            const loginBtn = event.target.querySelector('button');
+            const originalText = loginBtn.innerHTML;
+            
+            loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...';
+            loginBtn.disabled = true;
+            
+            try {
+                const response = await fetch('admin_auth.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'login', password: password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('Login successful!', 'success');
+                    showDashboard();
+                } else {
+                    showNotification(data.error || 'Login failed', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            } finally {
+                loginBtn.innerHTML = originalText;
+                loginBtn.disabled = false;
+            }
+        }
+
+        // Logout function
+        async function logout() {
+            try {
+                await fetch('admin_auth.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'logout' })
+                });
+                
+                showNotification('Logged out successfully', 'success');
+                showLoginForm();
+                
+                // Clear sensitive data
+                document.getElementById('password').value = '';
+            } catch (error) {
+                console.error('Logout error:', error);
+                showLoginForm(); // Force logout on error
+            }
+        }
+
+        // Load configuration
+        async function loadConfiguration() {
+            try {
+                const response = await fetch('get_config.php');
+                const config = await response.json();
+                
+                if (config.humanUrl) {
+                    document.getElementById('humanUrl').value = config.humanUrl;
+                }
+                if (config.botUrl) {
+                    document.getElementById('botUrl').value = config.botUrl;
+                }
+                
+                const apiStatus = document.getElementById('apiStatus');
+                if (config.hasApiKey) {
+                    apiStatus.textContent = 'Configured ✓';
+                    apiStatus.style.color = '#22c55e';
+                } else {
+                    apiStatus.textContent = 'Not configured';
+                    apiStatus.style.color = '#ef4444';
+                }
+            } catch (error) {
+                console.error('Failed to load configuration:', error);
+            }
+        }
+
+        // Save API key
+        async function saveApiKey() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) {
+                showNotification('Please enter an API key', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('update_config.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ apiKey: apiKey })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('API key saved successfully!', 'success');
+                    document.getElementById('apiKey').value = '';
+                    loadConfiguration();
+                } else {
+                    showNotification(data.error || 'Failed to save API key', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            }
+        }
+
+        // Test API connection
+        async function testApi() {
+            const testBtn = document.querySelector('[data-testid="button-test-api"]');
+            const originalText = testBtn.innerHTML;
+            
+            testBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+            testBtn.disabled = true;
+            
+            try {
+                const response = await fetch('test_api.php');
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('API connection successful!', 'success');
+                } else {
+                    showNotification(data.error || 'API test failed', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            } finally {
+                testBtn.innerHTML = originalText;
+                testBtn.disabled = false;
+            }
+        }
+
+        // Save URLs
+        async function saveUrls() {
+            const humanUrl = document.getElementById('humanUrl').value.trim();
+            const botUrl = document.getElementById('botUrl').value.trim();
+            
+            if (!humanUrl) {
+                showNotification('Please enter a human visitor URL', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('update_config.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        humanUrl: humanUrl,
+                        botUrl: botUrl || 'https://google.com'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('URLs saved successfully!', 'success');
+                    updateProtectionLink();
+                } else {
+                    showNotification(data.error || 'Failed to save URLs', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            }
+        }
+
+        // Change password
+        async function changePassword() {
+            const newPassword = document.getElementById('newPassword').value.trim();
+            
+            if (!newPassword || newPassword.length < 6) {
+                showNotification('Password must be at least 6 characters', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch('update_config.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ newPassword: newPassword })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification('Password changed successfully!', 'success');
+                    document.getElementById('newPassword').value = '';
+                } else {
+                    showNotification(data.error || 'Failed to change password', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            }
+        }
+
+        // Update protection link
+        function updateProtectionLink() {
+            const currentHost = window.location.host;
+            const currentPath = window.location.pathname.replace('/index.html', '');
+            const protectionUrl = `${window.location.protocol}//${currentHost}${currentPath}/redirect.php`;
+            
+            const linkElement = document.getElementById('redirectLink');
+            linkElement.innerHTML = `<i class="fas fa-link"></i> ${protectionUrl}`;
+        }
+
+        // Generate new protection link
+        function generateProtectionLink() {
+            updateProtectionLink();
+            showNotification('Protection link generated!', 'success');
+        }
+
+        // Copy protection link
+        function copyProtectionLink() {
+            const linkText = document.getElementById('redirectLink').textContent.trim();
+            const urlOnly = linkText.replace('🔗 ', '').replace(' ', '');
+            
+            navigator.clipboard.writeText(urlOnly).then(() => {
+                showNotification('Protection link copied to clipboard!', 'success');
+            }).catch(() => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = urlOnly;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('Protection link copied to clipboard!', 'success');
+            });
+        }
+
+        // Show notification
+        function showNotification(message, type = 'success') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type} show`;
+            notification.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                ${message}
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.classList.remove('show');
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 300);
+            }, 3000);
+        }
 
         // Load dashboard data
         async function loadDashboardData() {
