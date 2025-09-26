@@ -297,7 +297,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const fs = require('fs');
         const path = require('path');
-        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
         if (fs.existsSync(keyFile)) {
           const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
           if (fileKey) {
@@ -472,7 +472,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       try {
         const fs = require('fs');
         const path = require('path');
-        const keyFile = path.join(process.cwd(), 'server', '.api-key');
+        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
         if (fs.existsSync(keyFile)) {
           const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
           if (fileKey) {
@@ -571,10 +571,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const fs = require('fs');
         const path = require('path');
         
-        // Save to our persistent key file
-        const keyFile = path.join(process.cwd(), 'server', '.api-key');
-        fs.writeFileSync(keyFile, trimmedKey, 'utf8');
-        console.log("API key saved to persistent file for immediate use");
+        // Save to PHP package API key file for immediate use
+        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+        
+        // Clear any PHP cache before writing
+        if (fs.existsSync(keyFile)) {
+          fs.unlinkSync(keyFile); // Remove old file completely
+        }
+        
+        // Write new key with exclusive lock
+        fs.writeFileSync(keyFile, trimmedKey, { flag: 'w', mode: 0o644 });
+        console.log("API key saved to PHP package file for immediate use");
         
         // Also update .env file for Replit persistence
         const envPath = path.join(process.cwd(), '.env');
