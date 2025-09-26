@@ -86,12 +86,9 @@ $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 // COMPREHENSIVE BOT PATTERN - Based on extensive bot database for maximum coverage
 $botPattern = '/(googlebot\/|Googlebot-Mobile|Googlebot-Image|Google favicon|Mediapartners-Google|bingbot|slurp|java|wget|curl|Commons-HttpClient|Python-urllib|libwww|httpunit|nutch|phpcrawl|msnbot|jyxobot|FAST-WebCrawler|FAST Enterprise Crawler|biglotron|teoma|convera|seekbot|gigablast|exabot|ngbot|ia_archiver|GingerCrawler|webmon |httrack|webcrawler|grub\.org|UsineNouvelleCrawler|antibot|netresearchserver|speedy|fluffy|bibnum\.bnf|findlink|msrbot|panscient|yacybot|AISearchBot|IOI|ips-agent|tagoobot|MJ12bot|dotbot|woriobot|yanga|buzzbot|mlbot|yandexbot|purebot|Linguee Bot|Voyager|CyberPatrol|voilabot|baiduspider|citeseerxbot|spbot|twengabot|postrank|turnitinbot|scribdbot|page2rss|sitebot|linkdex|Adidxbot|blekkobot|ezooms|Mail\.RU_Bot|discobot|heritrix|findthatfile|europarchive\.org|NerdByNature\.Bot|sistrix crawler|ahrefsbot|Aboundex|domaincrawler|wbsearchbot|summify|ccbot|edisterbot|seznambot|ec2linkfinder|gslfbot|aihitbot|intelium_bot|facebookexternalhit|yeti|RetrevoPageAnalyzer|lb-spider|sogou|lssbot|careerbot|wotbox|wocbot|ichiro|DuckDuckBot|lssrocketcrawler|drupact|webcompanycrawler|acoonbot|openindexspider|gnam gnam spider|web-archive-net\.com\.bot|backlinkcrawler|coccoc|integromedb|content crawler spider|toplistbot|seokicks-robot|it2media-domain-crawler|ip-web-crawler\.com|siteexplorer\.info|elisabot|proximic|changedetection|blexbot|arabot|WeSEE:Search|niki-bot|CrystalSemanticsBot|rogerbot|360Spider|psbot|InterfaxScanBot|Lipperhey SEO Service|CC Metadata Scaper|g00g1e\.net|GrapeshotCrawler|urlappendbot|brainobot|fr-crawler|binlar|SimpleCrawler|Livelapbot|Twitterbot|cXensebot|smtbot|bnf\.fr_bot|A6-Indexer|ADmantX|Facebot|OrangeBot|memorybot|AdvBot|MegaIndex|SemanticScholarBot|ltx71|nerdybot|xovibot|BUbiNG|Qwantify|archive\.org_bot|Applebot|TweetmemeBot|crawler4j|findxbot|SemrushBot|yoozBot|lipperhey|y!j-asr|Domain Re-Animator Bot|AddThis|TelegramBot|WhatsApp|LinkedInBot|SkypeUriPreview|SlackBot|DiscordBot|YahooSeeker|SogouSpider|MajesticSEO|BLEXBot|UptimeRobot|StatusCake|GTmetrix|PageSpeed|ChatGPT|GPTBot|Claude-Web)/i';
 
-// IMMEDIATE SILENT REDIRECTION for ALL detected bots - NO API COSTS!
+// IMMEDIATE SILENT REDIRECTION for ALL detected bots - NO API COSTS, NO LOGS!
 if (preg_match($botPattern, $userAgent)) {
-    // Log bot detection for admin monitoring (optional)
-    error_log("CleanTraffic: Silent bot redirect - User Agent: " . substr($userAgent, 0, 100));
-    
-    // Immediate redirect to random bot URL - ZERO API cost
+    // Silent redirect to random bot URL - ZERO API cost, ZERO logging
     $randomBotUrl = getRandomBotUrl();
     header('Location: ' . $randomBotUrl, true, 301);
     exit();
@@ -664,7 +661,17 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
             copy($VISITORS_FILE, $VISITORS_FILE . '.backup');
         }
         
-        // Save back to file with atomic write for better reliability
+        // Save to index.html for display and JSON backup for API access
+        $indexFile = dirname($VISITORS_FILE) . '/index.html';
+        $visitorHtml = generateVisitorDisplayHtml($visitors);
+        
+        // Write to index.html
+        $tempHtmlFile = $indexFile . '.tmp';
+        if (file_put_contents($tempHtmlFile, $visitorHtml) !== false) {
+            rename($tempHtmlFile, $indexFile);
+        }
+        
+        // Also maintain JSON backup for API access
         $jsonData = json_encode($visitors, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         if ($jsonData !== false) {
             $tempFile = $VISITORS_FILE . '.tmp';
@@ -673,6 +680,119 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
             }
         }
     }
+}
+
+/**
+ * Generate HTML display for visitor data in index.html
+ */
+function generateVisitorDisplayHtml($visitors) {
+    $html = '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CleanTraffic - Visitor Log</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+        .header { background: #2c3e50; color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex: 1; }
+        .visitor-table { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #34495e; color: white; }
+        .human { color: #27ae60; font-weight: bold; }
+        .bot { color: #e74c3c; font-weight: bold; }
+        .timestamp { font-size: 0.9em; color: #666; }
+        .ip { font-family: monospace; }
+        .user-agent { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85em; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🛡️ CleanTraffic - Visitor Analytics</h1>
+        <p>Real-time visitor classification and bot detection system</p>
+    </div>';
+
+    // Calculate statistics
+    $totalVisitors = count($visitors);
+    $humanCount = 0;
+    $botCount = 0;
+    $recentVisitors = 0;
+    $oneHourAgo = time() - 3600;
+    
+    foreach ($visitors as $visitor) {
+        if ($visitor['classification'] === 'human') $humanCount++;
+        if ($visitor['classification'] === 'bot') $botCount++;
+        if (strtotime($visitor['timestamp']) > $oneHourAgo) $recentVisitors++;
+    }
+    
+    $html .= '
+    <div class="stats">
+        <div class="stat-card">
+            <h3>Total Visitors</h3>
+            <h2>' . $totalVisitors . '</h2>
+        </div>
+        <div class="stat-card">
+            <h3>Humans</h3>
+            <h2 class="human">' . $humanCount . '</h2>
+        </div>
+        <div class="stat-card">
+            <h3>Bots</h3>
+            <h2 class="bot">' . $botCount . '</h2>
+        </div>
+        <div class="stat-card">
+            <h3>Last Hour</h3>
+            <h2>' . $recentVisitors . '</h2>
+        </div>
+    </div>
+
+    <div class="visitor-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>IP Address</th>
+                    <th>Type</th>
+                    <th>Location</th>
+                    <th>Browser/Device</th>
+                    <th>ISP</th>
+                    <th>User Agent</th>
+                </tr>
+            </thead>
+            <tbody>';
+
+    // Show only first 100 visitors for performance
+    $displayVisitors = array_slice($visitors, 0, 100);
+    
+    foreach ($displayVisitors as $visitor) {
+        $classType = $visitor['classification'] === 'human' ? 'human' : 'bot';
+        $html .= '
+                <tr>
+                    <td class="timestamp">' . htmlspecialchars($visitor['timestamp']) . '</td>
+                    <td class="ip">' . htmlspecialchars($visitor['ip']) . '</td>
+                    <td class="' . $classType . '">' . strtoupper($visitor['classification']) . '</td>
+                    <td>' . htmlspecialchars($visitor['location']) . '</td>
+                    <td>' . htmlspecialchars($visitor['browser'] . ' / ' . $visitor['device']) . '</td>
+                    <td>' . htmlspecialchars($visitor['isp']) . '</td>
+                    <td class="user-agent" title="' . htmlspecialchars($visitor['user_agent']) . '">' . htmlspecialchars(substr($visitor['user_agent'], 0, 50)) . '...</td>
+                </tr>';
+    }
+
+    $html .= '
+            </tbody>
+        </table>
+    </div>
+
+    <div style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9em;">
+        <p>🤖 Bot traffic redirected silently • 👥 Only verified API classifications shown</p>
+        <p>Last updated: ' . date('Y-m-d H:i:s') . '</p>
+    </div>
+
+</body>
+</html>';
+
+    return $html;
 }
 
 /**
