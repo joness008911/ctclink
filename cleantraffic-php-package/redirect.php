@@ -426,6 +426,11 @@ function isIpBlocked($ip, $isLikelyHuman = false) {
     // Clean old entries (older than rate limit window)
     $cleanedData = [];
     foreach ($rateLimitData as $recordedIp => $timestamps) {
+        // Ensure timestamps is an array (fix for corrupted data)
+        if (!is_array($timestamps)) {
+            continue; // Skip corrupted entries
+        }
+        
         $recentTimestamps = array_filter($timestamps, function($timestamp) use ($currentTime) {
             global $BOT_RATE_LIMIT_WINDOW;
             return ($currentTime - $timestamp) <= $BOT_RATE_LIMIT_WINDOW;
