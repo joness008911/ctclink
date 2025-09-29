@@ -300,24 +300,27 @@ function classifyVisitorAPI($ip, $userAgent, $behavioralData = null, $enhancedAn
         ];
     }
     
-    // Build URL with api_key parameter (matching working endpoint format)
-    $url = $CLEANTRAFFIC_API_ENDPOINT . '?api_key=' . urlencode($apiKey);
+    // Build POST data with visitor information (original API format)
+    $postData = [
+        'api_key' => $apiKey,
+        'ip' => $ip,
+        'user_agent' => $userAgent
+    ];
     
     for ($attempt = 1; $attempt <= $MAX_RETRIES; $attempt++) {
         $ch = curl_init();
         curl_setopt_array($ch, [
-            CURLOPT_URL => $url,
+            CURLOPT_URL => $CLEANTRAFFIC_API_ENDPOINT,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPGET => true,  // Use GET method like working endpoint
+            CURLOPT_POST => true,  // Use POST method for original API
+            CURLOPT_POSTFIELDS => http_build_query($postData),
             CURLOPT_HTTPHEADER => [
-                'User-Agent: ' . $userAgent,  // Pass real visitor user agent
+                'Content-Type: application/x-www-form-urlencoded',
                 'Accept: application/json',
-                'Cache-Control: no-cache',
-                'X-Forwarded-For: ' . $ip,  // Pass visitor IP
-                'X-Real-IP: ' . $ip          // Alternative IP header
+                'Cache-Control: no-cache'
             ],
-            CURLOPT_TIMEOUT => 3,
-            CURLOPT_CONNECTTIMEOUT => 2,
+            CURLOPT_TIMEOUT => 2,  // Reduced timeout for performance
+            CURLOPT_CONNECTTIMEOUT => 1,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_FOLLOWLOCATION => false,
             CURLOPT_MAXREDIRS => 0
@@ -726,13 +729,30 @@ try {
     // Advanced human detection using headers and user agent
     $isLikelyHuman = isLikelyHuman($userAgent, $_SERVER);
     
-    // STEP 1: Check if IP is already blocked (1-hour bot blocks)
-    $blockStatus = isIpBlocked($ip, $isLikelyHuman);
-    if ($blockStatus['blocked']) {
-        // Silent redirect for blocked bots - NO API CALLS, NO LOGGING
-        $randomBotUrl = getRandomBotUrl();
-        header('Location: ' . $randomBotUrl, true, 302);
-        exit();
+    // STEP 1: Check if IP is already blocked (confirmed bots only)
+    // Only block IPs that are already confirmed as bots with 1-hour blocks
+    if (!$isLikelyHuman) {
+        $existingBlockData = [];
+        if (file_exists($BOT_RATE_LIMIT_FILE)) {
+            $content = file_get_contents($BOT_RATE_LIMIT_FILE);
+            if ($content) {
+                $decodedData = json_decode($content, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decodedData)) {
+                    $existingBlockData = $decodedData;
+                }
+            }
+        }
+        
+        // Check for existing 1-hour block (confirmed bots only)
+        if (isset($existingBlockData[$ip . '_blocked'])) {
+            $blockTime = $existingBlockData[$ip . '_blocked'];
+            if ((time() - $blockTime) < $BOT_BLOCK_DURATION) {
+                // This IP is confirmed blocked bot - silent redirect
+                $randomBotUrl = getRandomBotUrl();
+                header('Location: ' . $randomBotUrl, true, 302);
+                exit();
+            }
+        }
     }
     
     // Quick behavioral analysis based on request headers and patterns
@@ -768,32 +788,11 @@ try {
     
     // If local analysis suggests bot, skip API call and DON'T LOG
     if ($localAnalysis['isBot']) {
-        // For obvious bots, apply rate limiting BEFORE any processing
-        if (!$isLikelyHuman) {
-            $rateLimitStatus = isIpBlocked($ip, false);
-            if ($rateLimitStatus['blocked']) {
-                // Already blocked bot - silent redirect with NO processing
-                $randomBotUrl = getRandomBotUrl();
-                header('Location: ' . $randomBotUrl, true, 302);
-                exit();
-            }
-        }
-        
         // Redirect silently to random bot URL without logging
         $randomBotUrl = getRandomBotUrl();
         header('Location: ' . $randomBotUrl, true, 302);
         exit();
     } else {
-        // For potential humans, check rate limiting first to prevent API waste
-        if (!$isLikelyHuman) {
-            $rateLimitStatus = isIpBlocked($ip, false);
-            if ($rateLimitStatus['blocked']) {
-                // Blocked suspicious traffic - no API call needed
-                $randomBotUrl = getRandomBotUrl();
-                header('Location: ' . $randomBotUrl, true, 302);
-                exit();
-            }
-        }
         
         // Use CleanTraffic API for detailed analysis with behavioral data
         $apiResult = classifyVisitorAPI($ip, $userAgent, $behavioralData, $enhancedAnalysis);
@@ -812,20 +811,49 @@ try {
             $device = $apiResult['device_type'] ?? $localAnalysis['device'];
             $isp = $apiResult['isp'] ?? 'Unknown';
             $errorMessage = null;
+            
+            // CRITICAL: If API classified as bot, immediately redirect and block social media previews
+            if ($classification === 'bot') {
+                // Anti-preview headers to block social media crawlers
+                header('X-Frame-Options: DENY');
+                header('X-Content-Type-Options: nosniff');
+                header('X-Robots-Tag: noindex, nofollow, nosnippet, noarchive');
+                header('Status: 403 Forbidden', true, 403);
+                
+                // Log the bot detection for admin monitoring
+                logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp, null);
+                
+                // Immediate silent redirect to random bot URL
+                $randomBotUrl = getRandomBotUrl();
+                header('Location: ' . $randomBotUrl, true, 302);
+                exit();
+            }
         }
     }
     
-    // Only log visitors classified by API (not local detections)
-    logVisitorWithDeduplication(
-        $ip, 
-        $userAgent, 
-        $classification, 
-        $location, 
-        $browser, 
-        $device,
-        $isp,
-        $errorMessage
-    );
+    // Only log human visitors (bots already logged and redirected above)
+    if ($classification === 'human') {
+        logVisitorWithDeduplication(
+            $ip, 
+            $userAgent, 
+            $classification, 
+            $location, 
+            $browser, 
+            $device,
+            $isp,
+            $errorMessage
+        );
+        
+        // Apply rate limiting AFTER classification with human thresholds
+        // Humans get much higher limits and are never blocked
+        $humanRateStatus = isIpBlocked($ip, true); // true = human thresholds
+        // Note: humans are never actually blocked, this just records their visits
+        
+    } else if ($classification === 'bot') {
+        // For bots, apply strict rate limiting for future visits
+        $botRateStatus = isIpBlocked($ip, false); // false = bot thresholds
+        // This will block the IP for 1 hour if bot exceeds 2 hits/30s
+    }
     
     // Get redirect URLs
     list($humanUrl, $botUrl) = getRedirectUrls();
