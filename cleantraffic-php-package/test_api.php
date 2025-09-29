@@ -16,7 +16,7 @@ if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated']
     exit();
 }
 
-$CLEANTRAFFIC_API_ENDPOINT = 'https://davidnmarx.com/api/classify';
+// Test IP2Geolocation API directly instead of external service
 $BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
 $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 
@@ -33,65 +33,56 @@ try {
         exit();
     }
     
-    // Test API connection with sample data
-    $testData = json_encode([
-        'ip' => '8.8.8.8',
-        'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    // Test IP2Geolocation API directly with Google DNS IP
+    $testIP = '8.8.8.8';
+    $url = "https://api.ip2location.io/?key={$apiKey}&ip={$testIP}&format=json";
+    
+    $context = stream_context_create([
+        'http' => [
+            'timeout' => 10,
+            'user_agent' => 'CleanTraffic-APITest/1.0'
+        ]
     ]);
     
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $CLEANTRAFFIC_API_ENDPOINT,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $testData,
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'X-API-Key: ' . $apiKey,
-            'User-Agent: CleanTraffic-PHP-Test/1.0',
-            'Accept: application/json'
-        ],
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_FOLLOWLOCATION => false
-    ]);
-    
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
+    $response = @file_get_contents($url, false, $context);
     
     if ($response === false) {
-        echo json_encode(['success' => false, 'error' => 'Connection failed: ' . $error]);
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Failed to connect to IP2Geolocation API. Check your internet connection.'
+        ]);
         exit();
     }
     
-    if ($httpCode === 401) {
-        echo json_encode(['success' => false, 'error' => 'Invalid API key']);
+    $data = json_decode($response, true);
+    
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'Invalid response from IP2Geolocation API'
+        ]);
         exit();
     }
     
-    if ($httpCode === 403) {
-        echo json_encode(['success' => false, 'error' => 'API access forbidden']);
+    // Check for API errors
+    if (isset($data['error'])) {
+        echo json_encode([
+            'success' => false, 
+            'error' => 'API Error: ' . ($data['error']['error_message'] ?? 'Invalid API key or quota exceeded')
+        ]);
         exit();
     }
     
-    if ($httpCode !== 200) {
-        echo json_encode(['success' => false, 'error' => 'API returned HTTP ' . $httpCode]);
-        exit();
-    }
-    
-    $result = json_decode($response, true);
-    if (!$result) {
-        echo json_encode(['success' => false, 'error' => 'Invalid API response format']);
-        exit();
-    }
-    
+    // Success - API is working
     echo json_encode([
-        'success' => true, 
-        'message' => 'API connection successful',
-        'test_result' => $result
+        'success' => true,
+        'message' => 'IP2Geolocation API connection successful!',
+        'test_result' => [
+            'ip' => $testIP,
+            'country' => $data['country_name'] ?? 'Unknown',
+            'region' => $data['region_name'] ?? 'Unknown',
+            'quota_remaining' => $data['credits_consumed'] ?? 'Unknown'
+        ]
     ]);
     
 } catch (Exception $e) {
