@@ -290,8 +290,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
-      // Get IP geolocation data - check persistent file FIRST, then environment backup
-      let ip2geoApiKey = '';
+      // Use original CleanTraffic API classification system
+      let cleanTrafficApiKey = '';
       
       // Always try to read from persistent file first (this gets latest updates)
       try {
@@ -301,115 +301,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (fs.existsSync(keyFile)) {
           const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
           if (fileKey) {
-            ip2geoApiKey = fileKey;
-            // Update environment variables to stay in sync
-            process.env.IP2GEO_API_KEY = fileKey;
-            process.env.IP2GEOLOCATION_API_KEY = fileKey;
+            cleanTrafficApiKey = fileKey;
           }
         }
       } catch (readError) {
         console.warn("Could not read API key from file:", readError);
       }
       
-      // ONLY use environment variables if NO file exists (prevents old keys from returning)
-      if (!ip2geoApiKey) {
-        const envKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
-        if (envKey) {
-          console.log("Using API key from environment (first-time setup only)");
-          ip2geoApiKey = envKey;
-          
-          // Save environment key to file to prevent future conflicts
-          try {
-            const fs = require('fs');
-            const path = require('path');
-            const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-            fs.writeFileSync(keyFile, envKey, { flag: 'w', mode: 0o644 });
-            console.log("Saved environment API key to file for admin persistence");
-          } catch (writeError) {
-            console.warn("Could not save environment API key to file:", writeError);
-          }
-        }
-      }
-      if (!ip2geoApiKey) {
+      if (!cleanTrafficApiKey) {
         return res.status(500).json({ 
-          message: "IP2Geolocation API key not configured",
+          message: "CleanTraffic API key not configured",
           error: "Missing API key in environment variables"
         });
       }
 
-      let locationData: any = {};
+      // Use original CleanTraffic API classification
+      let classificationData: any = {};
       let visitorType = 'Human';
-      let detectionMethod = 'Unknown';
-      let connectionType = 'Unknown';
 
-      // If API call limit reached, classify as Bot immediately (revenue protection)
-      if (limitReached) {
-        visitorType = 'Bot';
-        detectionMethod = 'API Limit Reached - Classified as Bot';
-        connectionType = 'Limit Exceeded';
-        console.log(`API limit reached - classifying visitor ${clientIp} as Bot`);
-      } else {
-        // Normal classification with IP2Geo API (with caching for performance)
-        try {
-          // Check cache first for faster response
-          const cachedData = ip2geoCache.get(clientIp);
-          if (cachedData) {
-            locationData = cachedData;
-            console.log(`Using cached data for IP: ${clientIp}`);
-          } else {
-            // Make API call if not cached
-            const geoResponse = await fetch(`https://api.ip2location.io/?key=${ip2geoApiKey}&ip=${clientIp}&format=json`);
-            if (geoResponse.ok) {
-              locationData = await geoResponse.json();
-              // Cache the response for 30 minutes
-              ip2geoCache.set(clientIp, locationData);
-              console.log(`Cached new data for IP: ${clientIp}`);
+      // Call original CleanTraffic API for classification
+      try {
+        // Check cache first for faster response
+        const cachedData = ip2geoCache.get(clientIp);
+        if (cachedData) {
+          classificationData = cachedData;
+          visitorType = classificationData.visitor_type || 'Human';
+          console.log(`Using cached data for IP: ${clientIp}`);
+        } else {
+          // Make API call to original CleanTraffic endpoint
+          const apiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(cleanTrafficApiKey)}`;
+          const response = await fetch(apiUrl, {
+            method: 'GET',
+            headers: {
+              'User-Agent': userAgent,
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache',
+              'X-Forwarded-For': clientIp,
+              'X-Real-IP': clientIp
             }
-          }
+          });
           
-          if (locationData && Object.keys(locationData).length > 0) {
-            // Determine visitor type based on connection type
-            const usageType = locationData.as_info?.as_usage_type?.toLowerCase() || '';
-            connectionType = locationData.as_info?.as_usage_type || 'Unknown';
-            
-            if (usageType.includes('isp') || usageType.includes('mob')) {
-              visitorType = 'Human';
-              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP/MOB'}`;
-            } else if (usageType.includes('dch') || usageType.includes('vpn') || 
-                     usageType.includes('proxy') || usageType.includes('tor')) {
-              visitorType = 'Bot';
-              detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'DCH/VPN'}`;
-            } else {
-              // Default classification based on other indicators
-              if (locationData.isp?.toLowerCase().includes('datacenter') || 
-                  locationData.isp?.toLowerCase().includes('hosting') ||
-                  locationData.isp?.toLowerCase().includes('cloud')) {
-                visitorType = 'Bot';
-                detectionMethod = 'ISP Pattern: Datacenter/Hosting';
-              } else {
-                visitorType = 'Human';
-                detectionMethod = `Usage Type: ${locationData.as_info?.as_usage_type || 'ISP'}`;
-              }
-            }
+          if (response.ok) {
+            classificationData = await response.json();
+            visitorType = classificationData.visitor_type || 'Human';
+            // Cache the response for 30 minutes
+            ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
+            console.log(`Classified visitor ${clientIp} as: ${visitorType}`);
+          } else {
+            console.error(`CleanTraffic API error: ${response.status}`);
+            // Fallback to 'Human' if API fails
+            visitorType = 'Human';
           }
-        } catch (geoError) {
-          console.error("Geolocation API error:", geoError);
         }
+      } catch (error) {
+        console.error("CleanTraffic API error:", error);
+        // Fallback to 'Human' if API fails
+        visitorType = 'Human';
       }
 
       const classification = await storage.createClassification({
         ipAddress: clientIp,
-        location: locationData.city_name && locationData.country_name ? 
-                 `${locationData.city_name}, ${locationData.country_name}` : 'Unknown',
-        country: locationData.country_name || 'Unknown',
-        city: locationData.city_name || 'Unknown',
-        visitorType,
-        detectionMethod,
-        connectionType,
-        isp: locationData.isp || 'Unknown',
-        browser,
-        deviceType,
-        userAgent
+        location: classificationData.location || 'Unknown',
+        browser: classificationData.browser || browser,
+        deviceType: classificationData.device_type || deviceType,
+        visitorType: visitorType,
+        isp: classificationData.isp || 'Unknown'
       });
 
       const response = {
@@ -418,7 +374,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         browser: classification.browser || 'Unknown',
         device_type: classification.deviceType || 'Unknown', 
         visitor_type: classification.visitorType || 'Human',
-        detection_method: classification.detectionMethod || 'Unknown',
         isp: classification.isp || 'Unknown'
       };
       
@@ -477,13 +432,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Check IP2Geolocation API key status
-  app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
+  // Check CleanTraffic API key status  
+  app.get("/api/api-key/status", requireAuth, async (req, res) => {
     try {
-      // Get current API key - check persistent file FIRST, then environment backup
+      // Get current API key from file
       let apiKey = '';
       
-      // Always try to read from persistent file first (this gets latest updates)
       try {
         const fs = require('fs');
         const path = require('path');
@@ -492,39 +446,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
           if (fileKey) {
             apiKey = fileKey;
-            // Update environment variables to stay in sync
-            process.env.IP2GEO_API_KEY = fileKey;
-            process.env.IP2GEOLOCATION_API_KEY = fileKey;
           }
         }
       } catch (readError) {
         console.warn("Could not read API key from file:", readError);
       }
       
-      // ONLY use environment variables if NO file exists (prevents old keys from returning)
-      if (!apiKey) {
-        const envKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
-        if (envKey) {
-          console.log("Using API key from environment for status check (first-time only)");
-          apiKey = envKey;
-          
-          // Save environment key to file to prevent future conflicts
-          try {
-            const fs = require('fs');
-            const path = require('path');
-            const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-            fs.writeFileSync(keyFile, envKey, { flag: 'w', mode: 0o644 });
-            console.log("Saved environment API key to file for admin persistence");
-          } catch (writeError) {
-            console.warn("Could not save environment API key to file:", writeError);
-          }
-        }
-      }
-      
       if (!apiKey) {
         return res.json({
           hasKey: false,
-          message: "IP2Geolocation API key not configured"
+          message: "CleanTraffic API key not configured"
         });
       }
       
@@ -534,7 +465,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         message: "API key configured successfully"
       });
     } catch (error) {
-      console.error("Check IP2Geo API key error:", error);
+      console.error("Check API key error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
