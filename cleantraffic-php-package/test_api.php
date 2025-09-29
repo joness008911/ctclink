@@ -33,20 +33,24 @@ try {
         exit();
     }
     
-    // Test original CleanTraffic API
-    $testUrl = 'https://davidnmarx.com/api/classify?api_key=' . urlencode($apiKey);
+    // Test original CleanTraffic API using POST method
+    $testUrl = 'https://davidnmarx.com/api/classify';
+    $postData = [
+        'api_key' => $apiKey,
+        'ip' => '8.8.8.8',  // Test IP
+        'user_agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    ];
     
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => $testUrl,
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPGET => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query($postData),
         CURLOPT_HTTPHEADER => [
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Content-Type: application/x-www-form-urlencoded',
             'Accept: application/json',
-            'Cache-Control: no-cache',
-            'X-Forwarded-For: 8.8.8.8',
-            'X-Real-IP: 8.8.8.8'
+            'Cache-Control: no-cache'
         ],
         CURLOPT_TIMEOUT => 10,
         CURLOPT_CONNECTTIMEOUT => 5,

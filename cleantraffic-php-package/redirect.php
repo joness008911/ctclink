@@ -31,7 +31,7 @@ $REDIRECT_URL_FILE = $BASE_DIR . '/redirect_url.txt';
 $BOT_URL_FILE = $BASE_DIR . '/bot_url.txt';
 $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 $BOT_RATE_LIMIT_FILE = $BASE_DIR . '/bot_rate_limit.json';
-$MAX_RETRIES = 3;
+$MAX_RETRIES = 1;  // Reduced for faster performance
 
 // Advanced bot rate limiting configuration
 $BOT_RATE_LIMIT_HITS = 2; // Max hits before silent redirect (stricter for bots)
