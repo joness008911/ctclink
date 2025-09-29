@@ -311,9 +311,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn("Could not read API key from file:", readError);
       }
       
-      // Fallback to environment variables only if file read failed
+      // ONLY use environment variables if NO file exists (prevents old keys from returning)
       if (!ip2geoApiKey) {
-        ip2geoApiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+        const envKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+        if (envKey) {
+          console.log("Using API key from environment (first-time setup only)");
+          ip2geoApiKey = envKey;
+          
+          // Save environment key to file to prevent future conflicts
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+            fs.writeFileSync(keyFile, envKey, { flag: 'w', mode: 0o644 });
+            console.log("Saved environment API key to file for admin persistence");
+          } catch (writeError) {
+            console.warn("Could not save environment API key to file:", writeError);
+          }
+        }
       }
       if (!ip2geoApiKey) {
         return res.status(500).json({ 
@@ -486,9 +501,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.warn("Could not read API key from file:", readError);
       }
       
-      // Fallback to environment variables only if file read failed
+      // ONLY use environment variables if NO file exists (prevents old keys from returning)
       if (!apiKey) {
-        apiKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+        const envKey = process.env.IP2GEO_API_KEY || process.env.IP2GEOLOCATION_API_KEY || '';
+        if (envKey) {
+          console.log("Using API key from environment for status check (first-time only)");
+          apiKey = envKey;
+          
+          // Save environment key to file to prevent future conflicts
+          try {
+            const fs = require('fs');
+            const path = require('path');
+            const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+            fs.writeFileSync(keyFile, envKey, { flag: 'w', mode: 0o644 });
+            console.log("Saved environment API key to file for admin persistence");
+          } catch (writeError) {
+            console.warn("Could not save environment API key to file:", writeError);
+          }
+        }
       }
       
       if (!apiKey) {
