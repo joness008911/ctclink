@@ -470,7 +470,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Update IP2Geolocation API key
+  // Update CleanTraffic API key
   app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
     try {
       const { apiKey } = req.body;
@@ -491,12 +491,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Test the API key by making a validation request
+      // Test the API key with CleanTraffic API
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
         
-        const testResponse = await fetch(`https://api.ip2location.io/?key=${trimmedKey}&ip=8.8.8.8&format=json`, {
+        const formData = new URLSearchParams();
+        formData.append('api_key', trimmedKey);
+        formData.append('ip', '8.8.8.8');
+        formData.append('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+        
+        const testResponse = await fetch('https://davidnmarx.com/api/classify', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: formData,
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -504,7 +514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const testData = await testResponse.json();
         
         // Check for specific error indicators or missing expected fields
-        if (!testResponse.ok || testData.error || !testData.country_code) {
+        if (!testResponse.ok || testData.error || !testData.visitor_type) {
           return res.status(400).json({
             error: true,
             message: "API key validation failed - key appears to be invalid or expired"
@@ -519,7 +529,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         return res.status(400).json({
           error: true,
-          message: "Failed to validate API key with IP2Location service"
+          message: "Failed to validate API key with CleanTraffic service"
         });
       }
       
@@ -582,7 +592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       res.json({
         success: true,
-        message: "IP2Geolocation API key updated and validated successfully",
+        message: "CleanTraffic API key updated and validated successfully",
         keyPreview: `${trimmedKey.substring(0, 5)}...${trimmedKey.substring(trimmedKey.length - 5)}`
       });
       

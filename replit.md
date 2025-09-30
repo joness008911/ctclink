@@ -4,6 +4,19 @@
 
 CleanTraffic is a full-stack web application for detecting and classifying bot traffic versus human visitors. The system provides real-time visitor classification monitoring with a dashboard interface for administrators to view statistics, manage detection rules, and monitor classification results. Built as an Express.js API backend with a React frontend using shadcn/ui components.
 
+**IMPORTANT**: CleanTraffic uses the original davidnmarx.com/api/classify endpoint for visitor classification. All branding and API validation has been permanently updated to use "CleanTraffic API" instead of IP2Geolocation.
+
+## Recent Changes
+
+### September 30, 2025
+- **PERMANENT FIX**: Completely removed all IP2Geolocation branding from dashboard and codebase
+- Updated all API references to use "CleanTraffic API" 
+- Fixed API validation to test against davidnmarx.com/api/classify endpoint instead of IP2Location
+- Changed API requests from GET to POST format with ip/user_agent data for accurate location/ISP results
+- Fixed bot bypass: Bots now redirected immediately with anti-preview headers
+- Fixed human false positive blocking: Rate limiting moved after classification
+- Performance optimization: Reduced API retries and timeouts for faster response
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.

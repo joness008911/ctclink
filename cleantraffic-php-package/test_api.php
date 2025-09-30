@@ -16,7 +16,7 @@ if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated']
     exit();
 }
 
-// Test IP2Geolocation API directly instead of external service
+// Test CleanTraffic API directly
 $BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
 $API_KEY_FILE = $BASE_DIR . '/api_key.txt';
 

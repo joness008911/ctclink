@@ -34,7 +34,7 @@ export default function Ip2GeoKeyManagement() {
     onSuccess: (data) => {
       toast({
         title: "Success",
-        description: "IP2Geolocation API key updated successfully",
+        description: "CleanTraffic API key updated successfully",
         variant: "default",
       });
       setNewApiKey("");
@@ -78,7 +78,7 @@ export default function Ip2GeoKeyManagement() {
         <CardHeader>
           <CardTitle className="text-lg font-semibold text-foreground">
             <Globe className="text-primary mr-2 inline h-5 w-5" />
-            IP2Geolocation API
+            CleanTraffic API
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -95,7 +95,7 @@ export default function Ip2GeoKeyManagement() {
       <CardHeader>
         <CardTitle className="text-lg font-semibold text-foreground">
           <Globe className="text-primary mr-2 inline h-5 w-5" />
-          IP2Geolocation API
+          CleanTraffic API
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
