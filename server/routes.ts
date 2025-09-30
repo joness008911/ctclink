@@ -8,6 +8,7 @@ declare module 'express-session' {
 }
 import { createServer, type Server } from "http";
 import { storage, ip2geoCache } from "./storage";
+import { db } from "./db";
 import session from "express-session";
 import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
@@ -365,7 +366,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         browser: classificationData.browser || browser,
         deviceType: classificationData.device_type || deviceType,
         visitorType: visitorType,
-        isp: classificationData.isp || 'Unknown'
+        isp: classificationData.isp || 'Unknown',
+        detectionMethod: 'CleanTraffic API'
       });
 
       const response = {
@@ -435,21 +437,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Check CleanTraffic API key status  
   app.get("/api/api-key/status", requireAuth, async (req, res) => {
     try {
-      // Get current API key from file
-      let apiKey = '';
+      // PERMANENT STORAGE: Try database first
+      const { settings } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
       
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-        if (fs.existsSync(keyFile)) {
-          const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-          if (fileKey) {
-            apiKey = fileKey;
+      const dbKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
+      let apiKey = dbKey.length > 0 ? dbKey[0].value : '';
+      
+      // Fallback to file if not in database
+      if (!apiKey) {
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+          if (fs.existsSync(keyFile)) {
+            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+            if (fileKey) {
+              apiKey = fileKey;
+            }
           }
+        } catch (readError) {
+          console.warn("Could not read API key from file:", readError);
         }
-      } catch (readError) {
-        console.warn("Could not read API key from file:", readError);
       }
       
       if (!apiKey) {
@@ -462,7 +471,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         hasKey: true,
         keyPreview: `${apiKey.substring(0, 5)}...${apiKey.substring(apiKey.length - 5)}`,
-        message: "API key configured successfully"
+        message: "API key configured successfully",
+        lastUpdated: dbKey.length > 0 ? dbKey[0].updatedAt : null
       });
     } catch (error) {
       console.error("Check API key error:", error);
@@ -531,6 +541,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
           error: true,
           message: "Failed to validate API key with CleanTraffic service"
         });
+      }
+      
+      // PERMANENT STORAGE: Save to database first (most important for persistence)
+      try {
+        const { settings } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        // Check if key exists
+        const existingKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
+        
+        if (existingKey.length > 0) {
+          // Update existing key
+          await db.update(settings)
+            .set({ value: trimmedKey, updatedAt: new Date() })
+            .where(eq(settings.key, 'cleantraffic_api_key'));
+          console.log("API key updated in database (permanent storage)");
+        } else {
+          // Insert new key
+          await db.insert(settings).values({
+            key: 'cleantraffic_api_key',
+            value: trimmedKey
+          });
+          console.log("API key saved to database (permanent storage)");
+        }
+      } catch (dbError) {
+        console.error("Database save error (non-fatal):", dbError);
+        // Continue even if database save fails
       }
       
       // Update both environment variables for immediate effect
