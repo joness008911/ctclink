@@ -294,19 +294,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Use original CleanTraffic API classification system
       let cleanTrafficApiKey = '';
       
-      // Always try to read from persistent file first (this gets latest updates)
+      // PERMANENT STORAGE: Try database first (most reliable)
       try {
-        const fs = require('fs');
-        const path = require('path');
-        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-        if (fs.existsSync(keyFile)) {
-          const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-          if (fileKey) {
-            cleanTrafficApiKey = fileKey;
-          }
+        const { settings } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        
+        const dbKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
+        if (dbKey.length > 0 && dbKey[0].value) {
+          cleanTrafficApiKey = dbKey[0].value;
+          console.log("API key loaded from database (permanent storage)");
         }
-      } catch (readError) {
-        console.warn("Could not read API key from file:", readError);
+      } catch (dbError) {
+        console.warn("Could not read API key from database:", dbError);
+      }
+      
+      // Fallback to file if not in database
+      if (!cleanTrafficApiKey) {
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+          if (fs.existsSync(keyFile)) {
+            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+            if (fileKey) {
+              cleanTrafficApiKey = fileKey;
+              console.log("API key loaded from file (fallback)");
+            }
+          }
+        } catch (readError) {
+          console.warn("Could not read API key from file:", readError);
+        }
       }
       
       if (!cleanTrafficApiKey) {
