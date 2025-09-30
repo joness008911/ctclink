@@ -16,6 +16,11 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 - Fixed bot bypass: Bots now redirected immediately with anti-preview headers
 - Fixed human false positive blocking: Rate limiting moved after classification
 - Performance optimization: Reduced API retries and timeouts for faster response
+- **PERMANENT STORAGE**: Implemented PostgreSQL database storage for API keys
+  - Created `settings` table for configuration persistence
+  - API key updates now save to database first, ensuring permanent storage
+  - All admin configuration changes persist across server restarts
+  - Database takes priority over file/env storage for key retrieval
 
 ## User Preferences
 
@@ -67,6 +72,13 @@ Preferred communication style: Simple, everyday language.
 - `users` table for authentication
 - `classifications` table for storing visitor classification results with IP, location, device, and detection metadata
 - `detection_rules` table for configurable bot detection parameters
+- `settings` table for permanent configuration storage (API keys, system settings)
+
+**API Key Management**:
+- API keys are permanently stored in PostgreSQL `settings` table
+- Update workflow: Database → Environment Variables → File (triple-redundancy)
+- Retrieval priority: Database first → File fallback → Environment fallback
+- All admin dashboard API key changes persist permanently across restarts
 
 ### Authentication and Authorization
 
