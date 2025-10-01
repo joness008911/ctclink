@@ -8,6 +8,22 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 
 ## Recent Changes
 
+### October 1, 2025
+- **IP2GEOLOCATION API INTEGRATION**: Successfully integrated IP2Geolocation API (api.ip2location.io) for visitor classification
+  - API endpoint changed from davidnmarx.com to api.ip2location.io
+  - Classification now uses real IP2Geolocation service for accurate location and ISP data
+  - API key validation tests against actual IP2Geolocation service before saving
+  - Visitor classification detects bots based on proxy detection and usage type analysis
+- **API KEY STATUS DISPLAY**: Enhanced admin dashboard with complete API key management UI
+  - Status badge shows "Active" or "Not Set" for API key configuration
+  - Masked key display shows first 4 + ***** + last 4 characters (e.g., "abcd*****wxyz")
+  - Last updated timestamp shows when API key was last changed
+  - Real-time status updates every 30 seconds
+- **TIMESTAMP FIX**: Fixed API key timestamp persistence
+  - First-time API key inserts now include updatedAt timestamp
+  - Status endpoint safely handles missing timestamps with fallback
+  - All key updates properly record timestamp for audit trail
+
 ### September 30, 2025
 - **PERMANENT FIX**: Completely removed all IP2Geolocation branding from dashboard and codebase
 - Updated all API references to use "CleanTraffic API" 
