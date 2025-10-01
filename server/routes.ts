@@ -541,22 +541,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.log('API validation response:', { status: testResponse.status, data: testData });
         
         // Check for specific error indicators or missing expected fields
-        // Valid IP2Geolocation API must return: visitor_type, location, and isp
+        // Valid IP2Geolocation API must return: visitor_type and real location data
+        // Note: ISP may be "Unknown" for some IPs, so we only check location
         if (!testResponse.ok || 
             testData.error || 
             !testData.visitor_type || 
             !testData.location || 
             testData.location === 'Unknown' ||
-            !testData.isp || 
-            testData.isp === 'Unknown') {
+            testData.location.trim() === '') {
           console.log('API key validation failed:', testData);
           return res.status(400).json({
             error: true,
-            message: "Invalid API key - CleanTraffic API requires a valid IP2Geolocation key with location/ISP data"
+            message: "Invalid API key - Must be a valid IP2Geolocation API key"
           });
         }
         
-        console.log('API key validation successful:', { location: testData.location, isp: testData.isp });
+        console.log('API key validation successful:', { location: testData.location, isp: testData.isp || 'Unknown' });
       } catch (validationError: any) {
         if (validationError.name === 'AbortError') {
           return res.status(400).json({
