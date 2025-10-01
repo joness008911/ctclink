@@ -361,6 +361,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (response.ok) {
             const geoData = await response.json();
             
+            // Log raw API response to understand fields
+            console.log('📦 Raw IP2Geolocation Response:', JSON.stringify(geoData, null, 2));
+            
             // Convert IP2Geolocation response to our format
             const location = geoData.city_name && geoData.country_name 
               ? `${geoData.city_name}, ${geoData.country_name}`
@@ -368,9 +371,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             const isp = geoData.as || 'Unknown';
             
-            // Determine visitor type based on usage type or ISP
+            // Determine visitor type and detection method based on usage_type
+            let detectionMethod = geoData.usage_type || 'IP Analysis';
             visitorType = 'Human'; // Default to human
-            if (geoData.proxy?.is_proxy || geoData.proxy?.proxy_type) {
+            
+            // Bot detection based on usage_type
+            // DCH = Data Center/Hosting (Bot)
+            // RSV = Reserved IP (Bot)  
+            // ISP = Internet Service Provider (Human)
+            // COM = Commercial (typically Human)
+            if (geoData.usage_type === 'DCH' || geoData.usage_type === 'RSV') {
+              visitorType = 'Bot';
+            }
+            
+            // Also check proxy/fraud indicators
+            if (geoData.is_proxy || geoData.proxy?.is_vpn || geoData.proxy?.is_tor || 
+                geoData.proxy?.is_data_center || geoData.proxy?.is_web_crawler) {
               visitorType = 'Bot';
             }
             
@@ -381,7 +397,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               browser: browser,
               device_type: deviceType,
               visitor_type: visitorType,
-              detection_method: geoData.proxy?.proxy_type || 'IP Analysis'
+              detection_method: detectionMethod
             };
             
             console.log(`📍 API Response:`, {
@@ -413,7 +429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deviceType: classificationData.device_type || deviceType,
         visitorType: visitorType,
         isp: classificationData.isp || 'Unknown',
-        detectionMethod: 'CleanTraffic API'
+        detectionMethod: classificationData.detection_method || 'IP Analysis'
       });
 
       const response = {
