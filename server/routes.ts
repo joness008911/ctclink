@@ -549,10 +549,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? `${apiKey.substring(0, 4)}*****${apiKey.substring(apiKey.length - 4)}`
         : '****';
       
+      // Safely handle timestamp - use current time if missing
+      const timestamp = lastUpdated ? lastUpdated.toISOString() : new Date().toISOString();
+      
       res.json({
         hasKey: true,
         keyPreview: maskedKey,
-        lastUpdated: lastUpdated.toISOString()
+        lastUpdated: timestamp
       });
     } catch (error) {
       console.error("Check IP2Geo API key status error:", error);
@@ -646,10 +649,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(eq(settings.key, 'cleantraffic_api_key'));
           console.log("API key updated in database (permanent storage)");
         } else {
-          // Insert new key
+          // Insert new key with timestamp
           await db.insert(settings).values({
             key: 'cleantraffic_api_key',
-            value: trimmedKey
+            value: trimmedKey,
+            updatedAt: new Date()
           });
           console.log("API key saved to database (permanent storage)");
         }
