@@ -545,19 +545,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Test the API key with CleanTraffic API (using GET like actual classify endpoint)
+      // Test the API key with IP2Geolocation API
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
         
-        const testApiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(trimmedKey)}`;
+        const testApiUrl = `https://api.ip2location.io/?key=${encodeURIComponent(trimmedKey)}&ip=8.8.8.8`;
         const testResponse = await fetch(testApiUrl, {
           method: 'GET',
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-            'X-Forwarded-For': '8.8.8.8',
-            'X-Real-IP': '8.8.8.8'
+            'Accept': 'application/json'
           },
           signal: controller.signal
         });
@@ -565,25 +562,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         const testData = await testResponse.json();
         
-        console.log('API validation response:', { status: testResponse.status, data: testData });
+        console.log('IP2Geolocation API validation:', { status: testResponse.status, data: testData });
         
-        // Check for specific error indicators or missing expected fields
-        // Valid IP2Geolocation API must return: visitor_type and real location data
-        // Note: ISP may be "Unknown" for some IPs, so we only check location
-        if (!testResponse.ok || 
-            testData.error || 
-            !testData.visitor_type || 
-            !testData.location || 
-            testData.location === 'Unknown' ||
-            testData.location.trim() === '') {
+        // Check if API key is valid - IP2Location returns error field for invalid keys
+        if (!testResponse.ok || testData.error || !testData.country_name) {
           console.log('API key validation failed:', testData);
           return res.status(400).json({
             error: true,
-            message: "Invalid API key - Must be a valid IP2Geolocation API key"
+            message: testData.error?.message || "Invalid API key - Must be a valid IP2Geolocation API key"
           });
         }
         
-        console.log('API key validation successful:', { location: testData.location, isp: testData.isp || 'Unknown' });
+        console.log('API key validation successful:', { 
+          country: testData.country_name, 
+          city: testData.city_name,
+          isp: testData.as 
+        });
       } catch (validationError: any) {
         if (validationError.name === 'AbortError') {
           return res.status(400).json({
