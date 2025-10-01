@@ -345,27 +345,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitorType = classificationData.visitor_type || 'Human';
           console.log(`Using cached data for IP: ${clientIp}`);
         } else {
-          // Make API call to original CleanTraffic endpoint using POST
-          const formData = new URLSearchParams();
-          formData.append('api_key', cleanTrafficApiKey);
-          formData.append('ip', clientIp);
-          formData.append('user_agent', userAgent);
+          // Make API call - davidnmarx.com reads visitor IP from request headers, NOT from POST body!
+          const apiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(cleanTrafficApiKey)}`;
           
-          console.log(`🔍 Calling API with IP: ${clientIp}, UserAgent: ${userAgent.substring(0, 50)}...`);
+          console.log(`🔍 Calling API for visitor IP: ${clientIp}`);
           
-          const response = await fetch('https://davidnmarx.com/api/classify', {
-            method: 'POST',
+          const response = await fetch(apiUrl, {
+            method: 'GET',
             headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: formData
+              'User-Agent': userAgent,
+              'Accept': 'application/json',
+              'X-Forwarded-For': clientIp,
+              'X-Real-IP': clientIp,
+              'CF-Connecting-IP': clientIp,
+              'True-Client-IP': clientIp
+            }
           });
           
           if (response.ok) {
             classificationData = await response.json();
             visitorType = classificationData.visitor_type || 'Human';
             
-            console.log(`📍 API Response for IP ${clientIp}:`, {
+            console.log(`📍 API Response:`, {
               returned_ip: classificationData.ip,
               location: classificationData.location,
               isp: classificationData.isp,
@@ -374,7 +375,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Cache the response for 30 minutes
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`✅ Classified visitor ${clientIp} as: ${visitorType} - Location: ${classificationData.location}, ISP: ${classificationData.isp}`);
+            console.log(`✅ Visitor ${clientIp} classified as: ${visitorType} - ${classificationData.location}, ${classificationData.isp}`);
           } else {
             console.error(`CleanTraffic API error: ${response.status}`);
             // Fallback to 'Human' if API fails
