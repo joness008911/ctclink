@@ -524,6 +524,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get IP2Geolocation API key status (with masked key and last updated)
+  app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
+    try {
+      // PERMANENT STORAGE: Try database first
+      const { settings } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      
+      const dbKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
+      
+      if (dbKey.length === 0 || !dbKey[0].value) {
+        return res.json({
+          hasKey: false,
+          keyPreview: null,
+          lastUpdated: "Never"
+        });
+      }
+      
+      const apiKey = dbKey[0].value;
+      const lastUpdated = dbKey[0].updatedAt;
+      
+      // Create masked key: first 4 + ***** + last 4
+      const maskedKey = apiKey.length > 8 
+        ? `${apiKey.substring(0, 4)}*****${apiKey.substring(apiKey.length - 4)}`
+        : '****';
+      
+      res.json({
+        hasKey: true,
+        keyPreview: maskedKey,
+        lastUpdated: lastUpdated.toISOString()
+      });
+    } catch (error) {
+      console.error("Check IP2Geo API key status error:", error);
+      res.status(500).json({ 
+        hasKey: false,
+        keyPreview: null,
+        lastUpdated: "Never"
+      });
+    }
+  });
+
   // Update CleanTraffic API key
   app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
     try {
