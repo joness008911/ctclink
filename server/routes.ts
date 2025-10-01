@@ -351,6 +351,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           formData.append('ip', clientIp);
           formData.append('user_agent', userAgent);
           
+          console.log(`🔍 Calling API with IP: ${clientIp}, UserAgent: ${userAgent.substring(0, 50)}...`);
+          
           const response = await fetch('https://davidnmarx.com/api/classify', {
             method: 'POST',
             headers: {
@@ -362,9 +364,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (response.ok) {
             classificationData = await response.json();
             visitorType = classificationData.visitor_type || 'Human';
+            
+            console.log(`📍 API Response for IP ${clientIp}:`, {
+              returned_ip: classificationData.ip,
+              location: classificationData.location,
+              isp: classificationData.isp,
+              visitor_type: classificationData.visitor_type
+            });
+            
             // Cache the response for 30 minutes
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`Classified visitor ${clientIp} as: ${visitorType} - Location: ${classificationData.location}, ISP: ${classificationData.isp}`);
+            console.log(`✅ Classified visitor ${clientIp} as: ${visitorType} - Location: ${classificationData.location}, ISP: ${classificationData.isp}`);
           } else {
             console.error(`CleanTraffic API error: ${response.status}`);
             // Fallback to 'Human' if API fails
