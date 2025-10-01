@@ -527,22 +527,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Test the API key with CleanTraffic API
+      // Test the API key with CleanTraffic API (using GET like actual classify endpoint)
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
         
-        const formData = new URLSearchParams();
-        formData.append('api_key', trimmedKey);
-        formData.append('ip', '8.8.8.8');
-        formData.append('user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-        
-        const testResponse = await fetch('https://davidnmarx.com/api/classify', {
-          method: 'POST',
+        const testApiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(trimmedKey)}`;
+        const testResponse = await fetch(testApiUrl, {
+          method: 'GET',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'X-Forwarded-For': '8.8.8.8',
+            'X-Real-IP': '8.8.8.8'
           },
-          body: formData,
           signal: controller.signal
         });
         clearTimeout(timeoutId);
