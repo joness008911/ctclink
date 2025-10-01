@@ -13,6 +13,7 @@ import session from "express-session";
 import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
 import path from "path";
+import fs from "fs";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
@@ -311,8 +312,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Fallback to file if not in database
       if (!cleanTrafficApiKey) {
         try {
-          const fs = require('fs');
-          const path = require('path');
           const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
           if (fs.existsSync(keyFile)) {
             const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
@@ -346,17 +345,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitorType = classificationData.visitor_type || 'Human';
           console.log(`Using cached data for IP: ${clientIp}`);
         } else {
-          // Make API call to original CleanTraffic endpoint
-          const apiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(cleanTrafficApiKey)}`;
-          const response = await fetch(apiUrl, {
-            method: 'GET',
+          // Make API call to original CleanTraffic endpoint using POST
+          const formData = new URLSearchParams();
+          formData.append('api_key', cleanTrafficApiKey);
+          formData.append('ip', clientIp);
+          formData.append('user_agent', userAgent);
+          
+          const response = await fetch('https://davidnmarx.com/api/classify', {
+            method: 'POST',
             headers: {
-              'User-Agent': userAgent,
-              'Accept': 'application/json',
-              'Cache-Control': 'no-cache',
-              'X-Forwarded-For': clientIp,
-              'X-Real-IP': clientIp
-            }
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: formData
           });
           
           if (response.ok) {
@@ -364,7 +364,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             visitorType = classificationData.visitor_type || 'Human';
             // Cache the response for 30 minutes
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`Classified visitor ${clientIp} as: ${visitorType}`);
+            console.log(`Classified visitor ${clientIp} as: ${visitorType} - Location: ${classificationData.location}, ISP: ${classificationData.isp}`);
           } else {
             console.error(`CleanTraffic API error: ${response.status}`);
             // Fallback to 'Human' if API fails
@@ -464,8 +464,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Fallback to file if not in database
       if (!apiKey) {
         try {
-          const fs = require('fs');
-          const path = require('path');
           const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
           if (fs.existsSync(keyFile)) {
             const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
@@ -540,13 +538,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         const testData = await testResponse.json();
         
+        console.log('API validation response:', { status: testResponse.status, data: testData });
+        
         // Check for specific error indicators or missing expected fields
-        if (!testResponse.ok || testData.error || !testData.visitor_type) {
+        // Valid IP2Geolocation API must return: visitor_type, location, and isp
+        if (!testResponse.ok || 
+            testData.error || 
+            !testData.visitor_type || 
+            !testData.location || 
+            testData.location === 'Unknown' ||
+            !testData.isp || 
+            testData.isp === 'Unknown') {
+          console.log('API key validation failed:', testData);
           return res.status(400).json({
             error: true,
-            message: "API key validation failed - key appears to be invalid or expired"
+            message: "Invalid API key - CleanTraffic API requires a valid IP2Geolocation key with location/ISP data"
           });
         }
+        
+        console.log('API key validation successful:', { location: testData.location, isp: testData.isp });
       } catch (validationError: any) {
         if (validationError.name === 'AbortError') {
           return res.status(400).json({
@@ -593,9 +603,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Save to persistent file for consistent access (this is what classification reads first)
       try {
-        const fs = require('fs');
-        const path = require('path');
-        
         // Save to PHP package API key file for immediate use
         const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
         
