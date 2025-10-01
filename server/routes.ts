@@ -345,29 +345,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
           visitorType = classificationData.visitor_type || 'Human';
           console.log(`Using cached data for IP: ${clientIp}`);
         } else {
-          // Make API call - davidnmarx.com reads visitor IP from request headers, NOT from POST body!
-          const apiUrl = `https://davidnmarx.com/api/classify?api_key=${encodeURIComponent(cleanTrafficApiKey)}`;
+          // Call IP2Geolocation API directly with the API key
+          const apiUrl = `https://api.ip2location.io/?key=${encodeURIComponent(cleanTrafficApiKey)}&ip=${encodeURIComponent(clientIp)}`;
           
-          console.log(`🔍 Calling API for visitor IP: ${clientIp}`);
+          console.log(`🔍 Calling IP2Geolocation API for IP: ${clientIp}`);
           
           const response = await fetch(apiUrl, {
             method: 'GET',
             headers: {
               'User-Agent': userAgent,
-              'Accept': 'application/json',
-              'X-Forwarded-For': clientIp,
-              'X-Real-IP': clientIp,
-              'CF-Connecting-IP': clientIp,
-              'True-Client-IP': clientIp
+              'Accept': 'application/json'
             }
           });
           
           if (response.ok) {
-            classificationData = await response.json();
-            visitorType = classificationData.visitor_type || 'Human';
+            const geoData = await response.json();
+            
+            // Convert IP2Geolocation response to our format
+            const location = geoData.city_name && geoData.country_name 
+              ? `${geoData.city_name}, ${geoData.country_name}`
+              : (geoData.country_name || 'Unknown');
+            
+            const isp = geoData.as || 'Unknown';
+            
+            // Determine visitor type based on usage type or ISP
+            visitorType = 'Human'; // Default to human
+            if (geoData.proxy?.is_proxy || geoData.proxy?.proxy_type) {
+              visitorType = 'Bot';
+            }
+            
+            classificationData = {
+              ip: clientIp,
+              location: location,
+              isp: isp,
+              browser: browser,
+              device_type: deviceType,
+              visitor_type: visitorType,
+              detection_method: geoData.proxy?.proxy_type || 'IP Analysis'
+            };
             
             console.log(`📍 API Response:`, {
-              returned_ip: classificationData.ip,
+              ip: clientIp,
               location: classificationData.location,
               isp: classificationData.isp,
               visitor_type: classificationData.visitor_type
@@ -377,7 +395,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
             console.log(`✅ Visitor ${clientIp} classified as: ${visitorType} - ${classificationData.location}, ${classificationData.isp}`);
           } else {
-            console.error(`CleanTraffic API error: ${response.status}`);
+            console.error(`IP2Geolocation API error: ${response.status}`);
             // Fallback to 'Human' if API fails
             visitorType = 'Human';
           }
