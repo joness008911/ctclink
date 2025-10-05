@@ -72,7 +72,9 @@
         }
       } catch(e) {}
 
-      // Basic DevTools detection (simple method)
+      // DevTools detection disabled in development environment
+      // Uncomment below for production deployment
+      /*
       let devtools = {open: false, orientation: null};
       const threshold = 160;
       
@@ -88,6 +90,7 @@
           devtools.open = false;
         }
       }, 500);
+      */
 
       // Disable text selection for additional protection (but allow form interactions)
       document.onselectstart = function(e) {
