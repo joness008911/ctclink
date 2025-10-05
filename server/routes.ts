@@ -736,6 +736,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get redirect URLs
+  app.get("/api/redirect-urls", requireAuth, async (req, res) => {
+    try {
+      const redirectUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'redirect_url.txt');
+      const botUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'bot_url.txt');
+      
+      let humanUrl = 'https://example.com/human';
+      let botUrl = 'https://example.com/bot';
+      
+      if (fs.existsSync(redirectUrlFile)) {
+        humanUrl = fs.readFileSync(redirectUrlFile, 'utf8').trim();
+      }
+      
+      if (fs.existsSync(botUrlFile)) {
+        botUrl = fs.readFileSync(botUrlFile, 'utf8').trim();
+      }
+      
+      res.json({ humanUrl, botUrl });
+    } catch (error) {
+      console.error("Get redirect URLs error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update redirect URLs
+  app.put("/api/redirect-urls", requireAuth, async (req, res) => {
+    try {
+      const { humanUrl, botUrl } = req.body;
+      
+      if (!humanUrl || !botUrl) {
+        return res.status(400).json({ message: "Both humanUrl and botUrl are required" });
+      }
+      
+      // Validate URLs
+      try {
+        new URL(humanUrl);
+        new URL(botUrl);
+      } catch {
+        return res.status(400).json({ message: "Invalid URL format" });
+      }
+      
+      const redirectUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'redirect_url.txt');
+      const botUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'bot_url.txt');
+      
+      fs.writeFileSync(redirectUrlFile, humanUrl.trim(), 'utf8');
+      fs.writeFileSync(botUrlFile, botUrl.trim(), 'utf8');
+      
+      console.log("Redirect URLs updated:", { humanUrl, botUrl });
+      
+      res.json({
+        success: true,
+        message: "Redirect URLs updated successfully",
+        humanUrl,
+        botUrl
+      });
+    } catch (error) {
+      console.error("Update redirect URLs error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
