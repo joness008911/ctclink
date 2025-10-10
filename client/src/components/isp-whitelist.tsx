@@ -39,7 +39,7 @@ const COUNTRIES = [
 
 export default function IspWhitelist() {
   const { toast } = useToast();
-  const [selectedCountry, setSelectedCountry] = useState("");
+  const [selectedCountry, setSelectedCountry] = useState("all");
   const [bulkIspText, setBulkIspText] = useState("");
   const [singleIsp, setSingleIsp] = useState("");
 
@@ -49,7 +49,7 @@ export default function IspWhitelist() {
 
   const addIspMutation = useMutation({
     mutationFn: async (isp: { ispName: string; countryCode: string | null }) => {
-      return apiRequest("/api/isp-whitelist", "POST", isp);
+      return apiRequest("POST", "/api/isp-whitelist", isp);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-whitelist"] });
@@ -59,7 +59,7 @@ export default function IspWhitelist() {
 
   const bulkAddMutation = useMutation({
     mutationFn: async (data: { ispNames: string[]; countryCode: string | null }) => {
-      return apiRequest("/api/isp-whitelist/bulk", "POST", data);
+      return apiRequest("POST", "/api/isp-whitelist/bulk", data);
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-whitelist"] });
@@ -73,7 +73,7 @@ export default function IspWhitelist() {
 
   const removeIspMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/isp-whitelist/${id}`, "DELETE");
+      return apiRequest("DELETE", `/api/isp-whitelist/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-whitelist"] });
@@ -97,7 +97,7 @@ export default function IspWhitelist() {
 
     bulkAddMutation.mutate({
       ispNames,
-      countryCode: selectedCountry || null,
+      countryCode: selectedCountry === "all" ? null : selectedCountry,
     });
   };
 
@@ -113,13 +113,13 @@ export default function IspWhitelist() {
 
     addIspMutation.mutate({
       ispName: singleIsp.trim(),
-      countryCode: selectedCountry || null,
+      countryCode: selectedCountry === "all" ? null : selectedCountry,
     });
   };
 
-  const filteredIsps = selectedCountry
-    ? whitelistedIsps.filter(isp => isp.countryCode === selectedCountry)
-    : whitelistedIsps;
+  const filteredIsps = selectedCountry === "all"
+    ? whitelistedIsps
+    : whitelistedIsps.filter(isp => isp.countryCode === selectedCountry);
 
   if (isLoading) {
     return (
@@ -151,7 +151,7 @@ export default function IspWhitelist() {
                     <SelectValue placeholder="All Countries" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">All Countries</SelectItem>
+                    <SelectItem value="all">All Countries</SelectItem>
                     {COUNTRIES.map(country => (
                       <SelectItem key={country.code} value={country.code}>
                         {country.name}

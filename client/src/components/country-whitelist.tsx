@@ -59,7 +59,7 @@ export default function CountryWhitelist() {
 
   const addCountryMutation = useMutation({
     mutationFn: async (country: { countryCode: string; countryName: string }) => {
-      return apiRequest("/api/countries", "POST", country);
+      return apiRequest("POST", "/api/countries", country);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/countries"] });
@@ -68,7 +68,7 @@ export default function CountryWhitelist() {
 
   const removeCountryMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/countries/${id}`, "DELETE");
+      return apiRequest("DELETE", `/api/countries/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/countries"] });

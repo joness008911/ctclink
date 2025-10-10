@@ -35,7 +35,7 @@ export default function IspBlacklist() {
 
   const loadDefaultsMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("/api/isp-blacklist/load-defaults", "POST");
+      return apiRequest("POST", "/api/isp-blacklist/load-defaults");
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-blacklist"] });
@@ -48,7 +48,7 @@ export default function IspBlacklist() {
 
   const addIspMutation = useMutation({
     mutationFn: async (isp: { ispName: string; category: string }) => {
-      return apiRequest("/api/isp-blacklist", "POST", isp);
+      return apiRequest("POST", "/api/isp-blacklist", isp);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-blacklist"] });
@@ -62,7 +62,7 @@ export default function IspBlacklist() {
 
   const removeIspMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/isp-blacklist/${id}`, "DELETE");
+      return apiRequest("DELETE", `/api/isp-blacklist/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-blacklist"] });
@@ -139,7 +139,7 @@ export default function IspBlacklist() {
                   <SelectItem value="all">All Categories ({blacklistedIsps.length})</SelectItem>
                   {Object.entries(categoryStats).map(([category, count]) => (
                     <SelectItem key={category} value={category}>
-                      {category} ({count})
+                      {category} ({count as number})
                     </SelectItem>
                   ))}
                 </SelectContent>
