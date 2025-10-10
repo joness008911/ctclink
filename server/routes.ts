@@ -321,18 +321,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // Use original CleanTraffic API classification
+      // CASCADING CLASSIFICATION LOGIC
+      // Step 1: Country Check → Step 2: ISP Blacklist → Step 3: API Call (Proxy) → Step 4: ISP Whitelist
+      
       let classificationData: any = {};
       let visitorType = 'Human';
+      let detectionMethod = 'IP Analysis';
+      let blockReason = '';
 
-      // Call original CleanTraffic API for classification
+      // Call API first to get country and ISP data
       try {
         // Check cache first for faster response
         const cachedData = ip2geoCache.get(clientIp);
         if (cachedData) {
           classificationData = cachedData;
-          visitorType = classificationData.visitor_type || 'Human';
-          console.log(`Using cached data for IP: ${clientIp}`);
+          console.log(`✅ Using cached data for IP: ${clientIp}`);
         } else {
           // Call IP2Geolocation API directly with the API key
           const apiUrl = `https://api.ip2location.io/?key=${encodeURIComponent(cleanTrafficApiKey)}&ip=${encodeURIComponent(clientIp)}`;
@@ -350,65 +353,128 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (response.ok) {
             const geoData = await response.json();
             
-            // Log raw API response to understand fields
-            console.log('📦 Raw IP2Geolocation Response:', JSON.stringify(geoData, null, 2));
-            
             // Convert IP2Geolocation response to our format
             const location = geoData.city_name && geoData.country_name 
               ? `${geoData.city_name}, ${geoData.country_name}`
               : (geoData.country_name || 'Unknown');
             
             const isp = geoData.as || 'Unknown';
-            
-            // Determine visitor type and detection method based on usage_type
-            let detectionMethod = geoData.usage_type || 'IP Analysis';
-            visitorType = 'Human'; // Default to human
-            
-            // Bot detection based on usage_type
-            // DCH = Data Center/Hosting (Bot)
-            // RSV = Reserved IP (Bot)  
-            // ISP = Internet Service Provider (Human)
-            // COM = Commercial (typically Human)
-            if (geoData.usage_type === 'DCH' || geoData.usage_type === 'RSV') {
-              visitorType = 'Bot';
-            }
-            
-            // Also check proxy/fraud indicators
-            if (geoData.is_proxy || geoData.proxy?.is_vpn || geoData.proxy?.is_tor || 
-                geoData.proxy?.is_data_center || geoData.proxy?.is_web_crawler) {
-              visitorType = 'Bot';
-            }
+            const countryCode = geoData.country_code || '';
             
             classificationData = {
               ip: clientIp,
               location: location,
               isp: isp,
+              country_code: countryCode,
               browser: browser,
               device_type: deviceType,
-              visitor_type: visitorType,
-              detection_method: detectionMethod
+              usage_type: geoData.usage_type,
+              is_proxy: geoData.is_proxy,
+              proxy_data: geoData.proxy
             };
-            
-            console.log(`📍 API Response:`, {
-              ip: clientIp,
-              location: classificationData.location,
-              isp: classificationData.isp,
-              visitor_type: classificationData.visitor_type
-            });
             
             // Cache the response for 30 minutes
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`✅ Visitor ${clientIp} classified as: ${visitorType} - ${classificationData.location}, ${classificationData.isp}`);
+            console.log(`📍 API Response: IP=${clientIp}, Country=${countryCode}, ISP=${isp}`);
           } else {
             console.error(`IP2Geolocation API error: ${response.status}`);
-            // Fallback to 'Human' if API fails
-            visitorType = 'Human';
+            classificationData = {
+              ip: clientIp,
+              location: 'Unknown',
+              isp: 'Unknown',
+              country_code: '',
+              browser: browser,
+              device_type: deviceType
+            };
           }
         }
+
+        // STEP 1: Country Whitelist Check (Fast DB check - 10ms)
+        const countryCode = classificationData.country_code || '';
+        if (countryCode) {
+          const isCountryAllowed = await storage.isCountryAllowed(countryCode);
+          const hasAnyCountries = (await storage.getCountryWhitelist()).length > 0;
+          
+          if (hasAnyCountries && !isCountryAllowed) {
+            visitorType = 'Bot';
+            detectionMethod = 'Country Blocked';
+            blockReason = `Country not whitelisted: ${countryCode}`;
+            console.log(`🚫 BLOCKED (Country): ${clientIp} - ${countryCode} not in whitelist`);
+          }
+        }
+
+        // STEP 2: ISP Blacklist Check (Fast DB check - 10ms) - Only if not already blocked
+        if (visitorType === 'Human') {
+          const ispName = classificationData.isp || '';
+          if (ispName && ispName !== 'Unknown') {
+            const isBlacklisted = await storage.isIspBlacklisted(ispName);
+            if (isBlacklisted) {
+              visitorType = 'Bot';
+              detectionMethod = 'ISP Blacklisted';
+              blockReason = `ISP blacklisted: ${ispName}`;
+              console.log(`🚫 BLOCKED (ISP Blacklist): ${clientIp} - ${ispName}`);
+            }
+          }
+        }
+
+        // STEP 3: Proxy/Datacenter Detection (API data) - Only if not already blocked
+        if (visitorType === 'Human') {
+          // Bot detection based on usage_type
+          // DCH = Data Center/Hosting (Bot)
+          // RSV = Reserved IP (Bot)
+          if (classificationData.usage_type === 'DCH' || classificationData.usage_type === 'RSV') {
+            visitorType = 'Bot';
+            detectionMethod = classificationData.usage_type || 'Datacenter';
+            blockReason = `Datacenter/Reserved IP detected`;
+            console.log(`🚫 BLOCKED (Datacenter): ${clientIp}`);
+          }
+          
+          // Also check proxy/fraud indicators
+          if (classificationData.is_proxy || classificationData.proxy_data?.is_vpn || 
+              classificationData.proxy_data?.is_tor || classificationData.proxy_data?.is_data_center || 
+              classificationData.proxy_data?.is_web_crawler) {
+            visitorType = 'Bot';
+            detectionMethod = 'Proxy/VPN Detected';
+            blockReason = `Proxy/VPN/TOR detected`;
+            console.log(`🚫 BLOCKED (Proxy): ${clientIp}`);
+          }
+        }
+
+        // STEP 4: ISP Whitelist Override (Fast DB check - 10ms)
+        // If ISP is whitelisted, override to Human (even if flagged as proxy)
+        if (visitorType === 'Bot') {
+          const ispName = classificationData.isp || '';
+          if (ispName && ispName !== 'Unknown') {
+            const isWhitelisted = await storage.isIspWhitelisted(ispName);
+            if (isWhitelisted) {
+              visitorType = 'Human';
+              detectionMethod = 'ISP Whitelisted';
+              blockReason = `ISP whitelisted: ${ispName}`;
+              console.log(`✅ ALLOWED (ISP Whitelist): ${clientIp} - ${ispName} is trusted`);
+            }
+          }
+        }
+
+        // Final classification with all data
+        classificationData.visitor_type = visitorType;
+        classificationData.detection_method = detectionMethod;
+        
+        console.log(`✅ Final Classification: ${clientIp} = ${visitorType} (${detectionMethod})`);
+        
       } catch (error) {
-        console.error("CleanTraffic API error:", error);
-        // Fallback to 'Human' if API fails
+        console.error("Classification error:", error);
+        // Fallback to 'Human' if error occurs
         visitorType = 'Human';
+        detectionMethod = 'Error Fallback';
+        classificationData = {
+          ip: clientIp,
+          location: 'Unknown',
+          isp: 'Unknown',
+          browser: browser,
+          device_type: deviceType,
+          visitor_type: visitorType,
+          detection_method: detectionMethod
+        };
       }
 
       const classification = await storage.createClassification({
