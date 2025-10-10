@@ -55,6 +55,30 @@ export const settings = pgTable("settings", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const countryWhitelist = pgTable("country_whitelist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  countryCode: varchar("country_code", { length: 2 }).notNull().unique(),
+  countryName: varchar("country_name", { length: 100 }).notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
+export const ispWhitelist = pgTable("isp_whitelist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ispName: varchar("isp_name", { length: 255 }).notNull(),
+  countryCode: varchar("country_code", { length: 2 }),
+  enabled: boolean("enabled").default(true).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
+export const ispBlacklist = pgTable("isp_blacklist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ispName: varchar("isp_name", { length: 255 }).notNull().unique(),
+  category: varchar("category", { length: 50 }),
+  enabled: boolean("enabled").default(true).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -86,6 +110,21 @@ export const insertSettingSchema = createInsertSchema(settings).omit({
   updatedAt: true,
 });
 
+export const insertCountryWhitelistSchema = createInsertSchema(countryWhitelist).omit({
+  id: true,
+  addedAt: true,
+});
+
+export const insertIspWhitelistSchema = createInsertSchema(ispWhitelist).omit({
+  id: true,
+  addedAt: true,
+});
+
+export const insertIspBlacklistSchema = createInsertSchema(ispBlacklist).omit({
+  id: true,
+  addedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertClassification = z.infer<typeof insertClassificationSchema>;
@@ -96,3 +135,9 @@ export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InsertSetting = z.infer<typeof insertSettingSchema>;
 export type Setting = typeof settings.$inferSelect;
+export type InsertCountryWhitelist = z.infer<typeof insertCountryWhitelistSchema>;
+export type CountryWhitelist = typeof countryWhitelist.$inferSelect;
+export type InsertIspWhitelist = z.infer<typeof insertIspWhitelistSchema>;
+export type IspWhitelist = typeof ispWhitelist.$inferSelect;
+export type InsertIspBlacklist = z.infer<typeof insertIspBlacklistSchema>;
+export type IspBlacklist = typeof ispBlacklist.$inferSelect;
