@@ -9,6 +9,9 @@ import ApiKeyManagement from "@/components/api-key-management";
 import Ip2GeoKeyManagement from "@/components/ip2geo-key-management";
 import RedirectUrlManagement from "@/components/redirect-url-management";
 import AnalyticsDashboard from "@/components/analytics-dashboard";
+import CountryWhitelist from "@/components/country-whitelist";
+import IspWhitelist from "@/components/isp-whitelist";
+import IspBlacklist from "@/components/isp-blacklist";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 
@@ -58,8 +61,11 @@ export default function Dashboard() {
         <main className="p-6">
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="mb-6">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="analytics">Advanced Analytics</TabsTrigger>
+              <TabsTrigger value="overview" data-testid="tab-overview">📊 Dashboard</TabsTrigger>
+              <TabsTrigger value="countries" data-testid="tab-countries">🌍 Countries</TabsTrigger>
+              <TabsTrigger value="isp-whitelist" data-testid="tab-isp-whitelist">✅ ISP Whitelist</TabsTrigger>
+              <TabsTrigger value="isp-blacklist" data-testid="tab-isp-blacklist">❌ ISP Blacklist</TabsTrigger>
+              <TabsTrigger value="analytics" data-testid="tab-analytics">📈 Analytics</TabsTrigger>
             </TabsList>
             
             <TabsContent value="overview">
@@ -147,6 +153,18 @@ export default function Dashboard() {
                   </Card>
                 </div>
               </div>
+            </TabsContent>
+
+            <TabsContent value="countries">
+              <CountryWhitelist />
+            </TabsContent>
+
+            <TabsContent value="isp-whitelist">
+              <IspWhitelist />
+            </TabsContent>
+
+            <TabsContent value="isp-blacklist">
+              <IspBlacklist />
             </TabsContent>
 
             <TabsContent value="analytics">
