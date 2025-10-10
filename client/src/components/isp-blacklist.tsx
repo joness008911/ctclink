@@ -25,7 +25,7 @@ import {
 
 export default function IspBlacklist() {
   const { toast } = useToast();
-  const [filterCategory, setFilterCategory] = useState("");
+  const [filterCategory, setFilterCategory] = useState("all");
   const [newIspName, setNewIspName] = useState("");
   const [newIspCategory, setNewIspCategory] = useState("Datacenter");
 
@@ -85,9 +85,9 @@ export default function IspBlacklist() {
     });
   };
 
-  const filteredIsps = filterCategory
-    ? blacklistedIsps.filter(isp => isp.category === filterCategory)
-    : blacklistedIsps;
+  const filteredIsps = filterCategory === "all"
+    ? blacklistedIsps
+    : blacklistedIsps.filter(isp => isp.category === filterCategory);
 
   const categoryStats = blacklistedIsps.reduce((acc: any, isp: any) => {
     acc[isp.category] = (acc[isp.category] || 0) + 1;
@@ -136,7 +136,7 @@ export default function IspBlacklist() {
                   <SelectValue placeholder="All Categories" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Categories ({blacklistedIsps.length})</SelectItem>
+                  <SelectItem value="all">All Categories ({blacklistedIsps.length})</SelectItem>
                   {Object.entries(categoryStats).map(([category, count]) => (
                     <SelectItem key={category} value={category}>
                       {category} ({count})
