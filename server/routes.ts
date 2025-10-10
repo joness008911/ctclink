@@ -417,7 +417,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // STEP 3: Proxy/Datacenter Detection (API data) - Only if not already blocked
+        // STEP 3: ISP Whitelist Restriction Check (Fast DB check - 10ms)
+        // If whitelist exists for this country, ONLY allow whitelisted ISPs
+        if (visitorType === 'Human') {
+          const ispName = classificationData.isp || '';
+          const countryCode = classificationData.country_code || '';
+          
+          if (ispName && ispName !== 'Unknown' && countryCode) {
+            // Check if there's any ISP whitelist for this country or global
+            const allWhitelistedIsps = await storage.getIspWhitelist();
+            const countryWhitelist = allWhitelistedIsps.filter(
+              (isp: any) => isp.countryCode === countryCode || isp.countryCode === null
+            );
+            
+            // If whitelist exists for this country, check if ISP is in it
+            if (countryWhitelist.length > 0) {
+              const isWhitelisted = await storage.isIspWhitelisted(ispName);
+              if (!isWhitelisted) {
+                visitorType = 'Bot';
+                detectionMethod = 'ISP Not Whitelisted';
+                blockReason = `ISP not in whitelist: ${ispName}`;
+                console.log(`🚫 BLOCKED (ISP Not Whitelisted): ${clientIp} - ${ispName} not in whitelist`);
+              } else {
+                console.log(`✅ ALLOWED (ISP Whitelist): ${clientIp} - ${ispName} is whitelisted`);
+              }
+            }
+          }
+        }
+
+        // STEP 4: Proxy/Datacenter Detection (API data) - Only if not already blocked
         if (visitorType === 'Human') {
           // Bot detection based on usage_type
           // DCH = Data Center/Hosting (Bot)
@@ -440,17 +468,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // STEP 4: ISP Whitelist Override (Fast DB check - 10ms)
-        // If ISP is whitelisted, override to Human (even if flagged as proxy)
-        if (visitorType === 'Bot') {
+        // STEP 5: ISP Whitelist Override (Fast DB check - 10ms)
+        // If ISP is whitelisted, override to Human (even if flagged as proxy/datacenter)
+        if (visitorType === 'Bot' && (detectionMethod === 'Proxy/VPN Detected' || detectionMethod === 'Datacenter')) {
           const ispName = classificationData.isp || '';
           if (ispName && ispName !== 'Unknown') {
             const isWhitelisted = await storage.isIspWhitelisted(ispName);
             if (isWhitelisted) {
               visitorType = 'Human';
-              detectionMethod = 'ISP Whitelisted';
-              blockReason = `ISP whitelisted: ${ispName}`;
-              console.log(`✅ ALLOWED (ISP Whitelist): ${clientIp} - ${ispName} is trusted`);
+              detectionMethod = 'ISP Whitelist Override';
+              blockReason = `ISP whitelisted (override): ${ispName}`;
+              console.log(`✅ ALLOWED (ISP Whitelist Override): ${clientIp} - ${ispName} is trusted, overriding proxy detection`);
             }
           }
         }
