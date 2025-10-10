@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -122,13 +122,13 @@ export default function CountryWhitelist() {
     });
   };
 
-  // Initialize selected countries from whitelist
-  useState(() => {
+  // Sync selected countries with whitelist data
+  useEffect(() => {
     if (whitelistedCountries.length > 0) {
       const codes = new Set(whitelistedCountries.map((c: any) => c.countryCode));
       setSelectedCountries(codes);
     }
-  });
+  }, [whitelistedCountries]);
 
   if (isLoading) {
     return (
