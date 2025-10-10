@@ -863,6 +863,326 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ==================== COUNTRY WHITELIST ENDPOINTS ====================
+  
+  // Get all countries in whitelist
+  app.get("/api/countries", requireAuth, async (req, res) => {
+    try {
+      const countries = await storage.getCountryWhitelist();
+      res.json(countries);
+    } catch (error) {
+      console.error("Get countries error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add country to whitelist
+  app.post("/api/countries", requireAuth, async (req, res) => {
+    try {
+      const { countryCode, countryName, enabled } = req.body;
+      
+      if (!countryCode || !countryName) {
+        return res.status(400).json({ message: "countryCode and countryName are required" });
+      }
+      
+      const country = await storage.addCountryToWhitelist({
+        countryCode: countryCode.toUpperCase(),
+        countryName,
+        enabled: enabled !== undefined ? enabled : true
+      });
+      
+      res.json(country);
+    } catch (error) {
+      console.error("Add country error:", error);
+      res.status(500).json({ message: "Failed to add country" });
+    }
+  });
+
+  // Remove country from whitelist
+  app.delete("/api/countries/:id", requireAuth, async (req, res) => {
+    try {
+      const success = await storage.removeCountryFromWhitelist(req.params.id);
+      if (success) {
+        res.json({ success: true, message: "Country removed" });
+      } else {
+        res.status(404).json({ message: "Country not found" });
+      }
+    } catch (error) {
+      console.error("Remove country error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Toggle country enabled status
+  app.patch("/api/countries/:id/toggle", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      const success = await storage.toggleCountryWhitelist(req.params.id, enabled);
+      if (success) {
+        res.json({ success: true, message: "Country status updated" });
+      } else {
+        res.status(404).json({ message: "Country not found" });
+      }
+    } catch (error) {
+      console.error("Toggle country error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==================== ISP WHITELIST ENDPOINTS ====================
+  
+  // Get ISP whitelist (optionally filtered by country)
+  app.get("/api/isp-whitelist", requireAuth, async (req, res) => {
+    try {
+      const countryCode = req.query.country as string | undefined;
+      const isps = await storage.getIspWhitelist(countryCode);
+      res.json(isps);
+    } catch (error) {
+      console.error("Get ISP whitelist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add ISP to whitelist
+  app.post("/api/isp-whitelist", requireAuth, async (req, res) => {
+    try {
+      const { ispName, countryCode, enabled } = req.body;
+      
+      if (!ispName) {
+        return res.status(400).json({ message: "ispName is required" });
+      }
+      
+      const isp = await storage.addIspToWhitelist({
+        ispName: ispName.trim(),
+        countryCode: countryCode || null,
+        enabled: enabled !== undefined ? enabled : true
+      });
+      
+      res.json(isp);
+    } catch (error) {
+      console.error("Add ISP to whitelist error:", error);
+      res.status(500).json({ message: "Failed to add ISP to whitelist" });
+    }
+  });
+
+  // Bulk add ISPs to whitelist
+  app.post("/api/isp-whitelist/bulk", requireAuth, async (req, res) => {
+    try {
+      const { ispNames, countryCode } = req.body;
+      
+      if (!ispNames || !Array.isArray(ispNames)) {
+        return res.status(400).json({ message: "ispNames array is required" });
+      }
+      
+      const results = [];
+      for (const ispName of ispNames) {
+        if (ispName.trim()) {
+          try {
+            const isp = await storage.addIspToWhitelist({
+              ispName: ispName.trim(),
+              countryCode: countryCode || null,
+              enabled: true
+            });
+            results.push(isp);
+          } catch (error) {
+            console.error(`Failed to add ISP ${ispName}:`, error);
+          }
+        }
+      }
+      
+      res.json({ success: true, added: results.length, isps: results });
+    } catch (error) {
+      console.error("Bulk add ISP whitelist error:", error);
+      res.status(500).json({ message: "Failed to add ISPs" });
+    }
+  });
+
+  // Remove ISP from whitelist
+  app.delete("/api/isp-whitelist/:id", requireAuth, async (req, res) => {
+    try {
+      const success = await storage.removeIspFromWhitelist(req.params.id);
+      if (success) {
+        res.json({ success: true, message: "ISP removed from whitelist" });
+      } else {
+        res.status(404).json({ message: "ISP not found" });
+      }
+    } catch (error) {
+      console.error("Remove ISP from whitelist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Toggle ISP whitelist status
+  app.patch("/api/isp-whitelist/:id/toggle", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      const success = await storage.toggleIspWhitelist(req.params.id, enabled);
+      if (success) {
+        res.json({ success: true, message: "ISP whitelist status updated" });
+      } else {
+        res.status(404).json({ message: "ISP not found" });
+      }
+    } catch (error) {
+      console.error("Toggle ISP whitelist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==================== ISP BLACKLIST ENDPOINTS ====================
+  
+  // Get ISP blacklist
+  app.get("/api/isp-blacklist", requireAuth, async (req, res) => {
+    try {
+      const isps = await storage.getIspBlacklist();
+      res.json(isps);
+    } catch (error) {
+      console.error("Get ISP blacklist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add ISP to blacklist
+  app.post("/api/isp-blacklist", requireAuth, async (req, res) => {
+    try {
+      const { ispName, category, enabled } = req.body;
+      
+      if (!ispName) {
+        return res.status(400).json({ message: "ispName is required" });
+      }
+      
+      const isp = await storage.addIspToBlacklist({
+        ispName: ispName.trim(),
+        category: category || null,
+        enabled: enabled !== undefined ? enabled : true
+      });
+      
+      res.json(isp);
+    } catch (error) {
+      console.error("Add ISP to blacklist error:", error);
+      res.status(500).json({ message: "Failed to add ISP to blacklist" });
+    }
+  });
+
+  // Load default blacklist (50+ bot ISPs)
+  app.post("/api/isp-blacklist/load-defaults", requireAuth, async (req, res) => {
+    try {
+      const defaultBlacklist = [
+        // Cloud Providers / Datacenters
+        { ispName: "Amazon.com", category: "Datacenter" },
+        { ispName: "Amazon Data Services", category: "Datacenter" },
+        { ispName: "Amazon Technologies", category: "Datacenter" },
+        { ispName: "Google LLC", category: "Datacenter" },
+        { ispName: "Google Cloud", category: "Datacenter" },
+        { ispName: "Microsoft Corporation", category: "Datacenter" },
+        { ispName: "Microsoft Azure", category: "Datacenter" },
+        { ispName: "DigitalOcean", category: "Datacenter" },
+        { ispName: "DigitalOcean, LLC", category: "Datacenter" },
+        { ispName: "OVH SAS", category: "Datacenter" },
+        { ispName: "OVH", category: "Datacenter" },
+        { ispName: "Hetzner Online", category: "Datacenter" },
+        { ispName: "Hetzner Online GmbH", category: "Datacenter" },
+        { ispName: "Linode", category: "Datacenter" },
+        { ispName: "Vultr", category: "Datacenter" },
+        { ispName: "Cloudflare", category: "Datacenter" },
+        { ispName: "Akamai Technologies", category: "Datacenter" },
+        { ispName: "Alibaba Cloud", category: "Datacenter" },
+        { ispName: "Oracle Cloud", category: "Datacenter" },
+        { ispName: "IBM Cloud", category: "Datacenter" },
+        { ispName: "Scaleway", category: "Datacenter" },
+        { ispName: "Packet Host", category: "Datacenter" },
+        { ispName: "Leaseweb", category: "Datacenter" },
+        { ispName: "Choopa", category: "Datacenter" },
+        { ispName: "ServerMania", category: "Datacenter" },
+        { ispName: "Contabo", category: "Datacenter" },
+        { ispName: "Datacamp Limited", category: "Datacenter" },
+        { ispName: "QuadraNet", category: "Datacenter" },
+        { ispName: "ColoCrossing", category: "Datacenter" },
+        { ispName: "Secured Servers LLC", category: "Datacenter" },
+        
+        // VPN Providers
+        { ispName: "NordVPN", category: "VPN" },
+        { ispName: "ExpressVPN", category: "VPN" },
+        { ispName: "ProtonVPN", category: "VPN" },
+        { ispName: "Surfshark", category: "VPN" },
+        { ispName: "CyberGhost", category: "VPN" },
+        { ispName: "Private Internet Access", category: "VPN" },
+        { ispName: "IPVanish", category: "VPN" },
+        { ispName: "TunnelBear", category: "VPN" },
+        { ispName: "HideMyAss", category: "VPN" },
+        { ispName: "Hotspot Shield", category: "VPN" },
+        { ispName: "Windscribe", category: "VPN" },
+        { ispName: "VyprVPN", category: "VPN" },
+        { ispName: "PureVPN", category: "VPN" },
+        { ispName: "Mullvad", category: "VPN" },
+        { ispName: "IVPN", category: "VPN" },
+        
+        // Proxy Services
+        { ispName: "Bright Data", category: "Proxy" },
+        { ispName: "Luminati Networks", category: "Proxy" },
+        { ispName: "Oxylabs", category: "Proxy" },
+        { ispName: "Smartproxy", category: "Proxy" },
+        { ispName: "GeoSurf", category: "Proxy" },
+        { ispName: "Storm Proxies", category: "Proxy" },
+        { ispName: "ProxyRack", category: "Proxy" },
+        { ispName: "IPRoyal", category: "Proxy" },
+        
+        // Tor Exit Nodes
+        { ispName: "Tor", category: "Tor" },
+        { ispName: "Tor Exit", category: "Tor" },
+      ];
+      
+      const results = [];
+      for (const entry of defaultBlacklist) {
+        try {
+          const isp = await storage.addIspToBlacklist({
+            ispName: entry.ispName,
+            category: entry.category,
+            enabled: true
+          });
+          results.push(isp);
+        } catch (error) {
+          console.log(`ISP ${entry.ispName} may already exist, skipping...`);
+        }
+      }
+      
+      res.json({ success: true, loaded: results.length, isps: results });
+    } catch (error) {
+      console.error("Load default blacklist error:", error);
+      res.status(500).json({ message: "Failed to load default blacklist" });
+    }
+  });
+
+  // Remove ISP from blacklist
+  app.delete("/api/isp-blacklist/:id", requireAuth, async (req, res) => {
+    try {
+      const success = await storage.removeIspFromBlacklist(req.params.id);
+      if (success) {
+        res.json({ success: true, message: "ISP removed from blacklist" });
+      } else {
+        res.status(404).json({ message: "ISP not found" });
+      }
+    } catch (error) {
+      console.error("Remove ISP from blacklist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Toggle ISP blacklist status
+  app.patch("/api/isp-blacklist/:id/toggle", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      const success = await storage.toggleIspBlacklist(req.params.id, enabled);
+      if (success) {
+        res.json({ success: true, message: "ISP blacklist status updated" });
+      } else {
+        res.status(404).json({ message: "ISP not found" });
+      }
+    } catch (error) {
+      console.error("Toggle ISP blacklist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
