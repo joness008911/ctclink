@@ -7,10 +7,19 @@ import {
   type InsertDetectionRules,
   type ApiKey,
   type InsertApiKey,
+  type CountryWhitelist,
+  type InsertCountryWhitelist,
+  type IspWhitelist,
+  type InsertIspWhitelist,
+  type IspBlacklist,
+  type InsertIspBlacklist,
   users,
   classifications,
   detectionRules,
-  apiKeys
+  apiKeys,
+  countryWhitelist,
+  ispWhitelist,
+  ispBlacklist
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -83,6 +92,27 @@ export interface IStorage {
   incrementApiKeyUsage(keyValue: string): Promise<boolean>;
   pauseApiKey(id: string): Promise<boolean>;
   renewApiKey(id: string): Promise<ApiKey | undefined>;
+  
+  // Country Whitelist methods
+  getCountryWhitelist(): Promise<CountryWhitelist[]>;
+  addCountryToWhitelist(country: InsertCountryWhitelist): Promise<CountryWhitelist>;
+  removeCountryFromWhitelist(id: string): Promise<boolean>;
+  toggleCountryWhitelist(id: string, enabled: boolean): Promise<boolean>;
+  isCountryAllowed(countryCode: string): Promise<boolean>;
+  
+  // ISP Whitelist methods
+  getIspWhitelist(countryCode?: string): Promise<IspWhitelist[]>;
+  addIspToWhitelist(isp: InsertIspWhitelist): Promise<IspWhitelist>;
+  removeIspFromWhitelist(id: string): Promise<boolean>;
+  toggleIspWhitelist(id: string, enabled: boolean): Promise<boolean>;
+  isIspWhitelisted(ispName: string): Promise<boolean>;
+  
+  // ISP Blacklist methods
+  getIspBlacklist(): Promise<IspBlacklist[]>;
+  addIspToBlacklist(isp: InsertIspBlacklist): Promise<IspBlacklist>;
+  removeIspFromBlacklist(id: string): Promise<boolean>;
+  toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean>;
+  isIspBlacklisted(ispName: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -590,6 +620,109 @@ export class DatabaseStorage implements IStorage {
       return renewed;
     }
     return undefined;
+  }
+
+  // Country Whitelist methods
+  async getCountryWhitelist(): Promise<CountryWhitelist[]> {
+    const countries = await db.select().from(countryWhitelist);
+    return countries;
+  }
+
+  async addCountryToWhitelist(country: InsertCountryWhitelist): Promise<CountryWhitelist> {
+    const [newCountry] = await db.insert(countryWhitelist).values(country).returning();
+    return newCountry;
+  }
+
+  async removeCountryFromWhitelist(id: string): Promise<boolean> {
+    const result = await db.delete(countryWhitelist).where(eq(countryWhitelist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async toggleCountryWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(countryWhitelist)
+      .set({ enabled })
+      .where(eq(countryWhitelist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async isCountryAllowed(countryCode: string): Promise<boolean> {
+    const [country] = await db
+      .select()
+      .from(countryWhitelist)
+      .where(eq(countryWhitelist.countryCode, countryCode));
+    return country ? country.enabled : false;
+  }
+
+  // ISP Whitelist methods
+  async getIspWhitelist(countryCode?: string): Promise<IspWhitelist[]> {
+    if (countryCode) {
+      const isps = await db
+        .select()
+        .from(ispWhitelist)
+        .where(eq(ispWhitelist.countryCode, countryCode));
+      return isps;
+    }
+    const isps = await db.select().from(ispWhitelist);
+    return isps;
+  }
+
+  async addIspToWhitelist(isp: InsertIspWhitelist): Promise<IspWhitelist> {
+    const [newIsp] = await db.insert(ispWhitelist).values(isp).returning();
+    return newIsp;
+  }
+
+  async removeIspFromWhitelist(id: string): Promise<boolean> {
+    const result = await db.delete(ispWhitelist).where(eq(ispWhitelist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async toggleIspWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(ispWhitelist)
+      .set({ enabled })
+      .where(eq(ispWhitelist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async isIspWhitelisted(ispName: string): Promise<boolean> {
+    const [isp] = await db
+      .select()
+      .from(ispWhitelist)
+      .where(eq(ispWhitelist.ispName, ispName));
+    return isp ? isp.enabled : false;
+  }
+
+  // ISP Blacklist methods
+  async getIspBlacklist(): Promise<IspBlacklist[]> {
+    const isps = await db.select().from(ispBlacklist);
+    return isps;
+  }
+
+  async addIspToBlacklist(isp: InsertIspBlacklist): Promise<IspBlacklist> {
+    const [newIsp] = await db.insert(ispBlacklist).values(isp).returning();
+    return newIsp;
+  }
+
+  async removeIspFromBlacklist(id: string): Promise<boolean> {
+    const result = await db.delete(ispBlacklist).where(eq(ispBlacklist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(ispBlacklist)
+      .set({ enabled })
+      .where(eq(ispBlacklist.id, id));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async isIspBlacklisted(ispName: string): Promise<boolean> {
+    const [isp] = await db
+      .select()
+      .from(ispBlacklist)
+      .where(eq(ispBlacklist.ispName, ispName));
+    return isp ? isp.enabled : false;
   }
 }
 
