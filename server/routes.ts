@@ -389,97 +389,101 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
 
-        // STEP 1: Country Whitelist Check (Fast DB check - 10ms)
+        // NEW PRIORITY-BASED CASCADING CLASSIFICATION LOGIC
+        // Priority 1: ISP Blacklist (Immediate Block)
+        // Priority 2: Country Whitelist Check (with DCH detection)
+        // Priority 3: IP2Location Detection (DCH/Proxy/VPN/TOR)
+        // Priority 4: ISP Whitelist Override (Allow trusted ISPs)
+        
         const countryCode = classificationData.country_code || '';
-        if (countryCode) {
-          const isCountryAllowed = await storage.isCountryAllowed(countryCode);
-          const hasAnyCountries = (await storage.getCountryWhitelist()).length > 0;
-          
-          if (hasAnyCountries && !isCountryAllowed) {
+        const ispName = classificationData.isp || '';
+        const usageType = classificationData.usage_type || '';
+        
+        // PRIORITY 1: ISP BLACKLIST - Immediate block, no questions asked
+        if (ispName && ispName !== 'Unknown') {
+          const isBlacklisted = await storage.isIspBlacklisted(ispName);
+          if (isBlacklisted) {
             visitorType = 'Bot';
-            detectionMethod = 'Country Blocked';
-            blockReason = `Country not whitelisted: ${countryCode}`;
-            console.log(`🚫 BLOCKED (Country): ${clientIp} - ${countryCode} not in whitelist`);
+            detectionMethod = 'ISP Blacklisted';
+            blockReason = `ISP blacklisted: ${ispName}`;
+            console.log(`🚫 BLOCKED (Priority 1 - ISP Blacklist): ${clientIp} - ${ispName}`);
           }
         }
 
-        // STEP 2: ISP Blacklist Check (Fast DB check - 10ms) - Only if not already blocked
-        if (visitorType === 'Human') {
-          const ispName = classificationData.isp || '';
-          if (ispName && ispName !== 'Unknown') {
-            const isBlacklisted = await storage.isIspBlacklisted(ispName);
-            if (isBlacklisted) {
-              visitorType = 'Bot';
-              detectionMethod = 'ISP Blacklisted';
-              blockReason = `ISP blacklisted: ${ispName}`;
-              console.log(`🚫 BLOCKED (ISP Blacklist): ${clientIp} - ${ispName}`);
-            }
-          }
-        }
-
-        // STEP 3: ISP Whitelist Restriction Check (Fast DB check - 10ms)
-        // If whitelist exists for this country, ONLY allow whitelisted ISPs
-        if (visitorType === 'Human') {
-          const ispName = classificationData.isp || '';
-          const countryCode = classificationData.country_code || '';
+        // PRIORITY 2: COUNTRY WHITELIST (Optional - If exists)
+        if (visitorType === 'Human' && countryCode) {
+          const countryWhitelist = await storage.getCountryWhitelist();
+          const hasCountryWhitelist = countryWhitelist.length > 0;
           
-          if (ispName && ispName !== 'Unknown' && countryCode) {
-            // Check if there's any ISP whitelist for this country or global
-            const allWhitelistedIsps = await storage.getIspWhitelist();
-            const countryWhitelist = allWhitelistedIsps.filter(
-              (isp: any) => isp.countryCode === countryCode || isp.countryCode === null
-            );
+          if (hasCountryWhitelist) {
+            const isCountryWhitelisted = await storage.isCountryAllowed(countryCode);
             
-            // If whitelist exists for this country, check if ISP is in it
-            if (countryWhitelist.length > 0) {
-              const isWhitelisted = await storage.isIspWhitelisted(ispName);
-              if (!isWhitelisted) {
+            if (isCountryWhitelisted) {
+              // Country is whitelisted, but still check if it's datacenter
+              if (usageType === 'DCH' || usageType === 'RSV') {
                 visitorType = 'Bot';
-                detectionMethod = 'ISP Not Whitelisted';
-                blockReason = `ISP not in whitelist: ${ispName}`;
-                console.log(`🚫 BLOCKED (ISP Not Whitelisted): ${clientIp} - ${ispName} not in whitelist`);
+                detectionMethod = 'Datacenter in Whitelisted Country';
+                blockReason = `Datacenter traffic from whitelisted country: ${countryCode}`;
+                console.log(`🚫 BLOCKED (Priority 2 - DCH in Whitelisted Country): ${clientIp} - ${countryCode}`);
               } else {
-                console.log(`✅ ALLOWED (ISP Whitelist): ${clientIp} - ${ispName} is whitelisted`);
+                // Country whitelisted and NOT datacenter = HUMAN
+                console.log(`✅ ALLOWED (Priority 2 - Country Whitelisted): ${clientIp} - ${countryCode}, Usage: ${usageType}`);
               }
+            } else {
+              // Country NOT in whitelist = BLOCK
+              visitorType = 'Bot';
+              detectionMethod = 'Country Not Whitelisted';
+              blockReason = `Country not whitelisted: ${countryCode}`;
+              console.log(`🚫 BLOCKED (Priority 2 - Country Not Whitelisted): ${clientIp} - ${countryCode}`);
             }
           }
         }
 
-        // STEP 4: Proxy/Datacenter Detection (API data) - Only if not already blocked
+        // PRIORITY 3: IP2LOCATION DETECTION (Primary detection - Always active)
         if (visitorType === 'Human') {
-          // Bot detection based on usage_type
-          // DCH = Data Center/Hosting (Bot)
-          // RSV = Reserved IP (Bot)
-          if (classificationData.usage_type === 'DCH' || classificationData.usage_type === 'RSV') {
+          // Datacenter/Hosting detection
+          if (usageType === 'DCH' || usageType === 'RSV') {
             visitorType = 'Bot';
-            detectionMethod = classificationData.usage_type || 'Datacenter';
-            blockReason = `Datacenter/Reserved IP detected`;
-            console.log(`🚫 BLOCKED (Datacenter): ${clientIp}`);
+            detectionMethod = usageType === 'DCH' ? 'Datacenter' : 'Reserved IP';
+            blockReason = `IP2Location detected: ${usageType}`;
+            console.log(`🚫 BLOCKED (Priority 3 - IP2Location ${usageType}): ${clientIp}`);
           }
           
-          // Also check proxy/fraud indicators
-          if (classificationData.is_proxy || classificationData.proxy_data?.is_vpn || 
-              classificationData.proxy_data?.is_tor || classificationData.proxy_data?.is_data_center || 
+          // Proxy/VPN/TOR detection
+          if (classificationData.is_proxy || 
+              classificationData.proxy_data?.is_vpn || 
+              classificationData.proxy_data?.is_tor || 
+              classificationData.proxy_data?.is_data_center || 
               classificationData.proxy_data?.is_web_crawler) {
             visitorType = 'Bot';
-            detectionMethod = 'Proxy/VPN Detected';
-            blockReason = `Proxy/VPN/TOR detected`;
-            console.log(`🚫 BLOCKED (Proxy): ${clientIp}`);
+            
+            // Determine specific detection method
+            if (classificationData.proxy_data?.is_vpn) {
+              detectionMethod = 'VPN Detected';
+            } else if (classificationData.proxy_data?.is_tor) {
+              detectionMethod = 'TOR Detected';
+            } else if (classificationData.proxy_data?.is_data_center) {
+              detectionMethod = 'Datacenter Detected';
+            } else if (classificationData.proxy_data?.is_web_crawler) {
+              detectionMethod = 'Crawler Detected';
+            } else {
+              detectionMethod = 'Proxy Detected';
+            }
+            
+            blockReason = `IP2Location detected: ${detectionMethod}`;
+            console.log(`🚫 BLOCKED (Priority 3 - ${detectionMethod}): ${clientIp}`);
           }
         }
 
-        // STEP 5: ISP Whitelist Override (Fast DB check - 10ms)
-        // If ISP is whitelisted, override to Human (even if flagged as proxy/datacenter)
-        if (visitorType === 'Bot' && (detectionMethod === 'Proxy/VPN Detected' || detectionMethod === 'Datacenter')) {
-          const ispName = classificationData.isp || '';
-          if (ispName && ispName !== 'Unknown') {
-            const isWhitelisted = await storage.isIspWhitelisted(ispName);
-            if (isWhitelisted) {
-              visitorType = 'Human';
-              detectionMethod = 'ISP Whitelist Override';
-              blockReason = `ISP whitelisted (override): ${ispName}`;
-              console.log(`✅ ALLOWED (ISP Whitelist Override): ${clientIp} - ${ispName} is trusted, overriding proxy detection`);
-            }
+        // PRIORITY 4: ISP WHITELIST OVERRIDE (Optional - Allow trusted ISPs)
+        // This can override previous bot detections for trusted ISPs
+        if (visitorType === 'Bot' && ispName && ispName !== 'Unknown') {
+          const isWhitelisted = await storage.isIspWhitelisted(ispName);
+          if (isWhitelisted) {
+            visitorType = 'Human';
+            detectionMethod = 'ISP Whitelist Override';
+            blockReason = `ISP whitelisted (trusted): ${ispName}`;
+            console.log(`✅ ALLOWED (Priority 4 - ISP Whitelist Override): ${clientIp} - ${ispName} is trusted`);
           }
         }
 
