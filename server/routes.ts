@@ -600,7 +600,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Classification endpoint (GET with API key support)
   app.get("/api/classify", async (req, res) => {
-    const apiKey = req.query.api_key as string;
+    // Support both formats: ?api_key=XXX or just the first query param value
+    let apiKey = req.query.api_key as string;
+    
+    // If api_key not provided, check if first query param is the key itself (backward compatibility)
+    if (!apiKey) {
+      const queryKeys = Object.keys(req.query);
+      if (queryKeys.length > 0) {
+        apiKey = queryKeys[0];
+      }
+    }
+    
     let limitReached = false;
     let apiKeyId: string | null = null;
     
