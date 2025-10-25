@@ -552,8 +552,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
     try {
       
-      // Try multiple methods to get real visitor IP
-      let clientIp = req.headers['cf-connecting-ip'] || 
+      // Check if IP is provided in query parameter (for API users) or use actual visitor IP
+      let clientIp = req.query.ip as string || 
+                     req.headers['cf-connecting-ip'] || 
                      req.headers['true-client-ip'] || 
                      req.headers['x-client-ip'] || 
                      req.headers['x-forwarded-for'] || 
