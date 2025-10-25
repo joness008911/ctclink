@@ -6,16 +6,21 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
+import UserLogin from "@/pages/user-login";
+import ApiVerify from "@/pages/api-verify";
+import UserDashboard from "@/pages/user-dashboard";
+import { userAuthApi } from "@/lib/user-auth";
 
-function AuthenticatedRouter() {
+function UserRouter() {
   const [location] = useLocation();
-  
+
   const { data: user, isLoading, error } = useQuery({
-    queryKey: ["/api/auth/user"],
+    queryKey: ["/api/user/me"],
+    queryFn: userAuthApi.getCurrentUser,
     retry: false,
   });
 
-  if (isLoading) {
+  if (isLoading && location === "/dashboard") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -26,20 +31,56 @@ function AuthenticatedRouter() {
     );
   }
 
-  const isAuthenticated = !!user && !error;
+  const isUserAuthenticated = !!user && !error;
 
   return (
     <Switch>
-      {!isAuthenticated ? (
+      <Route path="/" component={UserLogin} />
+      <Route path="/api-verify" component={ApiVerify} />
+      <Route path="/dashboard">
+        {isUserAuthenticated ? <UserDashboard /> : <UserLogin />}
+      </Route>
+      <Route path="/admin" nest>
+        <AdminRouter />
+      </Route>
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function AdminRouter() {
+  const [location] = useLocation();
+  
+  const { data: adminUser, isLoading, error } = useQuery({
+    queryKey: ["/api/auth/user"],
+    retry: false,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading admin...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isAdminAuthenticated = !!adminUser && !error;
+
+  return (
+    <Switch>
+      {!isAdminAuthenticated ? (
         <>
-          <Route path="/" component={Login} />
-          <Route path="/login" component={Login} />
+          <Route path="/admin" component={Login} />
+          <Route path="/admin/login" component={Login} />
           <Route component={() => <Login />} />
         </>
       ) : (
         <>
-          <Route path="/" component={Dashboard} />
-          <Route path="/dashboard" component={Dashboard} />
+          <Route path="/admin" component={Dashboard} />
+          <Route path="/admin/dashboard" component={Dashboard} />
           <Route component={NotFound} />
         </>
       )}
@@ -52,7 +93,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <AuthenticatedRouter />
+        <UserRouter />
       </TooltipProvider>
     </QueryClientProvider>
   );

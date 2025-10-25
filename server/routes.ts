@@ -335,6 +335,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ========== END CLIENT USER ROUTES ==========
 
+  // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
+  
+  // Get all client users (Admin only)
+  app.get("/api/admin/client-users", requireAuth, async (req, res) => {
+    try {
+      const users = await storage.getAllClientUsers();
+      res.json(users);
+    } catch (error) {
+      console.error("Get client users error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Create a client user (Admin only)
+  app.post("/api/admin/client-users", requireAuth, async (req, res) => {
+    try {
+      const { username, password, email, apiKeyId } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+
+      // Check if username already exists
+      const existingUser = await storage.getClientUserByUsername(username);
+      if (existingUser) {
+        return res.status(400).json({ message: "Username already exists" });
+      }
+
+      // If apiKeyId is provided, verify it exists
+      if (apiKeyId) {
+        const apiKey = await storage.getApiKeyById(apiKeyId);
+        if (!apiKey) {
+          return res.status(400).json({ message: "Invalid API key ID" });
+        }
+      }
+
+      const newUser = await storage.createClientUser({
+        username,
+        password,
+        email: email || null,
+        apiKeyId: apiKeyId || null,
+        status: 'active'
+      });
+
+      res.json(newUser);
+    } catch (error) {
+      console.error("Create client user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete a client user (Admin only)
+  app.delete("/api/admin/client-users/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      // Check if user exists
+      const user = await storage.getClientUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // For now, we don't have a delete method, so we'll suspend the user instead
+      const updated = await storage.updateClientUser(id, { status: 'suspended' });
+      
+      res.json({ message: "User suspended", user: updated });
+    } catch (error) {
+      console.error("Delete client user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ========== END ADMIN CLIENT USER MANAGEMENT ROUTES ==========
+
   // Get API keys (protected)
   app.get("/api/api-keys", requireAuth, async (req, res) => {
     try {

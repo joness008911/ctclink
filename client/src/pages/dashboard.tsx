@@ -12,6 +12,7 @@ import AnalyticsDashboard from "@/components/analytics-dashboard";
 import CountryWhitelist from "@/components/country-whitelist";
 import IspWhitelist from "@/components/isp-whitelist";
 import IspBlacklist from "@/components/isp-blacklist";
+import ClientUserManagement from "@/components/client-user-management";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 
@@ -62,6 +63,7 @@ export default function Dashboard() {
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="mb-6">
               <TabsTrigger value="overview" data-testid="tab-overview">📊 Dashboard</TabsTrigger>
+              <TabsTrigger value="client-users" data-testid="tab-client-users">👥 Client Users</TabsTrigger>
               <TabsTrigger value="countries" data-testid="tab-countries">🌍 Countries</TabsTrigger>
               <TabsTrigger value="isp-whitelist" data-testid="tab-isp-whitelist">✅ ISP Whitelist</TabsTrigger>
               <TabsTrigger value="isp-blacklist" data-testid="tab-isp-blacklist">❌ ISP Blacklist</TabsTrigger>
@@ -153,6 +155,10 @@ export default function Dashboard() {
                   </Card>
                 </div>
               </div>
+            </TabsContent>
+
+            <TabsContent value="client-users">
+              <ClientUserManagement />
             </TabsContent>
 
             <TabsContent value="countries">
