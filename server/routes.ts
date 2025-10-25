@@ -16,6 +16,7 @@ import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
 import path from "path";
 import fs from "fs";
+import bcrypt from "bcrypt";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
@@ -123,7 +124,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Find client user by username
       const user = await storage.getClientUserByUsername(username);
-      if (!user || user.password !== password) {
+      if (!user) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Use bcrypt to compare passwords
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (!passwordMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
@@ -333,6 +340,77 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Change client user password
+  app.post("/api/user/change-password", requireClientAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.clientUserId;
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current password and new password are required" });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters" });
+      }
+
+      const user = await storage.getClientUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Verify current password using bcrypt
+      const passwordMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!passwordMatch) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+
+      // Hash new password before storing
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await storage.updateClientUser(userId, { password: hashedPassword });
+
+      res.json({ message: "Password changed successfully" });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get client user's API key details (for license management)
+  app.get("/api/user/api-key-details", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user || !user.apiKeyId) {
+        return res.json(null);
+      }
+
+      const apiKey = await storage.getApiKeyById(user.apiKeyId);
+      if (!apiKey) {
+        return res.json(null);
+      }
+
+      // Return masked key and details
+      const keyValue = apiKey.keyValue;
+      const masked = keyValue.length > 8 
+        ? `${keyValue.substring(0, 4)}${'*'.repeat(keyValue.length - 8)}${keyValue.substring(keyValue.length - 4)}`
+        : '****';
+
+      res.json({
+        keyName: apiKey.keyName,
+        keyPreview: masked,
+        status: apiKey.status,
+        callLimit: apiKey.callLimit,
+        callCount: apiKey.callCount,
+        expirationPeriod: apiKey.expirationPeriod,
+        expiresAt: apiKey.expiresAt,
+        createdAt: apiKey.createdAt,
+      });
+    } catch (error) {
+      console.error("Get API key details error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // ========== END CLIENT USER ROUTES ==========
 
   // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
@@ -357,6 +435,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Username and password are required" });
       }
 
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+
       // Check if username already exists
       const existingUser = await storage.getClientUserByUsername(username);
       if (existingUser) {
@@ -371,9 +453,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
+      // Hash password before storing
+      const hashedPassword = await bcrypt.hash(password, 10);
+
       const newUser = await storage.createClientUser({
         username,
-        password,
+        password: hashedPassword,
         email: email || null,
         apiKeyId: apiKeyId || null,
         status: 'active'

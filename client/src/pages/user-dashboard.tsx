@@ -9,7 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 
@@ -18,6 +19,10 @@ export default function UserDashboard() {
   const { toast } = useToast();
   const [humanUrl, setHumanUrl] = useState("");
   const [botUrl, setBotUrl] = useState("");
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const { data: user, isLoading: userLoading } = useQuery({
     queryKey: ["/api/user/me"],
@@ -42,6 +47,10 @@ export default function UserDashboard() {
 
   const { data: classifications = [] } = useQuery<any[]>({
     queryKey: ["/api/user/classifications"],
+  });
+
+  const { data: apiKeyDetails } = useQuery<any>({
+    queryKey: ["/api/user/api-key-details"],
   });
 
   useEffect(() => {
@@ -72,6 +81,30 @@ export default function UserDashboard() {
     },
   });
 
+  const changePasswordMutation = useMutation({
+    mutationFn: async (data: { currentPassword: string; newPassword: string }) => {
+      const response = await apiRequest("POST", "/api/user/change-password", data);
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Password Changed",
+        description: "Your password has been updated successfully.",
+      });
+      setIsPasswordDialogOpen(false);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Change Failed",
+        description: error.message || "Failed to change password",
+        variant: "destructive",
+      });
+    },
+  });
+
   const logoutMutation = useMutation({
     mutationFn: userAuthApi.logout,
     onSuccess: () => {
@@ -90,6 +123,37 @@ export default function UserDashboard() {
       return;
     }
     updateUrlsMutation.mutate({ humanUrl, botUrl });
+  };
+
+  const handleChangePassword = () => {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all password fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: "Passwords Don't Match",
+        description: "New password and confirmation must match",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      toast({
+        title: "Password Too Short",
+        description: "Password must be at least 8 characters",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    changePasswordMutation.mutate({ currentPassword, newPassword });
   };
 
   if (userLoading) {
@@ -148,23 +212,121 @@ export default function UserDashboard() {
                   {user?.status}
                 </Badge>
               </div>
-              {user?.apiKey && (
-                <>
-                  <div>
-                    <p className="text-sm text-muted-foreground">API Key Name</p>
-                    <p className="font-medium" data-testid="text-api-key-name">{user.apiKey.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">API Key Status</p>
-                    <Badge variant={user.apiKey.status === 'active' ? 'default' : 'secondary'}>
-                      {user.apiKey.status}
-                    </Badge>
-                  </div>
-                </>
-              )}
             </div>
+            <Separator />
+            <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" data-testid="button-change-password">
+                  <Lock className="w-4 h-4 mr-2" />
+                  Change Password
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Change Password</DialogTitle>
+                  <DialogDescription>
+                    Update your account password
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="current-password">Current Password</Label>
+                    <Input
+                      id="current-password"
+                      type="password"
+                      data-testid="input-current-password"
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="new-password">New Password</Label>
+                    <Input
+                      id="new-password"
+                      type="password"
+                      data-testid="input-new-password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="confirm-password">Confirm New Password</Label>
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      data-testid="input-confirm-password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsPasswordDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleChangePassword}
+                    disabled={changePasswordMutation.isPending}
+                    data-testid="button-confirm-password-change"
+                  >
+                    {changePasswordMutation.isPending ? "Changing..." : "Change Password"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
+
+        {/* License Management */}
+        {apiKeyDetails && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="w-5 h-5" />
+                API License Details
+              </CardTitle>
+              <CardDescription>Your API key information and usage</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">API Key Name</p>
+                  <p className="font-medium">{apiKeyDetails.keyName}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Status</p>
+                  <Badge variant={apiKeyDetails.status === 'active' ? 'default' : 'secondary'}>
+                    {apiKeyDetails.status}
+                  </Badge>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">API Key</p>
+                  <p className="font-mono text-sm bg-muted px-2 py-1 rounded">{apiKeyDetails.keyPreview}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Expiration</p>
+                  <p className="font-medium capitalize">{apiKeyDetails.expirationPeriod}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Usage</p>
+                  <p className="font-medium">
+                    {apiKeyDetails.callCount.toLocaleString()} / {apiKeyDetails.callLimit.toLocaleString()} calls
+                  </p>
+                  <div className="w-full bg-muted rounded-full h-2 mt-2">
+                    <div 
+                      className="bg-primary rounded-full h-2 transition-all"
+                      style={{ width: `${Math.min((apiKeyDetails.callCount / apiKeyDetails.callLimit) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Created</p>
+                  <p className="text-sm">{new Date(apiKeyDetails.createdAt).toLocaleDateString()}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Statistics */}
         <Card>
@@ -288,11 +450,11 @@ export default function UserDashboard() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Time</TableHead>
-                      <TableHead>Type</TableHead>
+                      <TableHead>Classification</TableHead>
                       <TableHead>IP Address</TableHead>
                       <TableHead>Country</TableHead>
                       <TableHead>ISP</TableHead>
-                      <TableHead>Detection Method</TableHead>
+                      <TableHead>Device</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -307,11 +469,9 @@ export default function UserDashboard() {
                           </Badge>
                         </TableCell>
                         <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
-                        <TableCell>{c.country || '-'}</TableCell>
+                        <TableCell>{c.country || c.location || '-'}</TableCell>
                         <TableCell className="text-sm">{c.isp || '-'}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {c.detectionMethod}
-                        </TableCell>
+                        <TableCell className="text-xs capitalize">{c.deviceType || 'desktop'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
