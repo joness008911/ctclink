@@ -24,7 +24,7 @@ export default function ClientUserManagement() {
     queryKey: ["/api/admin/client-users"],
   });
 
-  const { data: apiKeys = [] } = useQuery<any[]>({
+  const { data: apiKeys = [], isLoading: isLoadingApiKeys } = useQuery<any[]>({
     queryKey: ["/api/api-keys"],
   });
 
@@ -89,7 +89,7 @@ export default function ClientUserManagement() {
       username: newUsername,
       password: newPassword,
       email: newEmail || null,
-      apiKeyId: selectedApiKeyId || null,
+      apiKeyId: selectedApiKeyId && selectedApiKeyId !== "none" ? selectedApiKeyId : null,
     });
   };
 
@@ -159,19 +159,23 @@ export default function ClientUserManagement() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="apiKey">Assign API Key (optional)</Label>
-                  <Select value={selectedApiKeyId} onValueChange={setSelectedApiKeyId}>
-                    <SelectTrigger data-testid="select-api-key">
-                      <SelectValue placeholder="Select an API key" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="">None</SelectItem>
-                      {apiKeys.map((key: any) => (
-                        <SelectItem key={key.id} value={key.id}>
-                          {key.keyName} ({key.status})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {isLoadingApiKeys ? (
+                    <div className="text-sm text-muted-foreground">Loading API keys...</div>
+                  ) : (
+                    <Select value={selectedApiKeyId} onValueChange={setSelectedApiKeyId}>
+                      <SelectTrigger data-testid="select-api-key">
+                        <SelectValue placeholder="Select an API key" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {apiKeys.map((key: any) => (
+                          <SelectItem key={key.id} value={key.id}>
+                            {key.keyName} ({key.status})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     You can assign an API key now or later
                   </p>
