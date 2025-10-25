@@ -19,16 +19,24 @@ export default function ApiVerify() {
 
   useEffect(() => {
     const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+    console.log("[API Verify] Loading saved credentials:", savedCreds);
     if (savedCreds) {
       try {
-        const { apiKey: savedApiKey } = JSON.parse(savedCreds);
+        const parsedCreds = JSON.parse(savedCreds);
+        console.log("[API Verify] Parsed credentials:", parsedCreds);
+        const { apiKey: savedApiKey } = parsedCreds;
         if (savedApiKey) {
+          console.log("[API Verify] Setting API key:", savedApiKey);
           setApiKey(savedApiKey);
           setRememberMe(true);
+        } else {
+          console.log("[API Verify] No saved API key found");
         }
       } catch (e) {
-        console.error("Failed to load saved API key");
+        console.error("[API Verify] Failed to load saved API key:", e);
       }
+    } else {
+      console.log("[API Verify] No saved credentials found in localStorage");
     }
   }, []);
 

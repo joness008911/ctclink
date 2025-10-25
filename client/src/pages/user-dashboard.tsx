@@ -110,8 +110,7 @@ export default function UserDashboard() {
     mutationFn: userAuthApi.logout,
     onSuccess: () => {
       queryClient.clear();
-      // Clear saved credentials on logout
-      localStorage.removeItem('cleantraffic_remember_me');
+      // Keep saved credentials for Remember Me feature
       navigate("/");
     },
   });
