@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { userAuthApi } from "@/lib/user-auth";
@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { ShieldCheck } from "lucide-react";
 
@@ -14,10 +15,34 @@ export default function UserLogin() {
   const { toast } = useToast();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+
+  useEffect(() => {
+    const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+    if (savedCreds) {
+      try {
+        const { username: savedUsername, password: savedPassword } = JSON.parse(savedCreds);
+        if (savedUsername) setUsername(savedUsername);
+        if (savedPassword) setPassword(savedPassword);
+        setRememberMe(true);
+      } catch (e) {
+        console.error("Failed to load saved credentials");
+      }
+    }
+  }, []);
 
   const loginMutation = useMutation({
     mutationFn: userAuthApi.login,
     onSuccess: (data) => {
+      if (rememberMe) {
+        localStorage.setItem('cleantraffic_remember_me', JSON.stringify({
+          username,
+          password
+        }));
+      } else {
+        localStorage.removeItem('cleantraffic_remember_me');
+      }
+      
       toast({
         title: "Login Successful",
         description: data.message || "Please verify your API key to continue.",
@@ -86,6 +111,22 @@ export default function UserLogin() {
                 autoComplete="current-password"
               />
             </div>
+            
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="remember"
+                data-testid="checkbox-remember-me"
+                checked={rememberMe}
+                onCheckedChange={(checked) => setRememberMe(checked as boolean)}
+              />
+              <label
+                htmlFor="remember"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+              >
+                Remember me on this device
+              </label>
+            </div>
+
             <Button
               type="submit"
               data-testid="button-login"
