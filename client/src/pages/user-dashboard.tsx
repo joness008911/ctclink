@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 
 export default function UserDashboard() {
@@ -44,12 +44,12 @@ export default function UserDashboard() {
     queryKey: ["/api/user/classifications"],
   });
 
-  useState(() => {
+  useEffect(() => {
     if (redirectUrls) {
       setHumanUrl(redirectUrls.humanUrl || "");
       setBotUrl(redirectUrls.botUrl || "");
     }
-  });
+  }, [redirectUrls]);
 
   const updateUrlsMutation = useMutation({
     mutationFn: async (urls: { humanUrl: string; botUrl: string }) => {
