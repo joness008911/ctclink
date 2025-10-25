@@ -22,6 +22,7 @@ export const classifications = pgTable("classifications", {
   browser: text("browser"),
   deviceType: text("device_type"),
   userAgent: text("user_agent"),
+  apiKeyId: varchar("api_key_id").references(() => apiKeys.id), // Link to which API key was used
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
@@ -79,6 +80,27 @@ export const ispBlacklist = pgTable("isp_blacklist", {
   addedAt: timestamp("added_at").defaultNow().notNull(),
 });
 
+// Client Users (End-user customers who use the CleanTraffic service)
+export const clientUsers = pgTable("client_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  username: text("username").notNull().unique(),
+  password: text("password").notNull(),
+  email: text("email"),
+  apiKeyId: varchar("api_key_id").references(() => apiKeys.id),
+  status: text("status").default("active").notNull(), // active, suspended, expired
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// User Redirect URLs (Custom redirect URLs per user)
+export const userRedirectUrls = pgTable("user_redirect_urls", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => clientUsers.id),
+  humanUrl: text("human_url").notNull().default("https://example.com/human"),
+  botUrl: text("bot_url").notNull().default("https://google.com"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -125,6 +147,17 @@ export const insertIspBlacklistSchema = createInsertSchema(ispBlacklist).omit({
   addedAt: true,
 });
 
+export const insertClientUserSchema = createInsertSchema(clientUsers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertUserRedirectUrlsSchema = createInsertSchema(userRedirectUrls).omit({
+  id: true,
+  updatedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertClassification = z.infer<typeof insertClassificationSchema>;
@@ -141,3 +174,7 @@ export type InsertIspWhitelist = z.infer<typeof insertIspWhitelistSchema>;
 export type IspWhitelist = typeof ispWhitelist.$inferSelect;
 export type InsertIspBlacklist = z.infer<typeof insertIspBlacklistSchema>;
 export type IspBlacklist = typeof ispBlacklist.$inferSelect;
+export type InsertClientUser = z.infer<typeof insertClientUserSchema>;
+export type ClientUser = typeof clientUsers.$inferSelect;
+export type InsertUserRedirectUrls = z.infer<typeof insertUserRedirectUrlsSchema>;
+export type UserRedirectUrls = typeof userRedirectUrls.$inferSelect;
