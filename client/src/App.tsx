@@ -73,14 +73,14 @@ function AdminRouter() {
     <Switch>
       {!isAdminAuthenticated ? (
         <>
-          <Route path="/admin" component={Login} />
-          <Route path="/admin/login" component={Login} />
+          <Route path="/" component={Login} />
+          <Route path="/login" component={Login} />
           <Route component={() => <Login />} />
         </>
       ) : (
         <>
-          <Route path="/admin" component={Dashboard} />
-          <Route path="/admin/dashboard" component={Dashboard} />
+          <Route path="/" component={Dashboard} />
+          <Route path="/dashboard" component={Dashboard} />
           <Route component={NotFound} />
         </>
       )}
