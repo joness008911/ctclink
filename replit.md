@@ -8,6 +8,23 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 
 ## Recent Changes
 
+### October 25, 2025
+- **SECURITY ENHANCEMENT**: Implemented bcrypt password hashing for all user accounts
+  - All passwords now hashed using bcrypt (salt rounds: 10) before storage
+  - Password comparison uses timing-safe bcrypt.compare() method
+  - Minimum password length increased from 6 to 8 characters
+  - Updated routes: user login, client user creation, change password
+  - Test data migrated to hashed passwords for secure authentication
+- **USER FEATURES**: Added comprehensive user dashboard functionality
+  - Change Password feature: Secure password updates with current password verification
+  - API License Management panel: Shows API key details, usage stats, rate limits, expiration
+  - Simplified visitor classification view: Users see "Human" or "Bot" (technical details hidden)
+  - Admin retains full technical details (Datacenter, Country Not Whitelisted, etc.)
+- **DATA ISOLATION**: Classifications now track API key ownership
+  - Each classification saves which API key made the request (apiKeyId field)
+  - Users only see traffic from their own API calls
+  - Complete data isolation between client users
+
 ### October 10, 2025
 - **CASCADING CLASSIFICATION SYSTEM**: Implemented multi-layer bot filtering for optimized performance
   - Country Whitelist → ISP Blacklist → Proxy Detection → ISP Whitelist (4-step cascade)
@@ -116,14 +133,20 @@ Preferred communication style: Simple, everyday language.
 
 ### Authentication and Authorization
 
-**Strategy**: Session-based authentication using Express sessions
+**Strategy**: Session-based authentication using Express sessions with bcrypt password hashing
 
 **Flow**: 
-- Login endpoint validates credentials and creates server-side session
+- Login endpoint validates credentials using bcrypt.compare() and creates server-side session
 - Authentication middleware protects API routes
 - Frontend authentication state managed through React Query
+- Two-step authentication for client users: username/password → API key verification
 
-**Security**: HTTP-only session cookies with configurable security settings
+**Security**: 
+- HTTP-only session cookies with configurable security settings
+- Bcrypt password hashing (salt rounds: 10) for all user accounts
+- Timing-safe password comparison to prevent timing attacks
+- Minimum password length: 8 characters
+- Separate authentication flows for admin users and client users
 
 ### External Dependencies
 
