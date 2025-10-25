@@ -517,6 +517,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/classify", async (req, res) => {
     const apiKey = req.query.api_key as string;
     let limitReached = false;
+    let apiKeyId: string | null = null;
     
     // Check if API key is provided and valid
     if (apiKey) {
@@ -528,6 +529,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
+      // Store API key ID for classification tracking
+      apiKeyId = validKey.id;
+      
       // Check and increment usage count
       const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
       if (!usageAllowed) {
@@ -536,16 +540,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
     
-    // Continue with classification logic
-    return handleClassification(req, res, limitReached);
+    // Continue with classification logic, passing API key ID
+    return handleClassification(req, res, limitReached, apiKeyId);
   });
 
   // Public classification endpoint (POST)
   app.post("/api/classify", async (req, res) => {
-    return handleClassification(req, res, false);
+    return handleClassification(req, res, false, null);
   });
 
-  async function handleClassification(req: any, res: any, limitReached: boolean = false) {
+  async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
     try {
       
       // Try multiple methods to get real visitor IP
@@ -817,7 +821,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         deviceType: classificationData.device_type || deviceType,
         visitorType: visitorType,
         isp: classificationData.isp || 'Unknown',
-        detectionMethod: classificationData.detection_method || 'IP Analysis'
+        detectionMethod: classificationData.detection_method || 'IP Analysis',
+        apiKeyId: apiKeyId, // Track which API key made this request
       });
 
       const response = {
