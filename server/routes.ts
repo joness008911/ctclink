@@ -3,7 +3,9 @@ import type { Express } from "express";
 // Extend session types
 declare module 'express-session' {
   interface SessionData {
-    userId?: string;
+    userId?: string; // Admin user ID
+    clientUserId?: string; // Client user ID (end-user customers)
+    clientUserAuthenticated?: boolean; // Whether client user has verified API key
   }
 }
 import { createServer, type Server } from "http";
@@ -94,7 +96,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
-  // Get current user
+  // Get current user (Admin)
   app.get("/api/auth/user", requireAuth, async (req: any, res) => {
     try {
       const user = await storage.getUser(req.session.userId);
@@ -107,6 +109,231 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+
+  // ========== CLIENT USER AUTHENTICATION ROUTES ==========
+  
+  // Step 1: Client user login with username/password
+  app.post("/api/user/login", async (req, res) => {
+    try {
+      const { username, password } = req.body;
+      
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password required" });
+      }
+      
+      // Find client user by username
+      const user = await storage.getClientUserByUsername(username);
+      if (!user || user.password !== password) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Check if user account is active
+      if (user.status !== 'active') {
+        return res.status(403).json({ message: `Account is ${user.status}. Please contact support.` });
+      }
+      
+      // Store user ID in session for step 2
+      req.session.clientUserId = user.id;
+      
+      res.json({ 
+        message: "Login successful. Please verify your API key.", 
+        userId: user.id,
+        username: user.username,
+        requiresApiKey: true
+      });
+    } catch (error) {
+      console.error("Client user login error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Step 2: Verify API key for client user
+  app.post("/api/user/verify-api-key", async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      const clientUserId = req.session.clientUserId;
+      
+      if (!clientUserId) {
+        return res.status(401).json({ message: "Please login first" });
+      }
+
+      if (!apiKey) {
+        return res.status(400).json({ message: "API key required" });
+      }
+      
+      // Find the API key in the system
+      const apiKeyRecord = await storage.getApiKeyByValue(apiKey);
+      if (!apiKeyRecord) {
+        return res.status(401).json({ message: "Invalid API key" });
+      }
+
+      // Verify this API key belongs to this user
+      const user = await storage.getClientUser(clientUserId);
+      if (!user || user.apiKeyId !== apiKeyRecord.id) {
+        return res.status(403).json({ message: "API key does not match your account" });
+      }
+
+      // Check API key status
+      if (apiKeyRecord.status === 'paused') {
+        return res.status(403).json({ message: "API key is paused" });
+      }
+      if (apiKeyRecord.status === 'expired') {
+        return res.status(403).json({ message: "API key has expired" });
+      }
+
+      // Success! Mark user as fully authenticated
+      req.session.clientUserAuthenticated = true;
+      
+      res.json({ 
+        message: "API key verified successfully",
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          status: user.status
+        },
+        apiKey: {
+          name: apiKeyRecord.keyName,
+          status: apiKeyRecord.status,
+          expirationPeriod: apiKeyRecord.expirationPeriod
+        }
+      });
+    } catch (error) {
+      console.error("API key verification error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Middleware for client user auth
+  const requireClientAuth = (req: any, res: any, next: any) => {
+    if (req.session?.clientUserId && req.session?.clientUserAuthenticated) {
+      next();
+    } else {
+      res.status(401).json({ message: "Unauthorized. Please login and verify your API key." });
+    }
+  };
+
+  // Get current client user info
+  app.get("/api/user/me", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      // Get API key info
+      const apiKey = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
+      
+      res.json({ 
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        status: user.status,
+        createdAt: user.createdAt,
+        apiKey: apiKey ? {
+          name: apiKey.keyName,
+          status: apiKey.status,
+          expirationPeriod: apiKey.expirationPeriod,
+          callLimit: apiKey.callLimit
+        } : null
+      });
+    } catch (error) {
+      console.error("Get client user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Client user logout
+  app.post("/api/user/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ message: "Could not log out" });
+      }
+      res.json({ message: "Logout successful" });
+    });
+  });
+
+  // Get client user's redirect URLs
+  app.get("/api/user/redirect-urls", requireClientAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.clientUserId;
+      const redirectUrls = await storage.getUserRedirectUrls(userId);
+      
+      res.json(redirectUrls || { 
+        humanUrl: "https://example.com/human", 
+        botUrl: "https://google.com" 
+      });
+    } catch (error) {
+      console.error("Get user redirect URLs error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update client user's redirect URLs
+  app.put("/api/user/redirect-urls", requireClientAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.clientUserId;
+      const { humanUrl, botUrl } = req.body;
+      
+      if (!humanUrl || !botUrl) {
+        return res.status(400).json({ message: "Both humanUrl and botUrl are required" });
+      }
+
+      // Basic URL validation
+      try {
+        new URL(humanUrl);
+        new URL(botUrl);
+      } catch {
+        return res.status(400).json({ message: "Invalid URL format" });
+      }
+      
+      const updated = await storage.setUserRedirectUrls(userId, { humanUrl, botUrl });
+      res.json(updated);
+    } catch (error) {
+      console.error("Update user redirect URLs error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get client user's classifications (their traffic logs)
+  app.get("/api/user/classifications", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user || !user.apiKeyId) {
+        return res.json([]);
+      }
+
+      const limit = parseInt(req.query.limit as string) || 100;
+      const classifications = await storage.getUserClassifications(user.apiKeyId, limit);
+      
+      res.json(classifications);
+    } catch (error) {
+      console.error("Get user classifications error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get client user's statistics
+  app.get("/api/user/stats", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user || !user.apiKeyId) {
+        return res.json({
+          totalClassifications: 0,
+          humanVisitors: 0,
+          botTraffic: 0
+        });
+      }
+
+      const stats = await storage.getUserStats(user.apiKeyId);
+      res.json(stats);
+    } catch (error) {
+      console.error("Get user stats error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ========== END CLIENT USER ROUTES ==========
 
   // Get API keys (protected)
   app.get("/api/api-keys", requireAuth, async (req, res) => {

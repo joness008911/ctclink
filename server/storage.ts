@@ -92,7 +92,9 @@ export interface IStorage {
   
   createApiKey(apiKey: InsertApiKey): Promise<ApiKey>;
   getApiKeys(): Promise<ApiKey[]>;
-  getApiKey(keyValue: string): Promise<ApiKey | undefined>;
+  getApiKey(keyValue: string): Promise<ApiKey | undefined>; // Get by key value
+  getApiKeyById(id: string): Promise<ApiKey | undefined>; // Get by ID
+  getApiKeyByValue(keyValue: string): Promise<ApiKey | undefined>; // Alias for getApiKey
   deleteApiKey(id: string): Promise<boolean>;
   updateApiKey(id: string, updates: Partial<ApiKey>): Promise<ApiKey | undefined>;
   incrementApiKeyUsage(keyValue: string): Promise<boolean>;
@@ -542,6 +544,15 @@ export class DatabaseStorage implements IStorage {
   async getApiKey(keyValue: string): Promise<ApiKey | undefined> {
     const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.keyValue, keyValue));
     return apiKey;
+  }
+
+  async getApiKeyById(id: string): Promise<ApiKey | undefined> {
+    const [apiKey] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    return apiKey;
+  }
+
+  async getApiKeyByValue(keyValue: string): Promise<ApiKey | undefined> {
+    return this.getApiKey(keyValue);
   }
 
   async deleteApiKey(id: string): Promise<boolean> {
