@@ -13,13 +13,19 @@ import {
   type InsertIspWhitelist,
   type IspBlacklist,
   type InsertIspBlacklist,
+  type ClientUser,
+  type InsertClientUser,
+  type UserRedirectUrls,
+  type InsertUserRedirectUrls,
   users,
   classifications,
   detectionRules,
   apiKeys,
   countryWhitelist,
   ispWhitelist,
-  ispBlacklist
+  ispBlacklist,
+  clientUsers,
+  userRedirectUrls
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -113,6 +119,26 @@ export interface IStorage {
   removeIspFromBlacklist(id: string): Promise<boolean>;
   toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean>;
   isIspBlacklisted(ispName: string): Promise<boolean>;
+  
+  // Client User methods (for end-user customers)
+  createClientUser(user: InsertClientUser): Promise<ClientUser>;
+  getClientUser(id: string): Promise<ClientUser | undefined>;
+  getClientUserByUsername(username: string): Promise<ClientUser | undefined>;
+  updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined>;
+  getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined>;
+  getAllClientUsers(): Promise<ClientUser[]>;
+  
+  // User Redirect URLs methods
+  getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined>;
+  setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls>;
+  
+  // Classification methods for users
+  getUserClassifications(apiKeyId: string, limit?: number): Promise<Classification[]>;
+  getUserStats(apiKeyId: string): Promise<{
+    totalClassifications: number;
+    humanVisitors: number;
+    botTraffic: number;
+  }>;
 }
 
 export class MemStorage implements IStorage {
@@ -723,6 +749,113 @@ export class DatabaseStorage implements IStorage {
       .from(ispBlacklist)
       .where(eq(ispBlacklist.ispName, ispName));
     return isp ? isp.enabled : false;
+  }
+
+  // Client User methods (for end-user customers)
+  async createClientUser(user: InsertClientUser): Promise<ClientUser> {
+    const [newUser] = await db.insert(clientUsers).values(user).returning();
+    return newUser;
+  }
+
+  async getClientUser(id: string): Promise<ClientUser | undefined> {
+    const [user] = await db
+      .select()
+      .from(clientUsers)
+      .where(eq(clientUsers.id, id));
+    return user;
+  }
+
+  async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
+    const [user] = await db
+      .select()
+      .from(clientUsers)
+      .where(eq(clientUsers.username, username));
+    return user;
+  }
+
+  async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
+    const [updated] = await db
+      .update(clientUsers)
+      .set(updates)
+      .where(eq(clientUsers.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
+    const [user] = await db
+      .select()
+      .from(clientUsers)
+      .where(eq(clientUsers.apiKeyId, apiKeyId));
+    return user;
+  }
+
+  async getAllClientUsers(): Promise<ClientUser[]> {
+    const allUsers = await db.select().from(clientUsers);
+    return allUsers;
+  }
+
+  // User Redirect URLs methods
+  async getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined> {
+    const [urls] = await db
+      .select()
+      .from(userRedirectUrls)
+      .where(eq(userRedirectUrls.userId, userId));
+    return urls;
+  }
+
+  async setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls> {
+    // Check if user has existing redirect URLs
+    const existing = await this.getUserRedirectUrls(userId);
+    
+    if (existing) {
+      // Update existing
+      const [updated] = await db
+        .update(userRedirectUrls)
+        .set({ ...urls, updatedAt: sql`now()` })
+        .where(eq(userRedirectUrls.userId, userId))
+        .returning();
+      return updated;
+    } else {
+      // Create new
+      const [created] = await db
+        .insert(userRedirectUrls)
+        .values({ userId, ...urls })
+        .returning();
+      return created;
+    }
+  }
+
+  // Classification methods for users (filtered by API key)
+  async getUserClassifications(apiKeyId: string, limit: number = 100): Promise<Classification[]> {
+    const userClassifications = await db
+      .select()
+      .from(classifications)
+      .where(eq(classifications.apiKeyId, apiKeyId))
+      .orderBy(desc(classifications.timestamp))
+      .limit(limit);
+    return userClassifications;
+  }
+
+  async getUserStats(apiKeyId: string): Promise<{
+    totalClassifications: number;
+    humanVisitors: number;
+    botTraffic: number;
+  }> {
+    const [stats] = await db
+      .select({
+        total: count(),
+        humans: sql<number>`count(*) filter (where ${classifications.visitorType} = 'Human')`,
+        bots: sql<number>`count(*) filter (where ${classifications.visitorType} = 'Bot')`,
+      })
+      .from(classifications)
+      .where(eq(classifications.apiKeyId, apiKeyId));
+
+    return {
+      totalClassifications: Number(stats?.total || 0),
+      humanVisitors: Number(stats?.humans || 0),
+      botTraffic: Number(stats?.bots || 0),
+    };
   }
 }
 
