@@ -639,9 +639,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return handleClassification(req, res, limitReached, apiKeyId);
   });
 
-  // Public classification endpoint (POST)
+  // Public classification endpoint (POST) - with API key support for PHP scripts
   app.post("/api/classify", async (req, res) => {
-    return handleClassification(req, res, false, null);
+    // Check for API key in header (X-API-Key)
+    const apiKeyFromHeader = req.headers['x-api-key'] as string;
+    let limitReached = false;
+    let apiKeyId: string | null = null;
+    
+    if (apiKeyFromHeader) {
+      const validKey = await storage.getApiKey(apiKeyFromHeader);
+      if (!validKey || !validKey.enabled) {
+        return res.status(401).json({ 
+          error: "Invalid or disabled API key",
+          status: "unauthorized"
+        });
+      }
+      
+      // Store API key ID for classification tracking and redirect URL lookup
+      apiKeyId = validKey.id;
+      
+      // Check and increment usage count
+      const usageAllowed = await storage.incrementApiKeyUsage(apiKeyFromHeader);
+      if (!usageAllowed) {
+        limitReached = true;
+      }
+    }
+    
+    return handleClassification(req, res, limitReached, apiKeyId);
   });
 
   async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
@@ -921,7 +945,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         apiKeyId: apiKeyId, // Track which API key made this request
       });
 
-      const response = {
+      const response: any = {
         ip: clientIp,
         location: classification.location || 'Unknown',
         browser: classification.browser || 'Unknown',
@@ -929,6 +953,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         visitor_type: classification.visitorType || 'Human',
         isp: classification.isp || 'Unknown'
       };
+      
+      // If API key is provided, add redirect URL for PHP script usage
+      if (apiKeyId) {
+        try {
+          const user = await storage.getClientUserByApiKey(apiKeyId);
+          if (user) {
+            const redirectUrls = await storage.getUserRedirectUrls(user.id);
+            if (redirectUrls) {
+              // Return appropriate redirect URL based on visitor type
+              response.redirectUrl = classification.visitorType === 'Human' 
+                ? redirectUrls.humanUrl 
+                : redirectUrls.botUrl;
+            }
+          }
+        } catch (error) {
+          console.error("Error fetching redirect URLs:", error);
+          // Continue without redirectUrl if lookup fails
+        }
+      }
       
       res.json(response);
     } catch (error) {
