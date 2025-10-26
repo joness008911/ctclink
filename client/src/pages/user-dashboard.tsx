@@ -726,6 +726,7 @@ if ($redirectUrl) {
                           <TableHead>Time</TableHead>
                           <TableHead>Classification</TableHead>
                           <TableHead>IP Address</TableHead>
+                          <TableHead>Email</TableHead>
                           <TableHead>Country</TableHead>
                           <TableHead>ISP</TableHead>
                           <TableHead>Device</TableHead>
@@ -743,6 +744,7 @@ if ($redirectUrl) {
                               </Badge>
                             </TableCell>
                             <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
+                            <TableCell className="text-sm" data-testid={`email-${i}`}>{c.email || '-'}</TableCell>
                             <TableCell>{c.country || c.location || '-'}</TableCell>
                             <TableCell className="text-sm">{c.isp || '-'}</TableCell>
                             <TableCell className="text-xs capitalize">{c.deviceType || 'desktop'}</TableCell>
