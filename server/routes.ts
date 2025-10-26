@@ -745,8 +745,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
     try {
       
-      // Check if IP is provided in query parameter (for API users) or use actual visitor IP
-      let clientIp = req.query.ip as string || 
+      // Check if IP is provided in request body (POST) or query parameter (GET) or use actual visitor IP
+      let clientIp = req.body?.ip as string ||
+                     req.query.ip as string || 
                      req.headers['cf-connecting-ip'] || 
                      req.headers['true-client-ip'] || 
                      req.headers['x-client-ip'] || 
@@ -768,7 +769,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         clientIp = clientIp[0];
       }
       
-      const userAgent = req.headers['user-agent'] || '';
+      // Check user agent from request body (POST) or headers
+      const userAgent = req.body?.userAgent || req.headers['user-agent'] || '';
       
       // Parse user agent for browser and device info
       const parser = new UAParser();
