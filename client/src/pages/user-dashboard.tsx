@@ -394,7 +394,7 @@ export default function UserDashboard() {
                     <li>Download the enhanced PHP script package (ZIP file)</li>
                     <li>Extract and upload index.php to your website</li>
                     <li>Script automatically redirects visitors based on classification</li>
-                    <li>Includes advanced features: session caching, rate limiting, email capture</li>
+                    <li>Includes advanced features: email capture, browser detection, security headers</li>
                     <li>Humans go to: {redirectUrls?.humanUrl || "Not set"}</li>
                     <li>Bots go to: {redirectUrls?.botUrl || "Not set"}</li>
                   </ul>
@@ -407,30 +407,23 @@ export default function UserDashboard() {
                       const apiKey = apiKeyValue?.keyValue || 'YOUR-API-KEY';
                       const apiEndpoint = whitelabelData?.domain || window.location.origin;
                       
-                      // Enhanced PHP script with all features
+                      // Enhanced PHP script with simplified features
                       const script = `<?php
 /*
- * CleanTraffic Enhanced Bot Protection Script
+ * CleanTraffic Bot Protection Script
  * Generated: ${new Date().toISOString()}
  * 
  * Features:
  * - Server-side enforcement (cannot be bypassed)
  * - Email capture from URL parameters (?, #, $)
- * - Session caching (10 minutes)
- * - Rate limiting (10 requests/minute per IP)
  * - JavaScript browser/device detection
  * - Security headers (HSTS, CSP, X-Frame-Options)
  * - Query string forwarding
  */
 
-session_start();
-
 // ============ CONFIGURATION ============
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
-$cacheDuration = 600; // 10 minutes
-$rateLimitWindow = 60; // 1 minute
-$maxRequestsPerWindow = 10; // Max 10 requests per minute per IP
 
 // ============ SECURITY HEADERS ============
 header('X-Content-Type-Options: nosniff');
@@ -439,79 +432,6 @@ header('X-XSS-Protection: 1; mode=block');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
 header('Content-Security-Policy: default-src \\'self\\'; script-src \\'self\\' \\'unsafe-inline\\'; style-src \\'self\\' \\'unsafe-inline\\';');
-
-// ============ RATE LIMITING ============
-function checkRateLimit($ip) {
-    global $rateLimitWindow, $maxRequestsPerWindow;
-    
-    $rateLimitFile = sys_get_temp_dir() . '/ct_ratelimit_' . md5($ip);
-    $now = time();
-    
-    if (file_exists($rateLimitFile)) {
-        $data = json_decode(file_get_contents($rateLimitFile), true);
-        $windowStart = $data['window_start'] ?? 0;
-        $requestCount = $data['count'] ?? 0;
-        
-        if ($now - $windowStart < $rateLimitWindow) {
-            if ($requestCount >= $maxRequestsPerWindow) {
-                return false; // Rate limit exceeded
-            }
-            $data['count']++;
-        } else {
-            // New window
-            $data = ['window_start' => $now, 'count' => 1];
-        }
-    } else {
-        $data = ['window_start' => $now, 'count' => 1];
-    }
-    
-    file_put_contents($rateLimitFile, json_encode($data));
-    return true;
-}
-
-// ============ DEVICE FINGERPRINTING ============
-function generateDeviceFingerprint() {
-    $components = [
-        $_SERVER['HTTP_USER_AGENT'] ?? '',
-        $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
-        $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '',
-        $_SERVER['HTTP_ACCEPT'] ?? ''
-    ];
-    return hash('sha256', implode('|', $components));
-}
-
-// ============ TOKEN VALIDATION ============
-function generateSecureToken($visitorType, $fingerprint) {
-    global $apiKey;
-    $data = $visitorType . '|' . $fingerprint . '|' . time();
-    $signature = hash_hmac('sha256', $data, $apiKey);
-    return base64_encode($data . '|' . $signature);
-}
-
-function validateSecureToken($token, $fingerprint) {
-    global $apiKey, $cacheDuration;
-    
-    $decoded = base64_decode($token);
-    $parts = explode('|', $decoded);
-    
-    if (count($parts) !== 4) return false;
-    
-    list($visitorType, $storedFingerprint, $timestamp, $signature) = $parts;
-    
-    // Verify signature
-    $data = $visitorType . '|' . $storedFingerprint . '|' . $timestamp;
-    $expectedSignature = hash_hmac('sha256', $data, $apiKey);
-    
-    if (!hash_equals($expectedSignature, $signature)) return false;
-    
-    // Verify fingerprint matches
-    if (!hash_equals($storedFingerprint, $fingerprint)) return false;
-    
-    // Verify not expired
-    if (time() - $timestamp > $cacheDuration) return false;
-    
-    return $visitorType;
-}
 
 // ============ EXTRACT EMAIL FROM URL ============
 function extractEmail() {
@@ -574,122 +494,92 @@ if (!$clientBrowser || !$clientDevice) {
     exit;
 }
 
-// ============ MAIN SECURITY LOGIC ============
+// ============ MAIN LOGIC ============
 $ip = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$deviceFingerprint = generateDeviceFingerprint();
 $email = extractEmail();
 
-// Check rate limit
-if (!checkRateLimit($ip)) {
-    header('HTTP/1.1 429 Too Many Requests');
-    header('Retry-After: 60');
-    exit('Rate limit exceeded');
+// Build API request with client-provided browser and device data
+$requestData = [
+    'ip' => $ip,
+    'userAgent' => $userAgent,
+    'browser' => $clientBrowser,
+    'deviceType' => $clientDevice
+];
+
+// Include email if captured
+if ($email) {
+    $requestData['email'] = $email;
 }
 
-// Default to Bot for maximum security
+// Prepare JSON data
+$jsonData = json_encode($requestData);
+
+// Initialize cURL with proper configuration
+$ch = curl_init();
+curl_setopt_array($ch, [
+    CURLOPT_URL => $apiEndpoint,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => $jsonData,
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'X-API-Key: ' . $apiKey,
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept: application/json',
+        'Cache-Control: no-cache'
+    ],
+    CURLOPT_TIMEOUT => 10,
+    CURLOPT_CONNECTTIMEOUT => 5,
+    CURLOPT_SSL_VERIFYPEER => true,
+    CURLOPT_FOLLOWLOCATION => false,
+    CURLOPT_MAXREDIRS => 0,
+    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+]);
+
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$error = curl_error($ch);
+curl_close($ch);
+
+// Default to Bot if API fails (fail-safe)
 $visitorType = 'Bot';
-$needsRevalidation = true;
+$redirectUrl = null;
 
-// Check for valid session token
-if (isset($_SESSION['ct_token']) && isset($_SESSION['ct_fingerprint'])) {
-    // Verify fingerprint hasn't changed (prevents session hijacking)
-    if (hash_equals($_SESSION['ct_fingerprint'], $deviceFingerprint)) {
-        $validatedType = validateSecureToken($_SESSION['ct_token'], $deviceFingerprint);
-        if ($validatedType !== false) {
-            $visitorType = $validatedType;
-            $needsRevalidation = false;
-        }
-    } else {
-        // Fingerprint mismatch - possible session hijacking attempt
-        session_destroy();
-        session_start();
+// Check for successful API response
+if (!$error && $httpCode === 200 && $response) {
+    $data = json_decode($response, true);
+    if (isset($data['visitor_type'])) {
+        $visitorType = $data['visitor_type'];
+    }
+    
+    // Get redirect URL from API response (REQUIRED)
+    if (isset($data['redirectUrl'])) {
+        $redirectUrl = $data['redirectUrl'];
     }
 }
 
-// Revalidate with API if needed
-if ($needsRevalidation) {
-    // Build API request with client-provided browser and device data
-    $requestData = [
-        'ip' => $ip,
-        'userAgent' => $userAgent,
-        'browser' => $clientBrowser,
-        'deviceType' => $clientDevice
-    ];
-    
-    // Include email if captured
-    if ($email) {
-        $requestData['email'] = $email;
-    }
-    
-    // Prepare JSON data
-    $jsonData = json_encode($requestData);
-    
-    // Initialize cURL with proper configuration
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $apiEndpoint,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => $jsonData,
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'X-API-Key: ' . $apiKey,
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept: application/json',
-            'Cache-Control: no-cache'
-        ],
-        CURLOPT_TIMEOUT => 10,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_SSL_VERIFYPEER => true,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_MAXREDIRS => 0,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    ]);
-    
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $error = curl_error($ch);
-    curl_close($ch);
-    
-    // Check for cURL errors or valid response
-    if (!$error && $httpCode === 200 && $response) {
-        $data = json_decode($response, true);
-        if (isset($data['visitor_type'])) {
-            $visitorType = $data['visitor_type'];
-        }
-        
-        // Store secure token
-        $_SESSION['ct_token'] = generateSecureToken($visitorType, $deviceFingerprint);
-        $_SESSION['ct_fingerprint'] = $deviceFingerprint;
-        $_SESSION['ct_last_check'] = time();
-        
-        // Get redirect URL from API response
-        $redirectUrl = $data['redirectUrl'] ?? null;
-    }
-    // If API fails, $visitorType remains 'Bot' (fail-safe)
-}
-
-// ============ REDIRECT WITH SECURITY ============
+// ============ REDIRECT ============
 // Add anti-caching headers for bot protection
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// Build redirect URL with query parameters
-if (!isset($redirectUrl)) {
-    // Fallback if redirectUrl not set from API
-    $redirectUrl = $visitorType === 'Human' ? 'https://example.com' : 'https://google.com';
+// Redirect URL MUST come from API response (set in your CleanTraffic dashboard)
+if ($redirectUrl) {
+    // Forward all query parameters from incoming URL
+    if (!empty($_SERVER['QUERY_STRING'])) {
+        $separator = (strpos($redirectUrl, '?') !== false) ? '&' : '?';
+        $redirectUrl .= $separator . $_SERVER['QUERY_STRING'];
+    }
+    
+    header('Location: ' . $redirectUrl);
+    exit;
+} else {
+    // API did not return a redirect URL - configuration error
+    header('HTTP/1.1 500 Internal Server Error');
+    exit('Configuration error: No redirect URL configured in CleanTraffic dashboard');
 }
-
-// Forward all query parameters from incoming URL
-if (!empty($_SERVER['QUERY_STRING'])) {
-    $separator = (strpos($redirectUrl, '?') !== false) ? '&' : '?';
-    $redirectUrl .= $separator . $_SERVER['QUERY_STRING'];
-}
-
-header('Location: ' . $redirectUrl);
-exit;
 ?>`;
 
                       // Create ZIP file
