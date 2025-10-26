@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, Activity } from "lucide-react";
+import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, Activity, Code, Download, Copy, AlertTriangle } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 
@@ -52,6 +52,10 @@ export default function UserDashboard() {
 
   const { data: apiKeyDetails } = useQuery<any>({
     queryKey: ["/api/user/api-key-details"],
+  });
+
+  const { data: apiKeyValue } = useQuery<{ keyValue: string | null }>({
+    queryKey: ["/api/user/api-key-value"],
   });
 
   useEffect(() => {
@@ -364,6 +368,178 @@ export default function UserDashboard() {
                   <Save className="w-4 h-4 mr-2" />
                   {updateUrlsMutation.isPending ? "Saving..." : "Save Redirect URLs"}
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* PHP Script Download */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Code className="w-5 h-5" />
+                  Download PHP Redirect Script
+                </CardTitle>
+                <CardDescription>
+                  Get your custom PHP script to redirect visitors on your website
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-muted rounded-lg p-4 space-y-2">
+                  <p className="text-sm font-medium">How it works:</p>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                    <li>Download the PHP script with your API key pre-configured</li>
+                    <li>Upload to your website (e.g., index.php or redirect.php)</li>
+                    <li>Script automatically redirects visitors based on your settings</li>
+                    <li>Humans go to: {redirectUrls?.humanUrl || "Not set"}</li>
+                    <li>Bots go to: {redirectUrls?.botUrl || "Not set"}</li>
+                  </ul>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Script Preview</Label>
+                  <div className="bg-gray-900 text-gray-100 rounded-md p-4 font-mono text-xs overflow-x-auto">
+                    <pre>{`<?php
+// CleanTraffic Visitor Redirect Script
+$apiKey = '${apiKeyDetails?.keyPreview || 'YOUR-API-KEY'}';
+$apiEndpoint = '${window.location.origin}/api/classify';
+
+$ip = $_SERVER['REMOTE_ADDR'];
+$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+$ch = curl_init($apiEndpoint);
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POSTFIELDS => json_encode([
+        'ip' => $ip,
+        'userAgent' => $userAgent
+    ]),
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'X-API-Key: ' . $apiKey
+    ],
+    CURLOPT_TIMEOUT => 10
+]);
+
+$response = curl_exec($ch);
+$data = json_decode($response, true);
+curl_close($ch);
+
+// Redirect based on classification
+$redirectUrl = $data['redirectUrl'] ?? 'https://google.com';
+header('Location: ' . $redirectUrl);
+exit;
+?>`}</pre>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    data-testid="button-download-script"
+                    onClick={() => {
+                      const script = `<?php
+// CleanTraffic Visitor Redirect Script
+// Generated: ${new Date().toISOString()}
+$apiKey = '${apiKeyValue?.keyValue || 'YOUR-API-KEY'}';
+$apiEndpoint = '${window.location.origin}/api/classify';
+
+// Get visitor information
+$ip = $_SERVER['REMOTE_ADDR'];
+$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+
+// Call CleanTraffic API
+$ch = curl_init($apiEndpoint);
+curl_setopt_array($ch, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POSTFIELDS => json_encode([
+        'ip' => $ip,
+        'userAgent' => $userAgent
+    ]),
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'X-API-Key: ' . $apiKey
+    ],
+    CURLOPT_TIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => true
+]);
+
+$response = curl_exec($ch);
+$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+$error = curl_error($ch);
+curl_close($ch);
+
+// Handle response
+if (!$error && $httpCode === 200 && $response) {
+    $data = json_decode($response, true);
+    $redirectUrl = $data['redirectUrl'] ?? 'https://google.com';
+} else {
+    // Default to bot URL on error
+    $redirectUrl = 'https://google.com';
+}
+
+// Redirect visitor
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Location: ' . $redirectUrl);
+exit;
+?>`;
+                      const blob = new Blob([script], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'cleantraffic-redirect.php';
+                      document.body.appendChild(a);
+                      a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      
+                      toast({
+                        title: "Script Downloaded",
+                        description: "Upload cleantraffic-redirect.php to your website",
+                      });
+                    }}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Download PHP Script
+                  </Button>
+                  
+                  <Button
+                    variant="outline"
+                    data-testid="button-copy-script"
+                    onClick={() => {
+                      const script = `<?php
+$apiKey = '${apiKeyValue?.keyValue || 'YOUR-API-KEY'}';
+$apiEndpoint = '${window.location.origin}/api/classify';
+$ip = $_SERVER['REMOTE_ADDR'];
+$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$ch = curl_init($apiEndpoint);
+curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_RETURNTRANSFER => true, CURLOPT_POSTFIELDS => json_encode(['ip' => $ip, 'userAgent' => $userAgent]), CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $apiKey], CURLOPT_TIMEOUT => 10]);
+$response = curl_exec($ch);
+$data = json_decode($response, true);
+curl_close($ch);
+$redirectUrl = $data['redirectUrl'] ?? 'https://google.com';
+header('Location: ' . $redirectUrl);
+exit;
+?>`;
+                      navigator.clipboard.writeText(script);
+                      toast({
+                        title: "Copied",
+                        description: "PHP script copied to clipboard",
+                      });
+                    }}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy to Clipboard
+                  </Button>
+                </div>
+
+                {(!redirectUrls?.humanUrl || !redirectUrls?.botUrl) && (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4" />
+                      Please set your redirect URLs above before using the PHP script
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

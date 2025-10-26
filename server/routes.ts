@@ -411,6 +411,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get client user's full API key value (for PHP script generation)
+  app.get("/api/user/api-key-value", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user || !user.apiKeyId) {
+        return res.json({ keyValue: null });
+      }
+
+      const apiKey = await storage.getApiKeyById(user.apiKeyId);
+      if (!apiKey) {
+        return res.json({ keyValue: null });
+      }
+
+      // Return full key value (user needs this for PHP script)
+      res.json({ keyValue: apiKey.keyValue });
+    } catch (error) {
+      console.error("Get API key value error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // ========== END CLIENT USER ROUTES ==========
 
   // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
