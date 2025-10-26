@@ -13,6 +13,7 @@ import CountryWhitelist from "@/components/country-whitelist";
 import IspWhitelist from "@/components/isp-whitelist";
 import IspBlacklist from "@/components/isp-blacklist";
 import ClientUserManagement from "@/components/client-user-management";
+import WhitelabelDomainSettings from "@/components/whitelabel-domain-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 
@@ -68,6 +69,7 @@ export default function Dashboard() {
               <TabsTrigger value="isp-whitelist" data-testid="tab-isp-whitelist">✅ ISP Whitelist</TabsTrigger>
               <TabsTrigger value="isp-blacklist" data-testid="tab-isp-blacklist">❌ ISP Blacklist</TabsTrigger>
               <TabsTrigger value="analytics" data-testid="tab-analytics">📈 Analytics</TabsTrigger>
+              <TabsTrigger value="settings" data-testid="tab-settings">⚙️ Settings</TabsTrigger>
             </TabsList>
             
             <TabsContent value="overview">
@@ -175,6 +177,10 @@ export default function Dashboard() {
 
             <TabsContent value="analytics">
               <AnalyticsDashboard />
+            </TabsContent>
+
+            <TabsContent value="settings">
+              <WhitelabelDomainSettings />
             </TabsContent>
           </Tabs>
         </main>
