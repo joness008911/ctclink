@@ -8,6 +8,21 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 
 ## Recent Changes
 
+### October 26, 2025
+- **PHP SCRIPT SIMPLIFICATION**: Removed session caching and rate limiting for accurate visit tracking
+  - Removed 10-minute session caching (every visit now triggers API call)
+  - Removed rate limiting (10 req/min) - all visits now captured immediately
+  - Removed HMAC token validation and device fingerprinting
+  - Kept core features: email capture (?, #, $), JS browser detection, security headers, query forwarding
+  - Removed hardcoded redirect URL fallbacks - script now REQUIRES redirectUrl from API response
+  - Configuration error shown if admin hasn't set redirect URLs in dashboard
+- **EMAIL COLUMN MIGRATION**: Moved email display from admin to user dashboard
+  - Email column removed from admin classifications table (privacy/cleaner view)
+  - Email column added to user dashboard classifications table (users see their own captured emails)
+  - Users can now monitor which emails visited their sites via URL parameters
+  - Admin dashboard shows: Time, IP, Location, Type, Method, Browser (6 columns)
+  - User dashboard shows: Time, Classification, IP, Email, Country, ISP, Device (7 columns)
+
 ### October 25, 2025
 - **SECURITY ENHANCEMENT**: Implemented bcrypt password hashing for all user accounts
   - All passwords now hashed using bcrypt (salt rounds: 10) before storage
