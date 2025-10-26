@@ -9,13 +9,15 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 ## Recent Changes
 
 ### October 26, 2025
-- **PHP SCRIPT SIMPLIFICATION**: Removed session caching and rate limiting for accurate visit tracking
-  - Removed 10-minute session caching (every visit now triggers API call)
-  - Removed rate limiting (10 req/min) - all visits now captured immediately
-  - Removed HMAC token validation and device fingerprinting
-  - Kept core features: email capture (?, #, $), JS browser detection, security headers, query forwarding
-  - Removed hardcoded redirect URL fallbacks - script now REQUIRES redirectUrl from API response
-  - Configuration error shown if admin hasn't set redirect URLs in dashboard
+- **PHP SCRIPT OPTIMIZATION**: Simplified for immediate classification and accurate tracking
+  - **Removed JavaScript loading screen**: Classification now happens instantly server-side
+  - **Server-side browser detection**: Browser/device detected from user agent (no client-side JS needed)
+  - Removed 10-minute session caching (every visit triggers API call for accurate tracking)
+  - Removed rate limiting (all visits captured immediately)
+  - Removed HMAC token validation and device fingerprinting (simplified architecture)
+  - Kept core features: email capture (?, #, $), security headers, query forwarding
+  - **Default redirect URLs**: API now provides defaults if user hasn't configured custom URLs
+  - Redirect URLs based on visitor classification (Human → humanUrl, Bot → botUrl)
 - **EMAIL COLUMN MIGRATION**: Moved email display from admin to user dashboard
   - Email column removed from admin classifications table (privacy/cleaner view)
   - Email column added to user dashboard classifications table (users see their own captured emails)

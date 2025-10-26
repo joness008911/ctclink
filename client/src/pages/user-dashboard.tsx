@@ -391,12 +391,12 @@ export default function UserDashboard() {
                 <div className="bg-muted rounded-lg p-4 space-y-2">
                   <p className="text-sm font-medium">How it works:</p>
                   <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                    <li>Download the enhanced PHP script package (ZIP file)</li>
+                    <li>Download the PHP script package (ZIP file)</li>
                     <li>Extract and upload index.php to your website</li>
-                    <li>Script automatically redirects visitors based on classification</li>
-                    <li>Includes advanced features: email capture, browser detection, security headers</li>
-                    <li>Humans go to: {redirectUrls?.humanUrl || "Not set"}</li>
-                    <li>Bots go to: {redirectUrls?.botUrl || "Not set"}</li>
+                    <li>Visitors are classified and redirected immediately (no loading screen)</li>
+                    <li>Features: email capture (?, #, $), browser detection, security headers</li>
+                    <li>Humans go to: {redirectUrls?.humanUrl || "Default: https://example.com/human"}</li>
+                    <li>Bots go to: {redirectUrls?.botUrl || "Default: https://google.com"}</li>
                   </ul>
                 </div>
 
@@ -407,18 +407,19 @@ export default function UserDashboard() {
                       const apiKey = apiKeyValue?.keyValue || 'YOUR-API-KEY';
                       const apiEndpoint = whitelabelData?.domain || window.location.origin;
                       
-                      // Enhanced PHP script with simplified features
+                      // CleanTraffic PHP script with immediate classification
                       const script = `<?php
 /*
  * CleanTraffic Bot Protection Script
  * Generated: ${new Date().toISOString()}
  * 
  * Features:
- * - Server-side enforcement (cannot be bypassed)
+ * - Immediate classification and redirect (no loading screen)
+ * - Server-side browser/device detection from user agent
  * - Email capture from URL parameters (?, #, $)
- * - JavaScript browser/device detection
  * - Security headers (HSTS, CSP, X-Frame-Options)
- * - Query string forwarding
+ * - Query string forwarding to redirect URLs
+ * - Redirect URLs configured in your CleanTraffic dashboard
  */
 
 // ============ CONFIGURATION ============
