@@ -800,6 +800,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check user agent from request body (POST) or headers
       const userAgent = req.body?.userAgent || req.headers['user-agent'] || '';
       
+      // Extract email from request body (POST) or query parameters (GET)
+      const email = req.body?.email || req.query.email || req.query.e || null;
+      
       // Parse user agent for browser and device info
       const parser = new UAParser();
       parser.setUA(userAgent);
@@ -1046,6 +1049,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         visitorType: visitorType,
         isp: classificationData.isp || 'Unknown',
         detectionMethod: classificationData.detection_method || 'IP Analysis',
+        email: email || undefined, // Email captured from URL parameters
         apiKeyId: apiKeyId, // Track which API key made this request
       });
 
