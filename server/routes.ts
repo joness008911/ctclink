@@ -704,11 +704,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     // REQUIRE API key - no anonymous classification
+    // Return blank page for white-label security (don't reveal it's an API)
     if (!apiKey) {
-      return res.status(401).json({ 
-        error: "API key required",
-        message: "Please provide an API key in the api_key query parameter"
-      });
+      return res.send('');
     }
     
     let limitReached = false;
@@ -743,11 +741,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const apiKeyFromHeader = req.headers['x-api-key'] as string;
     
     // REQUIRE API key - no anonymous classification
+    // Return blank page for white-label security (don't reveal it's an API)
     if (!apiKeyFromHeader) {
-      return res.status(401).json({ 
-        error: "API key required",
-        message: "Please provide an API key in the X-API-Key header or api_key query parameter"
-      });
+      return res.send('');
     }
     
     let limitReached = false;
