@@ -22,6 +22,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
   app.set('trust proxy', true);
   
+  // Smart routing: Detect API subdomain and show blank page
+  app.use((req, res, next) => {
+    const host = req.headers.host || '';
+    
+    // Check if accessing from api.* subdomain
+    if (host.startsWith('api.')) {
+      // Allow POST requests to /api/classify (actual API calls)
+      if (req.method === 'POST' && req.path === '/api/classify') {
+        return next();
+      }
+      
+      // Show blank white page for all other requests on api subdomain
+      if (req.method === 'GET' && req.path === '/') {
+        return res.send('');
+      }
+    }
+    
+    // Continue to normal routes for non-api subdomains
+    next();
+  });
+  
   // Session middleware
   app.use(session({
     secret: process.env.SESSION_SECRET || 'antibot-detection-secret-key-change-in-production',
