@@ -465,33 +465,20 @@ function extractEmail() {
     return $email ? filter_var($email, FILTER_SANITIZE_EMAIL) : null;
 }
 
-// ============ BROWSER & DEVICE DETECTION ============
-$clientBrowser = $_POST['browser'] ?? null;
-$clientDevice = $_POST['device'] ?? null;
+// ============ DETECT BROWSER FROM USER AGENT ============
+function detectBrowser($userAgent) {
+    if (stripos($userAgent, 'Firefox') !== false) return 'Firefox';
+    if (stripos($userAgent, 'Edg') !== false) return 'Edge';
+    if (stripos($userAgent, 'Chrome') !== false) return 'Chrome';
+    if (stripos($userAgent, 'Safari') !== false) return 'Safari';
+    if (stripos($userAgent, 'MSIE') !== false || stripos($userAgent, 'Trident') !== false) return 'IE';
+    return 'Unknown';
+}
 
-// If browser/device data not yet collected, render page with JavaScript to collect it
-if (!$clientBrowser || !$clientDevice) {
-    ?>
-    <!DOCTYPE html>
-    <html><head><meta charset="UTF-8"><title>Loading...</title>
-    <style>body{margin:0;background:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,-apple-system,sans-serif}
-.loader{border:3px solid #f3f3f3;border-top:3px solid #3498db;border-radius:50%;width:30px;height:30px;animation:spin 1s linear infinite}
-@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
-    </head><body>
-    <div class="loader"></div>
-    <form id="dataForm" method="POST" action="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>" style="display:none;">
-        <input type="hidden" name="browser" id="browserInput">
-        <input type="hidden" name="device" id="deviceInput">
-    </form>
-    <script>
-    function detectBrowser(){const ua=navigator.userAgent;if(ua.indexOf("Firefox")>-1)return"Firefox";if(ua.indexOf("Edg")>-1)return"Edge";if(ua.indexOf("Chrome")>-1)return"Chrome";if(ua.indexOf("Safari")>-1)return"Safari";if(ua.indexOf("Trident")>-1||ua.indexOf("MSIE")>-1)return"IE";return"Unknown"}
-    function detectDevice(){const ua=navigator.userAgent;if(/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua))return"Tablet";if(/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua))return"Mobile";return"Desktop"}
-    document.getElementById("browserInput").value=detectBrowser();
-    document.getElementById("deviceInput").value=detectDevice();
-    document.getElementById("dataForm").submit();
-    </script></body></html>
-    <?php
-    exit;
+function detectDevice($userAgent) {
+    if (preg_match('/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i', $userAgent)) return 'Tablet';
+    if (preg_match('/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/i', $userAgent)) return 'Mobile';
+    return 'Desktop';
 }
 
 // ============ MAIN LOGIC ============
@@ -499,12 +486,16 @@ $ip = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $email = extractEmail();
 
-// Build API request with client-provided browser and device data
+// Detect browser and device from user agent (server-side)
+$browser = detectBrowser($userAgent);
+$device = detectDevice($userAgent);
+
+// Build API request with detected browser and device data
 $requestData = [
     'ip' => $ip,
     'userAgent' => $userAgent,
-    'browser' => $clientBrowser,
-    'deviceType' => $clientDevice
+    'browser' => $browser,
+    'deviceType' => $device
 ];
 
 // Include email if captured

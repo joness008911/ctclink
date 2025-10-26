@@ -1068,16 +1068,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const user = await storage.getClientUserByApiKey(apiKeyId);
           if (user) {
             const redirectUrls = await storage.getUserRedirectUrls(user.id);
-            if (redirectUrls) {
-              // Return appropriate redirect URL based on visitor type
-              response.redirectUrl = classification.visitorType === 'Human' 
-                ? redirectUrls.humanUrl 
-                : redirectUrls.botUrl;
-            }
+            // Use configured URLs or defaults
+            const humanUrl = redirectUrls?.humanUrl || 'https://example.com/human';
+            const botUrl = redirectUrls?.botUrl || 'https://google.com';
+            
+            // Return appropriate redirect URL based on visitor type
+            response.redirectUrl = classification.visitorType === 'Human' 
+              ? humanUrl 
+              : botUrl;
           }
         } catch (error) {
           console.error("Error fetching redirect URLs:", error);
-          // Continue without redirectUrl if lookup fails
+          // Provide default redirect URLs if lookup fails
+          response.redirectUrl = classification.visitorType === 'Human' 
+            ? 'https://example.com/human' 
+            : 'https://google.com';
         }
       }
       
