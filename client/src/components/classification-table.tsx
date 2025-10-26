@@ -65,6 +65,7 @@ export default function ClassificationTable() {
               <th className="p-4 font-medium text-muted-foreground">Time</th>
               <th className="p-4 font-medium text-muted-foreground">IP Address</th>
               <th className="p-4 font-medium text-muted-foreground">Location</th>
+              <th className="p-4 font-medium text-muted-foreground">Email</th>
               <th className="p-4 font-medium text-muted-foreground">Type</th>
               <th className="p-4 font-medium text-muted-foreground">Method</th>
               <th className="p-4 font-medium text-muted-foreground">Browser</th>
@@ -73,7 +74,7 @@ export default function ClassificationTable() {
           <tbody>
             {(!classifications || classifications.length === 0) ? (
               <tr>
-                <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                <td colSpan={7} className="p-8 text-center text-muted-foreground">
                   No classifications yet. The table will update automatically as new requests are made to /api/classify
                 </td>
               </tr>
@@ -89,6 +90,9 @@ export default function ClassificationTable() {
                   </td>
                   <td className="p-4 text-sm font-mono">{classification.ipAddress}</td>
                   <td className="p-4 text-sm">{classification.location}</td>
+                  <td className="p-4 text-sm text-muted-foreground">
+                    {classification.email || '-'}
+                  </td>
                   <td className="p-4">
                     <span 
                       className={`px-2 py-1 rounded-full text-xs font-medium text-white ${
