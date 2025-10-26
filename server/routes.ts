@@ -536,6 +536,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ========== END ADMIN CLIENT USER MANAGEMENT ROUTES ==========
 
+  // ========== WHITE-LABEL DOMAIN SETTINGS ==========
+  
+  // Get white-label domain setting
+  app.get("/api/admin/whitelabel-domain", requireAuth, async (req, res) => {
+    try {
+      const domain = await storage.getSetting('whitelabel_domain');
+      res.json({ domain: domain || '' });
+    } catch (error) {
+      console.error("Get white-label domain error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+  
+  // Set white-label domain setting
+  app.post("/api/admin/whitelabel-domain", requireAuth, async (req, res) => {
+    try {
+      const { domain } = req.body;
+      
+      if (!domain || typeof domain !== 'string') {
+        return res.status(400).json({ message: "Domain is required" });
+      }
+      
+      await storage.setSetting('whitelabel_domain', domain);
+      res.json({ message: "White-label domain updated successfully", domain });
+    } catch (error) {
+      console.error("Set white-label domain error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+  
+  // ========== END WHITE-LABEL DOMAIN SETTINGS ==========
+
   // Get API keys (protected)
   app.get("/api/api-keys", requireAuth, async (req, res) => {
     try {

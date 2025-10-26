@@ -25,7 +25,8 @@ import {
   ispWhitelist,
   ispBlacklist,
   clientUsers,
-  userRedirectUrls
+  userRedirectUrls,
+  settings
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -141,6 +142,10 @@ export interface IStorage {
     humanVisitors: number;
     botTraffic: number;
   }>;
+  
+  // Settings methods
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -867,6 +872,32 @@ export class DatabaseStorage implements IStorage {
       humanVisitors: Number(stats?.humans || 0),
       botTraffic: Number(stats?.bots || 0),
     };
+  }
+  
+  // Settings methods
+  async getSetting(key: string): Promise<string | null> {
+    const [setting] = await db
+      .select()
+      .from(settings)
+      .where(eq(settings.key, key));
+    return setting?.value || null;
+  }
+  
+  async setSetting(key: string, value: string): Promise<void> {
+    const existing = await this.getSetting(key);
+    
+    if (existing !== null) {
+      // Update existing setting
+      await db
+        .update(settings)
+        .set({ value, updatedAt: sql`now()` })
+        .where(eq(settings.key, key));
+    } else {
+      // Create new setting
+      await db
+        .insert(settings)
+        .values({ key, value });
+    }
   }
 }
 
