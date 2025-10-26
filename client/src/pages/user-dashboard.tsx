@@ -58,6 +58,10 @@ export default function UserDashboard() {
     queryKey: ["/api/user/api-key-value"],
   });
 
+  const { data: whitelabelData } = useQuery<{ domain: string }>({
+    queryKey: ["/api/whitelabel-domain"],
+  });
+
   useEffect(() => {
     if (redirectUrls) {
       setHumanUrl(redirectUrls.humanUrl || "");
@@ -400,7 +404,7 @@ export default function UserDashboard() {
                     <pre>{`<?php
 // CleanTraffic Visitor Redirect Script
 $apiKey = '${apiKeyDetails?.keyPreview || 'YOUR-API-KEY'}';
-$apiEndpoint = '${window.location.origin}/api/classify';
+$apiEndpoint = '${whitelabelData?.domain || window.location.origin}/api/classify';
 
 $ip = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -440,7 +444,7 @@ exit;
 // CleanTraffic Visitor Redirect Script
 // Generated: ${new Date().toISOString()}
 $apiKey = '${apiKeyValue?.keyValue || 'YOUR-API-KEY'}';
-$apiEndpoint = '${window.location.origin}/api/classify';
+$apiEndpoint = '${whitelabelData?.domain || window.location.origin}/api/classify';
 
 // Get visitor information
 $ip = $_SERVER['REMOTE_ADDR'];
@@ -508,7 +512,7 @@ exit;
                     onClick={() => {
                       const script = `<?php
 $apiKey = '${apiKeyValue?.keyValue || 'YOUR-API-KEY'}';
-$apiEndpoint = '${window.location.origin}/api/classify';
+$apiEndpoint = '${whitelabelData?.domain || window.location.origin}/api/classify';
 $ip = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $ch = curl_init($apiEndpoint);

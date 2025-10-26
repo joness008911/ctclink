@@ -566,6 +566,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
   
+  // Get white-label domain (public - for user dashboard PHP script generation)
+  app.get("/api/whitelabel-domain", async (req, res) => {
+    try {
+      const domain = await storage.getSetting('whitelabel_domain');
+      res.json({ domain: domain || '' });
+    } catch (error) {
+      console.error("Get white-label domain error:", error);
+      // Fallback to empty string if not set
+      res.json({ domain: '' });
+    }
+  });
+  
   // ========== END WHITE-LABEL DOMAIN SETTINGS ==========
 
   // Get API keys (protected)
