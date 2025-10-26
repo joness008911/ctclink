@@ -703,28 +703,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
     
+    // REQUIRE API key - no anonymous classification
+    if (!apiKey) {
+      return res.status(401).json({ 
+        error: "API key required",
+        message: "Please provide an API key in the api_key query parameter"
+      });
+    }
+    
     let limitReached = false;
     let apiKeyId: string | null = null;
     
-    // Check if API key is provided and valid
-    if (apiKey) {
-      const validKey = await storage.getApiKey(apiKey);
-      if (!validKey || !validKey.enabled) {
-        return res.status(401).json({ 
-          error: "Invalid or disabled API key",
-          status: "unauthorized"
-        });
-      }
-      
-      // Store API key ID for classification tracking
-      apiKeyId = validKey.id;
-      
-      // Check and increment usage count
-      const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
-      if (!usageAllowed) {
-        // Don't return error - classify as Bot instead (forces bot URL redirect)
-        limitReached = true;
-      }
+    // Validate API key
+    const validKey = await storage.getApiKey(apiKey);
+    if (!validKey || !validKey.enabled) {
+      return res.status(401).json({ 
+        error: "Invalid or disabled API key",
+        status: "unauthorized"
+      });
+    }
+    
+    // Store API key ID for classification tracking
+    apiKeyId = validKey.id;
+    
+    // Check and increment usage count
+    const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
+    if (!usageAllowed) {
+      // Don't return error - classify as Bot instead (forces bot URL redirect)
+      limitReached = true;
     }
     
     // Continue with classification logic, passing API key ID
@@ -735,26 +741,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/classify", async (req, res) => {
     // Check for API key in header (X-API-Key)
     const apiKeyFromHeader = req.headers['x-api-key'] as string;
+    
+    // REQUIRE API key - no anonymous classification
+    if (!apiKeyFromHeader) {
+      return res.status(401).json({ 
+        error: "API key required",
+        message: "Please provide an API key in the X-API-Key header or api_key query parameter"
+      });
+    }
+    
     let limitReached = false;
     let apiKeyId: string | null = null;
     
-    if (apiKeyFromHeader) {
-      const validKey = await storage.getApiKey(apiKeyFromHeader);
-      if (!validKey || !validKey.enabled) {
-        return res.status(401).json({ 
-          error: "Invalid or disabled API key",
-          status: "unauthorized"
-        });
-      }
-      
-      // Store API key ID for classification tracking and redirect URL lookup
-      apiKeyId = validKey.id;
-      
-      // Check and increment usage count
-      const usageAllowed = await storage.incrementApiKeyUsage(apiKeyFromHeader);
-      if (!usageAllowed) {
-        limitReached = true;
-      }
+    // Validate API key
+    const validKey = await storage.getApiKey(apiKeyFromHeader);
+    if (!validKey || !validKey.enabled) {
+      return res.status(401).json({ 
+        error: "Invalid or disabled API key",
+        status: "unauthorized"
+      });
+    }
+    
+    // Store API key ID for classification tracking and redirect URL lookup
+    apiKeyId = validKey.id;
+    
+    // Check and increment usage count
+    const usageAllowed = await storage.incrementApiKeyUsage(apiKeyFromHeader);
+    if (!usageAllowed) {
+      limitReached = true;
     }
     
     return handleClassification(req, res, limitReached, apiKeyId);
