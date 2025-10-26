@@ -22,27 +22,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
   app.set('trust proxy', true);
   
-  // Smart routing: Detect API subdomain and show blank page
-  app.use((req, res, next) => {
-    const host = req.headers.host || '';
-    
-    // Check if accessing from api.* subdomain
-    if (host.startsWith('api.')) {
-      // Allow POST requests to /api/classify (actual API calls)
-      if (req.method === 'POST' && req.path === '/api/classify') {
-        return next();
-      }
-      
-      // Show blank white page for all other requests on api subdomain
-      if (req.method === 'GET' && req.path === '/') {
-        return res.send('');
-      }
-    }
-    
-    // Continue to normal routes for non-api subdomains
-    next();
-  });
-  
   // Session middleware
   app.use(session({
     secret: process.env.SESSION_SECRET || 'antibot-detection-secret-key-change-in-production',
@@ -54,6 +33,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
   }));
+  
+  // Smart routing: Detect API subdomain and show blank page
+  // IMPORTANT: This runs AFTER session/body parsing so API key validation works properly
+  app.use((req, res, next) => {
+    const host = req.headers.host || '';
+    
+    // Check if accessing from api.* subdomain
+    if (host.startsWith('api.')) {
+      // Allow GET, POST, OPTIONS, and HEAD requests to /api/classify (with query strings)
+      // GET = Public classification endpoint
+      // POST = PHP script API calls with request body
+      // OPTIONS = CORS preflight requests
+      // HEAD = Health checks
+      // req.path excludes query string, so /api/classify?source=widget works
+      const allowedMethods = ['GET', 'POST', 'OPTIONS', 'HEAD'];
+      if (allowedMethods.includes(req.method) && req.path === '/api/classify') {
+        return next(); // Let it proceed to normal API key validation and CORS handling
+      }
+      
+      // Block ALL other requests with blank white page (white-label requirement)
+      // This prevents access to /dashboard, /admin, /api/*, assets, etc. on api subdomain
+      return res.send('');
+    }
+    
+    // Continue to normal routes for non-api subdomains
+    next();
+  });
 
   // Authentication middleware
   const requireAuth = (req: any, res: any, next: any) => {
