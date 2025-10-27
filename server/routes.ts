@@ -667,9 +667,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "API key not found" });
       }
       
-      res.json({ message: "API key status updated successfully" });
+      res.json({ message: "API key paused successfully" });
     } catch (error) {
       console.error("Pause API key error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Resume API key (protected)
+  app.post("/api/api-keys/:id/resume", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const resumed = await storage.pauseApiKey(id); // pauseApiKey toggles, so it resumes paused keys
+      
+      if (!resumed) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+      
+      res.json({ message: "API key resumed successfully" });
+    } catch (error) {
+      console.error("Resume API key error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

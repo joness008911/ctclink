@@ -11,10 +11,16 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, Activity, Code, Download, Copy, AlertTriangle } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { 
+  LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, 
+  Activity, Code, Download, Copy, AlertTriangle, TrendingUp, Globe, Users, Bot,
+  Play, Pause, Settings, FileText, CheckCircle2, XCircle
+} from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import JSZip from 'jszip';
+import { format } from 'date-fns';
 
 export default function UserDashboard() {
   const [, navigate] = useLocation();
@@ -37,6 +43,7 @@ export default function UserDashboard() {
     botTraffic: number;
   }>({
     queryKey: ["/api/user/stats"],
+    refetchInterval: 30000,
   });
 
   const { data: redirectUrls, isLoading: urlsLoading } = useQuery<{
@@ -49,10 +56,12 @@ export default function UserDashboard() {
 
   const { data: classifications = [] } = useQuery<any[]>({
     queryKey: ["/api/user/classifications"],
+    refetchInterval: 10000,
   });
 
   const { data: apiKeyDetails } = useQuery<any>({
     queryKey: ["/api/user/api-key-details"],
+    refetchInterval: 30000,
   });
 
   const { data: apiKeyValue } = useQuery<{ keyValue: string | null }>({
@@ -115,11 +124,32 @@ export default function UserDashboard() {
     },
   });
 
+  const toggleLicenseMutation = useMutation({
+    mutationFn: async (pause: boolean) => {
+      const endpoint = pause ? `/api/api-keys/${apiKeyDetails?.id}/pause` : `/api/api-keys/${apiKeyDetails?.id}/resume`;
+      const response = await apiRequest("POST", endpoint, {});
+      return response.json();
+    },
+    onSuccess: (_, pause) => {
+      toast({
+        title: pause ? "License Paused" : "License Activated",
+        description: pause ? "All visitors will now be redirected to bot URL" : "Normal classification resumed",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/api-key-details"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Operation Failed",
+        description: error.message || "Failed to update license status",
+        variant: "destructive",
+      });
+    },
+  });
+
   const logoutMutation = useMutation({
     mutationFn: userAuthApi.logout,
     onSuccess: () => {
       queryClient.clear();
-      // Keep saved credentials for Remember Me feature
       navigate("/");
     },
   });
@@ -167,249 +197,32 @@ export default function UserDashboard() {
     changePasswordMutation.mutate({ currentPassword, newPassword });
   };
 
-  if (userLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
+  const handleToggleLicense = () => {
+    const isPaused = apiKeyDetails?.status === 'paused';
+    toggleLicenseMutation.mutate(!isPaused);
+  };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
-      {/* Header */}
-      <div className="border-b bg-white/50 dark:bg-gray-800/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <Shield className="w-8 h-8 text-primary" />
-            <div>
-              <h1 className="text-xl font-bold">CleanTraffic</h1>
-              <p className="text-sm text-muted-foreground">Welcome, {user?.username}</p>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            data-testid="button-logout"
-            onClick={() => logoutMutation.mutate()}
-            disabled={logoutMutation.isPending}
-          >
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
-        </div>
-      </div>
+  const getCountryFlag = (countryCode: string) => {
+    if (!countryCode || countryCode === 'Unknown') return '🌐';
+    return `https://cdn.ip2location.io/assets/img/flags/${countryCode.toLowerCase()}.png`;
+  };
 
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        <Tabs defaultValue="account" className="space-y-6">
-          <TabsList className="grid w-full max-w-md mx-auto grid-cols-2">
-            <TabsTrigger value="account" data-testid="tab-account">
-              <User className="w-4 h-4 mr-2" />
-              Account & URLs
-            </TabsTrigger>
-            <TabsTrigger value="activity" data-testid="tab-activity">
-              <Activity className="w-4 h-4 mr-2" />
-              License & Activity
-            </TabsTrigger>
-          </TabsList>
+  const handleDownloadScript = async () => {
+    if (!apiKeyValue?.keyValue) {
+      toast({
+        title: "Missing API Key",
+        description: "No API key available for download",
+        variant: "destructive",
+      });
+      return;
+    }
 
-          {/* Account & URLs Tab */}
-          <TabsContent value="account" className="space-y-6">
-            {/* Account Information */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="w-5 h-5" />
-                  Account Information
-                </CardTitle>
-                <CardDescription>Manage your account settings</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Username</p>
-                    <p className="font-medium" data-testid="text-username">{user?.username}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Status</p>
-                    <Badge variant={user?.status === 'active' ? 'default' : 'secondary'} data-testid="badge-status">
-                      {user?.status}
-                    </Badge>
-                  </div>
-                </div>
-                <Separator />
-                <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" data-testid="button-change-password">
-                      <Lock className="w-4 h-4 mr-2" />
-                      Change Password
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Change Password</DialogTitle>
-                      <DialogDescription>
-                        Update your account password
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="current-password">Current Password</Label>
-                        <Input
-                          id="current-password"
-                          type="password"
-                          data-testid="input-current-password"
-                          value={currentPassword}
-                          onChange={(e) => setCurrentPassword(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="new-password">New Password</Label>
-                        <Input
-                          id="new-password"
-                          type="password"
-                          data-testid="input-new-password"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="confirm-password">Confirm New Password</Label>
-                        <Input
-                          id="confirm-password"
-                          type="password"
-                          data-testid="input-confirm-password"
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsPasswordDialogOpen(false)}>
-                        Cancel
-                      </Button>
-                      <Button 
-                        onClick={handleChangePassword}
-                        disabled={changePasswordMutation.isPending}
-                        data-testid="button-confirm-password-change"
-                      >
-                        {changePasswordMutation.isPending ? "Changing..." : "Change Password"}
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </CardContent>
-            </Card>
+    const apiKey = apiKeyValue.keyValue;
+    const apiEndpoint = whitelabelData?.domain 
+      ? `https://api.${whitelabelData.domain}`
+      : window.location.origin;
 
-            {/* Redirect URLs Configuration */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <LinkIcon className="w-5 h-5" />
-                  Redirect URL Configuration
-                </CardTitle>
-                <CardDescription>
-                  Set where humans and bots are redirected to
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="humanUrl">Human Redirect URL</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="humanUrl"
-                      data-testid="input-human-url"
-                      type="url"
-                      placeholder="https://your-site.com/landing"
-                      value={humanUrl || redirectUrls?.humanUrl || ""}
-                      onChange={(e) => setHumanUrl(e.target.value)}
-                      disabled={updateUrlsMutation.isPending}
-                    />
-                    {humanUrl && (
-                      <Button variant="outline" size="icon" asChild>
-                        <a href={humanUrl} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Where legitimate human visitors will be sent
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="botUrl">Bot Redirect URL</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="botUrl"
-                      data-testid="input-bot-url"
-                      type="url"
-                      placeholder="https://google.com"
-                      value={botUrl || redirectUrls?.botUrl || ""}
-                      onChange={(e) => setBotUrl(e.target.value)}
-                      disabled={updateUrlsMutation.isPending}
-                    />
-                    {botUrl && (
-                      <Button variant="outline" size="icon" asChild>
-                        <a href={botUrl} target="_blank" rel="noopener noreferrer">
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Where datacenter/VPN/proxy traffic will be sent
-                  </p>
-                </div>
-
-                <Button
-                  data-testid="button-save-urls"
-                  onClick={handleSaveUrls}
-                  disabled={updateUrlsMutation.isPending}
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {updateUrlsMutation.isPending ? "Saving..." : "Save Redirect URLs"}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* PHP Script Download */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Code className="w-5 h-5" />
-                  Download PHP Redirect Script
-                </CardTitle>
-                <CardDescription>
-                  Get your custom PHP script to redirect visitors on your website
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="bg-muted rounded-lg p-4 space-y-2">
-                  <p className="text-sm font-medium">How it works:</p>
-                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                    <li>Download the PHP script package (random filename for security)</li>
-                    <li>Extract and upload index.php to your website</li>
-                    <li>10-minute session cache reduces API costs (repeat visitors redirected silently)</li>
-                    <li>Enhanced bot detection: headless browsers, known crawlers, suspicious patterns</li>
-                    <li>Email capture from URLs (?e= or ?email=), browser detection, security headers</li>
-                    <li>Humans go to: {redirectUrls?.humanUrl || "Default: https://example.com/human"}</li>
-                    <li>Bots go to: {redirectUrls?.botUrl || "Default: https://google.com"}</li>
-                  </ul>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button
-                    data-testid="button-download-script"
-                    onClick={async () => {
-                      const apiKey = apiKeyValue?.keyValue || 'YOUR-API-KEY';
-                      const apiEndpoint = whitelabelData?.domain || window.location.origin;
-                      
-                      // CleanTraffic PHP script with immediate classification
-                      const script = `<?php
+    const phpContent = `<?php
 /*
  * CleanTraffic Bot Protection Script
  * Generated: ${new Date().toISOString()}
@@ -429,163 +242,135 @@ export default function UserDashboard() {
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
 
-// ============ SECURITY HEADERS ============
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('X-XSS-Protection: 1; mode=block');
-header('Referrer-Policy: strict-origin-when-cross-origin');
-header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
-header('Content-Security-Policy: default-src \\'self\\'; script-src \\'self\\' \\'unsafe-inline\\'; style-src \\'self\\' \\'unsafe-inline\\';');
+// ============ SESSION & FINGERPRINTING ============
+session_start();
 
-// ============ EXTRACT EMAIL FROM URL ============
-function extractEmail() {
-    // Extract email from query string (?e= or ?email=)
-    $email = null;
+// Create unique visitor fingerprint: IP + User Agent
+$visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$visitorUserAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$visitorFingerprint = md5($visitorIp . $visitorUserAgent);
+
+// ============ CHECK SESSION CACHE (10-MINUTE) ============
+if (isset($_SESSION['ct_' . $visitorFingerprint])) {
+    $cached = $_SESSION['ct_' . $visitorFingerprint];
+    $cacheAge = time() - $cached['timestamp'];
     
-    if (isset($_GET['e'])) {
-        $email = $_GET['e'];
-    } elseif (isset($_GET['email'])) {
-        $email = $_GET['email'];
+    // If cache is less than 10 minutes old, use cached redirect
+    if ($cacheAge < 600) { // 600 seconds = 10 minutes
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+        
+        $cachedUrl = $cached['redirectUrl'];
+        if (!empty($_SERVER['QUERY_STRING'])) {
+            $separator = (strpos($cachedUrl, '?') !== false) ? '&' : '?';
+            $cachedUrl .= $separator . $_SERVER['QUERY_STRING'];
+        }
+        
+        header('Location: ' . $cachedUrl);
+        exit;
+    } else {
+        // Cache expired, clear it
+        unset($_SESSION['ct_' . $visitorFingerprint]);
     }
-    
-    return $email ? filter_var($email, FILTER_SANITIZE_EMAIL) : null;
 }
 
 // ============ ENHANCED BOT DETECTION ============
 function isLikelyBot($userAgent) {
-    // Check for headless browsers
-    $headlessPatterns = [
-        'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 
-        'WebDriver', 'automation', 'bot', 'crawler', 'spider'
-    ];
-    
-    foreach ($headlessPatterns as $pattern) {
-        if (stripos($userAgent, $pattern) !== false) {
-            return true; // Headless browser detected
-        }
-    }
-    
-    // Check for missing/suspicious user agent
     if (empty($userAgent) || strlen($userAgent) < 10) {
-        return true; // Suspicious UA
+        return true;
     }
     
-    // Check for known bot signatures
-    $botKeywords = [
-        'bot', 'crawl', 'slurp', 'spider', 'mediapartners',
-        'AdsBot', 'Googlebot', 'bingbot', 'Yahoo', 'YandexBot'
+    $botPatterns = [
+        // Headless browsers
+        'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 'WebDriver',
+        // Known bots
+        'Googlebot', 'Bingbot', 'Slurp', 'DuckDuckBot', 'Baiduspider', 'YandexBot',
+        'facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'WhatsApp',
+        // Scrapers
+        'Scrapy', 'curl', 'wget', 'python-requests', 'Go-http-client',
+        // Other indicators
+        'bot', 'crawler', 'spider', 'scraper'
     ];
     
-    foreach ($botKeywords as $keyword) {
-        if (stripos($userAgent, $keyword) !== false) {
-            return true; // Known bot
+    foreach ($botPatterns as $pattern) {
+        if (stripos($userAgent, $pattern) !== false) {
+            return true;
         }
     }
     
     return false;
 }
 
-// ============ DETECT BROWSER FROM USER AGENT ============
+$isBot = isLikelyBot($visitorUserAgent);
+
+// ============ EMAIL CAPTURE ============
+$email = $_GET['email'] ?? $_GET['e'] ?? null;
+
+// ============ SECURITY HEADERS ============
+header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Content-Security-Policy: default-src \\'self\\'; frame-ancestors \\'none\\'');
+
+// ============ DEVICE DETECTION ============
+function detectDevice($userAgent) {
+    if (preg_match('/mobile|android|iphone|ipad|ipod/i', $userAgent)) {
+        return 'Mobile';
+    } elseif (preg_match('/tablet|ipad/i', $userAgent)) {
+        return 'Tablet';
+    } else {
+        return 'Desktop';
+    }
+}
+
 function detectBrowser($userAgent) {
-    if (stripos($userAgent, 'Firefox') !== false) return 'Firefox';
-    if (stripos($userAgent, 'Edg') !== false) return 'Edge';
-    if (stripos($userAgent, 'Chrome') !== false) return 'Chrome';
-    if (stripos($userAgent, 'Safari') !== false) return 'Safari';
-    if (stripos($userAgent, 'MSIE') !== false || stripos($userAgent, 'Trident') !== false) return 'IE';
+    if (preg_match('/MSIE|Trident/i', $userAgent)) return 'Internet Explorer';
+    if (preg_match('/Edg/i', $userAgent)) return 'Microsoft Edge';
+    if (preg_match('/Chrome/i', $userAgent)) return 'Chrome';
+    if (preg_match('/Safari/i', $userAgent) && !preg_match('/Chrome/i', $userAgent)) return 'Safari';
+    if (preg_match('/Firefox/i', $userAgent)) return 'Firefox';
+    if (preg_match('/Opera|OPR/i', $userAgent)) return 'Opera';
     return 'Unknown';
 }
 
-function detectDevice($userAgent) {
-    if (preg_match('/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i', $userAgent)) return 'Tablet';
-    if (preg_match('/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/i', $userAgent)) return 'Mobile';
-    return 'Desktop';
-}
+$deviceType = detectDevice($visitorUserAgent);
+$browser = detectBrowser($visitorUserAgent);
 
-// ============ SESSION MANAGEMENT (10-MINUTE CACHE) ============
-session_start();
-$visitorFingerprint = md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
+// ============ API CLASSIFICATION ============
+$redirectUrl = null;
+$visitorType = null;
 
-// Check if visitor was classified in last 10 minutes
-if (isset($_SESSION['ct_' . $visitorFingerprint])) {
-    $cached = $_SESSION['ct_' . $visitorFingerprint];
-    $cacheAge = time() - $cached['timestamp'];
-    
-    // Use cached result if less than 10 minutes old (600 seconds)
-    if ($cacheAge < 600 && isset($cached['redirectUrl'])) {
-        // Silent redirect - no API call needed
-        header('Location: ' . $cached['redirectUrl']);
-        exit;
-    }
-}
-
-// ============ MAIN LOGIC ============
-$ip = $_SERVER['REMOTE_ADDR'];
-$userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-$email = extractEmail();
-
-// Pre-classification: Check for obvious bots locally (saves API calls)
-$localBotCheck = isLikelyBot($userAgent);
-
-// Detect browser and device from user agent (server-side)
-$browser = detectBrowser($userAgent);
-$device = detectDevice($userAgent);
-
-// Build API request with detected browser and device data
-$requestData = [
-    'ip' => $ip,
-    'userAgent' => $userAgent,
+$postData = [
+    'ip' => $visitorIp,
+    'userAgent' => $visitorUserAgent,
+    'deviceType' => $deviceType,
     'browser' => $browser,
-    'deviceType' => $device
 ];
 
-// Include email if captured
 if ($email) {
-    $requestData['email'] = $email;
+    $postData['email'] = $email;
 }
 
-// Prepare JSON data
-$jsonData = json_encode($requestData);
-
-// Initialize cURL with proper configuration
-$ch = curl_init();
-curl_setopt_array($ch, [
-    CURLOPT_URL => $apiEndpoint,
-    CURLOPT_RETURNTRANSFER => true,
-    CURLOPT_POST => true,
-    CURLOPT_POSTFIELDS => $jsonData,
-    CURLOPT_HTTPHEADER => [
-        'Content-Type: application/json',
-        'X-API-Key: ' . $apiKey,
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept: application/json',
-        'Cache-Control: no-cache'
-    ],
-    CURLOPT_TIMEOUT => 10,
-    CURLOPT_CONNECTTIMEOUT => 5,
-    CURLOPT_SSL_VERIFYPEER => true,
-    CURLOPT_FOLLOWLOCATION => false,
-    CURLOPT_MAXREDIRS => 0,
-    CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+$ch = curl_init($apiEndpoint);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_POST, true);
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+curl_setopt($ch, CURLOPT_HTTPHEADER, [
+    'Content-Type: application/json',
+    'X-API-Key: ' . $apiKey
 ]);
+curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$error = curl_error($ch);
 curl_close($ch);
 
-// Default to Bot if API fails (fail-safe)
-$visitorType = 'Bot';
-$redirectUrl = null;
-
-// Check for successful API response
-if (!$error && $httpCode === 200 && $response) {
+if ($httpCode === 200 && $response) {
     $data = json_decode($response, true);
-    if (isset($data['visitor_type'])) {
-        $visitorType = $data['visitor_type'];
-    }
-    
-    // Get redirect URL from API response (REQUIRED)
-    if (isset($data['redirectUrl'])) {
+    if ($data && isset($data['visitorType'], $data['redirectUrl'])) {
+        $visitorType = $data['visitorType'];
         $redirectUrl = $data['redirectUrl'];
     }
 }
@@ -623,146 +408,293 @@ if ($redirectUrl) {
 }
 ?>`;
 
-                      // Create ZIP file
-                      const zip = new JSZip();
-                      zip.file('index.php', script);
-                      
-                      // Generate ZIP file
-                      const zipBlob = await zip.generateAsync({ type: 'blob' });
-                      
-                      // Generate random filename for white-label security
-                      const randomName = Array.from({length: 28}, () => 
-                        'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
-                      ).join('');
-                      
-                      // Download ZIP
-                      const url = URL.createObjectURL(zipBlob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `${randomName}.zip`;
-                      document.body.appendChild(a);
-                      a.click();
-                      document.body.removeChild(a);
-                      URL.revokeObjectURL(url);
-                      
-                      toast({
-                        title: "Script Downloaded",
-                        description: `Extract ${randomName}.zip and upload index.php to your website`,
-                      });
-                    }}
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Download PHP Script (ZIP)
-                  </Button>
+    try {
+      const zip = new JSZip();
+      
+      const randomName = Array.from(crypto.getRandomValues(new Uint8Array(14)))
+        .map(b => b.toString(36))
+        .join('');
+      
+      zip.file("index.php", phpContent);
+      
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${randomName}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Script Downloaded",
+        description: "PHP script package downloaded successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Download Failed",
+        description: "Failed to generate script package",
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (userLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isLicenseActive = apiKeyDetails?.status === 'active';
+  const isLicensePaused = apiKeyDetails?.status === 'paused';
+  const isLicenseExpired = apiKeyDetails?.status === 'expired';
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+      <div className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+        <div className="container mx-auto px-4 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Shield className="h-8 w-8 text-primary" />
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">CleanTraffic</h1>
+                <p className="text-sm text-muted-foreground">Welcome back, {user?.username}</p>
+              </div>
+            </div>
+            <Button 
+              variant="outline" 
+              onClick={() => logoutMutation.mutate()}
+              data-testid="button-logout"
+              className="gap-2"
+            >
+              <LogOut className="h-4 w-4" />
+              Logout
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-4 py-8">
+        <Tabs defaultValue="analytics" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
+            <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
+              <BarChart3 className="h-4 w-4" />
+              License & Analytics
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="gap-2" data-testid="tab-logs">
+              <Activity className="h-4 w-4" />
+              Classification Logs
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="gap-2" data-testid="tab-settings">
+              <Settings className="h-4 w-4" />
+              Settings
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="analytics" className="space-y-6">
+            <Card className="border-2 border-primary/20 shadow-lg">
+              <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-xl flex items-center gap-2">
+                      <Key className="h-5 w-5 text-primary" />
+                      API License Status
+                    </CardTitle>
+                    <CardDescription>Manage your CleanTraffic license</CardDescription>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <div className="text-right mr-3">
+                      <p className="text-sm text-muted-foreground">Status</p>
+                      <Badge 
+                        variant={isLicenseActive ? "default" : isLicensePaused ? "secondary" : "destructive"}
+                        className="mt-1"
+                      >
+                        {isLicenseActive && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                        {isLicensePaused && <Pause className="h-3 w-3 mr-1" />}
+                        {isLicenseExpired && <XCircle className="h-3 w-3 mr-1" />}
+                        {apiKeyDetails?.status?.toUpperCase() || 'UNKNOWN'}
+                      </Badge>
+                    </div>
+                    <Separator orientation="vertical" className="h-12" />
+                    <div className="flex items-center space-x-2">
+                      <Label htmlFor="license-toggle" className="text-sm font-medium">
+                        {isLicensePaused ? 'Paused' : 'Active'}
+                      </Label>
+                      <Switch
+                        id="license-toggle"
+                        checked={isLicenseActive}
+                        onCheckedChange={handleToggleLicense}
+                        disabled={toggleLicenseMutation.isPending || isLicenseExpired}
+                        data-testid="switch-license-toggle"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-950 dark:to-blue-900 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-blue-700 dark:text-blue-300 font-medium">API Key Name</p>
+                        <p className="text-lg font-bold text-blue-900 dark:text-blue-100 mt-1">{apiKeyDetails?.keyName || 'N/A'}</p>
+                      </div>
+                      <Key className="h-8 w-8 text-blue-500 opacity-50" />
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 p-4 rounded-lg border border-green-200 dark:border-green-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-green-700 dark:text-green-300 font-medium">API Calls Used</p>
+                        <p className="text-lg font-bold text-green-900 dark:text-green-100 mt-1">
+                          {apiKeyDetails?.callCount || 0} / {apiKeyDetails?.callLimit || 0}
+                        </p>
+                      </div>
+                      <Activity className="h-8 w-8 text-green-500 opacity-50" />
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-950 dark:to-purple-900 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-purple-700 dark:text-purple-300 font-medium">Expiration</p>
+                        <p className="text-lg font-bold text-purple-900 dark:text-purple-100 mt-1">
+                          {apiKeyDetails?.expirationPeriod === 'unlimited' ? 'Unlimited' : apiKeyDetails?.expirationPeriod || 'N/A'}
+                        </p>
+                      </div>
+                      <Shield className="h-8 w-8 text-purple-500 opacity-50" />
+                    </div>
+                  </div>
                 </div>
 
-                {(!redirectUrls?.humanUrl || !redirectUrls?.botUrl) && (
-                  <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                    <p className="text-sm text-yellow-800 dark:text-yellow-200 flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4" />
-                      Please set your redirect URLs above before using the PHP script
-                    </p>
+                {(isLicensePaused || isLicenseExpired) && (
+                  <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 flex items-start space-x-3">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-yellow-900 dark:text-yellow-100">
+                        {isLicenseExpired ? 'License Expired' : 'License Paused'}
+                      </p>
+                      <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                        All visitors are currently being redirected to your bot URL. 
+                        {isLicensePaused && ' Toggle the switch above to resume normal classification.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="bg-gradient-to-br from-card to-muted/20 shadow-md">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
+                    <Globe className="h-4 w-4" />
+                    Total Visits
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-foreground">{stats?.totalClassifications || 0}</div>
+                  <p className="text-sm text-muted-foreground mt-1">All time classifications</p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 shadow-md">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    Human Visitors
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-green-900 dark:text-green-100">{stats?.humanVisitors || 0}</div>
+                  <p className="text-sm text-green-700 dark:text-green-300 mt-1">
+                    {stats?.totalClassifications ? Math.round((stats.humanVisitors / stats.totalClassifications) * 100) : 0}% of traffic
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900 shadow-md">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium text-red-700 dark:text-red-300 flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    Bot Traffic
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-red-900 dark:text-red-100">{stats?.botTraffic || 0}</div>
+                  <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                    {stats?.totalClassifications ? Math.round((stats.botTraffic / stats.totalClassifications) * 100) : 0}% of traffic
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                  Recent Activity
+                </CardTitle>
+                <CardDescription>Latest visitor classifications</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {classifications.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <Activity className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>No visitors yet. Install the PHP script to start tracking.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {classifications.slice(0, 5).map((c: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          {c.visitorType === 'Human' ? (
+                            <div className="bg-green-100 dark:bg-green-900 p-2 rounded-full">
+                              <Users className="h-4 w-4 text-green-600 dark:text-green-400" />
+                            </div>
+                          ) : (
+                            <div className="bg-red-100 dark:bg-red-900 p-2 rounded-full">
+                              <Bot className="h-4 w-4 text-red-600 dark:text-red-400" />
+                            </div>
+                          )}
+                          <div>
+                            <p className="font-medium text-sm">{c.visitorType}</p>
+                            <p className="text-xs text-muted-foreground">{c.ipAddress}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-mono">{format(new Date(c.timestamp), 'HH:mm:ss')}</p>
+                          <p className="text-xs text-muted-foreground">{c.country}</p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* License & Activity Tab */}
-          <TabsContent value="activity" className="space-y-6">
-            {/* License Management */}
-            {apiKeyDetails && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Key className="w-5 h-5" />
-                    API License Details
-                  </CardTitle>
-                  <CardDescription>Your API key information and usage</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">API Key Name</p>
-                      <p className="font-medium">{apiKeyDetails.keyName}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">Status</p>
-                      <Badge variant={apiKeyDetails.status === 'active' ? 'default' : 'secondary'}>
-                        {apiKeyDetails.status}
-                      </Badge>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">API Key</p>
-                      <p className="font-mono text-sm bg-muted px-2 py-1 rounded">{apiKeyDetails.keyPreview}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">Expiration</p>
-                      <p className="font-medium capitalize">{apiKeyDetails.expirationPeriod}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">Usage</p>
-                      <p className="font-medium">
-                        {apiKeyDetails.callCount.toLocaleString()} / {apiKeyDetails.callLimit.toLocaleString()} calls
-                      </p>
-                      <div className="w-full bg-muted rounded-full h-2 mt-2">
-                        <div 
-                          className="bg-primary rounded-full h-2 transition-all"
-                          style={{ width: `${Math.min((apiKeyDetails.callCount / apiKeyDetails.callLimit) * 100, 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground mb-1">Created</p>
-                      <p className="text-sm">{new Date(apiKeyDetails.createdAt).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Statistics */}
-            <Card>
+          <TabsContent value="logs" className="space-y-6">
+            <Card className="shadow-md">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5" />
-                  Traffic Statistics
+                  <FileText className="h-5 w-5 text-primary" />
+                  Visitor Classification History
                 </CardTitle>
-                <CardDescription>Overview of your classified traffic</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="p-4 bg-muted rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">Total Classifications</p>
-                    <p className="text-2xl font-bold" data-testid="stat-total">{stats?.totalClassifications || 0}</p>
-                  </div>
-                  <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">Human Visitors</p>
-                    <p className="text-2xl font-bold text-green-600 dark:text-green-400" data-testid="stat-humans">
-                      {stats?.humanVisitors || 0}
-                    </p>
-                  </div>
-                  <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                    <p className="text-sm text-muted-foreground mb-1">Bot Traffic Blocked</p>
-                    <p className="text-2xl font-bold text-red-600 dark:text-red-400" data-testid="stat-bots">
-                      {stats?.botTraffic || 0}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Recent Traffic Logs */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Traffic Classifications</CardTitle>
-                <CardDescription>Latest 100 traffic classifications</CardDescription>
+                <CardDescription>Detailed log of all visitor classifications</CardDescription>
               </CardHeader>
               <CardContent>
                 {classifications.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <p>No traffic classifications yet</p>
-                    <p className="text-sm mt-2">Traffic will appear here once you integrate CleanTraffic</p>
+                  <div className="text-center py-12 text-muted-foreground">
+                    <FileText className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                    <p>No classification data available.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -780,26 +712,208 @@ if ($redirectUrl) {
                       </TableHeader>
                       <TableBody>
                         {classifications.map((c: any, i: number) => (
-                          <TableRow key={c.id || i} data-testid={`row-classification-${i}`}>
-                            <TableCell className="text-xs">
-                              {new Date(c.timestamp).toLocaleString()}
+                          <TableRow key={i} data-testid={`row-classification-${i}`}>
+                            <TableCell className="font-mono text-sm">
+                              {format(new Date(c.timestamp), 'MM/dd HH:mm:ss')}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={c.visitorType === 'Human' ? 'default' : 'destructive'}>
-                                {c.visitorType}
-                              </Badge>
+                              {c.visitorType === 'Human' ? (
+                                <Badge className="bg-green-600 text-white gap-1">
+                                  <Users className="h-3 w-3" />
+                                  Human
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-red-600 text-white gap-1">
+                                  <Bot className="h-3 w-3" />
+                                  Bot
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
-                            <TableCell className="text-sm" data-testid={`email-${i}`}>{c.email || '-'}</TableCell>
-                            <TableCell>{c.country || c.location || '-'}</TableCell>
+                            <TableCell className="text-sm">{c.email || '-'}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <img 
+                                  src={getCountryFlag(c.country)} 
+                                  alt={c.country}
+                                  className="h-4 w-6 object-cover rounded shadow-sm"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'><text x='4' y='12' font-size='12'>🌐</text></svg>`;
+                                  }}
+                                />
+                                <span className="text-sm">{c.country}</span>
+                              </div>
+                            </TableCell>
                             <TableCell className="text-sm">{c.isp || '-'}</TableCell>
-                            <TableCell className="text-xs capitalize">{c.deviceType || 'desktop'}</TableCell>
+                            <TableCell className="text-sm">{c.deviceType || '-'}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="settings" className="space-y-6">
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <LinkIcon className="h-5 w-5 text-primary" />
+                  Redirect URLs
+                </CardTitle>
+                <CardDescription>Configure where visitors are sent after classification</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="human-url">Human Redirect URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="human-url"
+                      type="url"
+                      value={humanUrl}
+                      onChange={(e) => setHumanUrl(e.target.value)}
+                      placeholder="https://example.com/welcome"
+                      data-testid="input-human-url"
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Where human visitors will be redirected</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="bot-url">Bot Redirect URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="bot-url"
+                      type="url"
+                      value={botUrl}
+                      onChange={(e) => setBotUrl(e.target.value)}
+                      placeholder="https://google.com"
+                      data-testid="input-bot-url"
+                    />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Where bot traffic will be redirected</p>
+                </div>
+
+                <Button 
+                  onClick={handleSaveUrls}
+                  disabled={updateUrlsMutation.isPending}
+                  data-testid="button-save-urls"
+                  className="gap-2"
+                >
+                  <Save className="h-4 w-4" />
+                  {updateUrlsMutation.isPending ? "Saving..." : "Save URLs"}
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Code className="h-5 w-5 text-primary" />
+                  PHP Script Download
+                </CardTitle>
+                <CardDescription>Get your customized PHP protection script</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-muted rounded-lg p-4 space-y-2">
+                  <p className="text-sm font-medium">How it works:</p>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                    <li>Download the PHP script package (random filename for security)</li>
+                    <li>Extract and upload index.php to your website</li>
+                    <li>10-minute session cache reduces API costs (repeat visitors redirected silently)</li>
+                    <li>Enhanced bot detection: headless browsers, known crawlers, suspicious patterns</li>
+                    <li>Email capture from URLs (?e= or ?email=), browser detection, security headers</li>
+                    <li>Humans go to: {redirectUrls?.humanUrl || "Default: https://example.com/human"}</li>
+                    <li>Bots go to: {redirectUrls?.botUrl || "Default: https://google.com"}</li>
+                  </ul>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleDownloadScript}
+                    className="gap-2"
+                    data-testid="button-download-script"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download Script (ZIP)
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-primary" />
+                  Account Settings
+                </CardTitle>
+                <CardDescription>Manage your account security</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Username</Label>
+                  <Input value={user?.username || ''} disabled />
+                </div>
+
+                <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" className="gap-2" data-testid="button-change-password">
+                      <Lock className="h-4 w-4" />
+                      Change Password
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Change Password</DialogTitle>
+                      <DialogDescription>
+                        Enter your current password and choose a new one (min. 8 characters)
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="current-password">Current Password</Label>
+                        <Input
+                          id="current-password"
+                          type="password"
+                          value={currentPassword}
+                          onChange={(e) => setCurrentPassword(e.target.value)}
+                          data-testid="input-current-password"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-password">New Password</Label>
+                        <Input
+                          id="new-password"
+                          type="password"
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          data-testid="input-new-password"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="confirm-password">Confirm New Password</Label>
+                        <Input
+                          id="confirm-password"
+                          type="password"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          data-testid="input-confirm-password"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        onClick={handleChangePassword}
+                        disabled={changePasswordMutation.isPending}
+                        data-testid="button-confirm-password-change"
+                      >
+                        {changePasswordMutation.isPending ? "Changing..." : "Change Password"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </CardContent>
             </Card>
           </TabsContent>
