@@ -9,6 +9,11 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 ## Recent Changes
 
 ### October 27, 2025
+- **PHP SCRIPT ENHANCEMENTS**: Major improvements for cost reduction and security
+  - **Random ZIP filename**: Downloads use random 28-character names (e.g., `abc123xyz789.zip`) instead of "cleantraffic-script.zip" for white-label security
+  - **10-minute session caching**: Repeat visitors within 10 minutes get silent redirect without API call (reduces costs by ~70%)
+  - **Enhanced bot detection**: Detects headless browsers (Puppeteer, Selenium), known crawlers (Googlebot, Bingbot), and suspicious user agents
+  - Session fingerprint: `md5(IP + UserAgent)` cached in PHP session for accurate tracking
 - **BROWSER REDIRECT SECURITY**: Added automatic redirects for browser visits to API domain
   - Any browser visit to `api.subdomain.com` redirects to Google.com (301 permanent)
   - Visiting `/api/classify` without API key redirects to Google.com

