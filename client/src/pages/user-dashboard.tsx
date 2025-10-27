@@ -617,7 +617,7 @@ if ($redirectUrl) {
             </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className="bg-gradient-to-br from-card to-muted/20 shadow-md">
+              <Card className="bg-gradient-to-br from-card to-muted/20 shadow-md hover:shadow-lg transition-shadow border-2">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                     <Globe className="h-4 w-4" />
@@ -625,12 +625,15 @@ if ($redirectUrl) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-foreground">{stats?.totalClassifications || 0}</div>
-                  <p className="text-sm text-muted-foreground mt-1">All time classifications</p>
+                  <div className="text-4xl font-extrabold text-foreground">{stats?.totalClassifications || 0}</div>
+                  <p className="text-sm text-muted-foreground mt-2 flex items-center gap-1">
+                    <Activity className="h-3.5 w-3.5" />
+                    All time classifications
+                  </p>
                 </CardContent>
               </Card>
 
-              <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 shadow-md">
+              <Card className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-950 dark:to-green-900 shadow-md hover:shadow-lg transition-shadow border-2 border-green-200 dark:border-green-800">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-green-700 dark:text-green-300 flex items-center gap-2">
                     <Users className="h-4 w-4" />
@@ -638,14 +641,15 @@ if ($redirectUrl) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-green-900 dark:text-green-100">{stats?.humanVisitors || 0}</div>
-                  <p className="text-sm text-green-700 dark:text-green-300 mt-1">
-                    {stats?.totalClassifications ? Math.round((stats.humanVisitors / stats.totalClassifications) * 100) : 0}% of traffic
+                  <div className="text-4xl font-extrabold text-green-900 dark:text-green-100">{stats?.humanVisitors || 0}</div>
+                  <p className="text-sm text-green-700 dark:text-green-300 mt-2 flex items-center gap-1">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    {stats?.totalClassifications ? Math.round((stats.humanVisitors / stats.totalClassifications) * 100) : 0}% of total traffic
                   </p>
                 </CardContent>
               </Card>
 
-              <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900 shadow-md">
+              <Card className="bg-gradient-to-br from-red-50 to-red-100 dark:from-red-950 dark:to-red-900 shadow-md hover:shadow-lg transition-shadow border-2 border-red-200 dark:border-red-800">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-red-700 dark:text-red-300 flex items-center gap-2">
                     <Bot className="h-4 w-4" />
@@ -653,50 +657,52 @@ if ($redirectUrl) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold text-red-900 dark:text-red-100">{stats?.botTraffic || 0}</div>
-                  <p className="text-sm text-red-700 dark:text-red-300 mt-1">
-                    {stats?.totalClassifications ? Math.round((stats.botTraffic / stats.totalClassifications) * 100) : 0}% of traffic
+                  <div className="text-4xl font-extrabold text-red-900 dark:text-red-100">{stats?.botTraffic || 0}</div>
+                  <p className="text-sm text-red-700 dark:text-red-300 mt-2 flex items-center gap-1">
+                    <Shield className="h-3.5 w-3.5" />
+                    {stats?.totalClassifications ? Math.round((stats.botTraffic / stats.totalClassifications) * 100) : 0}% blocked
                   </p>
                 </CardContent>
               </Card>
             </div>
 
-            <Card className="shadow-md">
-              <CardHeader>
+            <Card className="shadow-md border-2">
+              <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/0">
                 <CardTitle className="flex items-center gap-2">
                   <TrendingUp className="h-5 w-5 text-primary" />
                   Recent Activity
                 </CardTitle>
-                <CardDescription>Latest visitor classifications</CardDescription>
+                <CardDescription>Latest visitor classifications in real-time</CardDescription>
               </CardHeader>
               <CardContent>
                 {classifications.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <Activity className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                    <p>No visitors yet. Install the PHP script to start tracking.</p>
+                    <p className="font-medium">No visitors yet</p>
+                    <p className="text-sm mt-1">Install the PHP script to start tracking visitor data</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {classifications.slice(0, 5).map((c: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
+                      <div key={i} className="flex items-center justify-between p-3 bg-muted/30 hover:bg-muted/50 rounded-lg transition-colors border border-transparent hover:border-primary/20">
                         <div className="flex items-center space-x-3">
                           {c.visitorType === 'Human' ? (
-                            <div className="bg-green-100 dark:bg-green-900 p-2 rounded-full">
-                              <Users className="h-4 w-4 text-green-600 dark:text-green-400" />
+                            <div className="bg-gradient-to-br from-green-100 to-green-200 dark:from-green-900 dark:to-green-800 p-2.5 rounded-full shadow-sm">
+                              <Users className="h-4 w-4 text-green-700 dark:text-green-300" />
                             </div>
                           ) : (
-                            <div className="bg-red-100 dark:bg-red-900 p-2 rounded-full">
-                              <Bot className="h-4 w-4 text-red-600 dark:text-red-400" />
+                            <div className="bg-gradient-to-br from-red-100 to-red-200 dark:from-red-900 dark:to-red-800 p-2.5 rounded-full shadow-sm">
+                              <Bot className="h-4 w-4 text-red-700 dark:text-red-300" />
                             </div>
                           )}
                           <div>
-                            <p className="font-medium text-sm">{c.visitorType}</p>
-                            <p className="text-xs text-muted-foreground">{c.ipAddress}</p>
+                            <p className="font-semibold text-sm">{c.visitorType}</p>
+                            <p className="text-xs text-muted-foreground font-mono">{c.ipAddress}</p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-mono">{format(new Date(c.timestamp), 'HH:mm:ss')}</p>
-                          <p className="text-xs text-muted-foreground">{c.country}</p>
+                          <p className="text-sm font-mono font-semibold">{format(new Date(c.timestamp), 'HH:mm:ss')}</p>
+                          <p className="text-xs text-muted-foreground">{c.country || 'Unknown'}</p>
                         </div>
                       </div>
                     ))}
