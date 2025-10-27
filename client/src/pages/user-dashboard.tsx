@@ -202,11 +202,6 @@ export default function UserDashboard() {
     toggleLicenseMutation.mutate(!isPaused);
   };
 
-  const getCountryFlag = (countryCode: string) => {
-    if (!countryCode || countryCode === 'Unknown') return '🌐';
-    return `https://cdn.ip2location.io/assets/img/flags/${countryCode.toLowerCase()}.png`;
-  };
-
   const handleDownloadScript = async () => {
     if (!apiKeyValue?.keyValue) {
       toast({
@@ -740,18 +735,8 @@ if ($redirectUrl) {
                             </TableCell>
                             <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
                             <TableCell className="text-sm">{c.email || '-'}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <img 
-                                  src={getCountryFlag(c.country)} 
-                                  alt={c.country}
-                                  className="h-4 w-6 object-cover rounded shadow-sm"
-                                  onError={(e) => {
-                                    (e.target as HTMLImageElement).src = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'><text x='4' y='12' font-size='12'>🌐</text></svg>`;
-                                  }}
-                                />
-                                <span className="text-sm">{c.country}</span>
-                              </div>
+                            <TableCell className="text-sm">
+                              {c.country || 'Unknown'}
                             </TableCell>
                             <TableCell className="text-sm">{c.isp || '-'}</TableCell>
                             <TableCell className="text-sm">{c.deviceType || '-'}</TableCell>
