@@ -970,7 +970,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             if (isCountryWhitelisted) {
               // Country is whitelisted, but still check if it's datacenter
-              if (usageType === 'DCH' || usageType === 'RSV') {
+              if (usageType === 'DCH') {
                 visitorType = 'Bot';
                 detectionMethod = 'Datacenter in Whitelisted Country';
                 blockReason = `Datacenter traffic from whitelisted country: ${countryCode}`;
@@ -991,12 +991,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // PRIORITY 3: IP2LOCATION DETECTION (Primary detection - Always active)
         if (visitorType === 'Human') {
-          // Datacenter/Hosting detection
-          if (usageType === 'DCH' || usageType === 'RSV') {
+          // Datacenter/Hosting detection (DCH only - residential proxies allowed)
+          if (usageType === 'DCH') {
             visitorType = 'Bot';
-            detectionMethod = usageType === 'DCH' ? 'Datacenter' : 'Reserved IP';
-            blockReason = `IP2Location detected: ${usageType}`;
-            console.log(`🚫 BLOCKED (Priority 3 - IP2Location ${usageType}): ${clientIp}`);
+            detectionMethod = 'Datacenter';
+            blockReason = `IP2Location detected: Datacenter`;
+            console.log(`🚫 BLOCKED (Priority 3 - IP2Location Datacenter): ${clientIp}`);
           }
           
           // Proxy/VPN/TOR detection
@@ -1083,12 +1083,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // If API key is provided, add redirect URL for PHP script usage
       if (apiKeyId) {
         try {
-          const user = await storage.getClientUserByApiKey(apiKeyId);
-          if (user) {
-            const redirectUrls = await storage.getUserRedirectUrls(user.id);
-            // Use configured URLs or defaults
-            const humanUrl = redirectUrls?.humanUrl || 'https://example.com/human';
+          // Get API key details to check status (paused/expired)
+          const apiKeyDetails = await storage.getApiKeyById(apiKeyId);
+          
+          // If API key is paused or expired, redirect ALL visitors to bot URL
+          if (apiKeyDetails && (apiKeyDetails.status === 'paused' || apiKeyDetails.status === 'expired')) {
+            const user = await storage.getClientUserByApiKey(apiKeyId);
+            const redirectUrls = user ? await storage.getUserRedirectUrls(user.id) : undefined;
             const botUrl = redirectUrls?.botUrl || 'https://google.com';
+            response.redirectUrl = botUrl;
+            response.visitorType = 'Bot'; // Force bot classification when paused/expired
+            console.log(`⚠️ License ${apiKeyDetails.status.toUpperCase()}: Redirecting all visitors to bot URL`);
+          } else {
+            // Normal operation - get redirect URLs
+            const user = await storage.getClientUserByApiKey(apiKeyId);
+            let humanUrl = 'https://example.com/human';
+            let botUrl = 'https://google.com';
+            
+            if (user) {
+              const redirectUrls = await storage.getUserRedirectUrls(user.id);
+              humanUrl = redirectUrls?.humanUrl || humanUrl;
+              botUrl = redirectUrls?.botUrl || botUrl;
+            } else {
+              console.warn(`⚠️ No client user found for API key ID: ${apiKeyId} - using default redirect URLs`);
+            }
             
             // Return appropriate redirect URL based on visitor type
             response.redirectUrl = classification.visitorType === 'Human' 
@@ -1097,7 +1115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         } catch (error) {
           console.error("Error fetching redirect URLs:", error);
-          // Provide default redirect URLs if lookup fails
+          // ALWAYS provide redirect URLs even if lookup fails (prevents "Configuration error")
           response.redirectUrl = classification.visitorType === 'Human' 
             ? 'https://example.com/human' 
             : 'https://google.com';
