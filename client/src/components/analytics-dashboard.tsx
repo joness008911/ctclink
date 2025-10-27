@@ -11,7 +11,7 @@ export default function AnalyticsDashboard() {
   const [timeRange, setTimeRange] = useState('7d');
 
   const { data: classifications = [] } = useQuery<Classification[]>({
-    queryKey: ["/api/classifications"],
+    queryKey: ["/api/classifications?limit=1000"],
     refetchInterval: 10000,
   });
 
