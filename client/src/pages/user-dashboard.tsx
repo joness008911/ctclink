@@ -504,31 +504,45 @@ if ($redirectUrl) {
           <TabsContent value="analytics" className="space-y-6">
             <Card className="border-2 border-primary/20 shadow-lg">
               <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex-1">
                     <CardTitle className="text-xl flex items-center gap-2">
                       <Key className="h-5 w-5 text-primary" />
                       API License Status
                     </CardTitle>
-                    <CardDescription>Manage your CleanTraffic license</CardDescription>
+                    <CardDescription className="mt-2 text-sm max-w-2xl">
+                      <strong>Pause/Resume Control:</strong> Temporarily pause your license during testing, maintenance, or when idle. 
+                      Paused licenses redirect <strong>all visitors</strong> to your bot URL. This <strong>does not affect your expiration date</strong> - 
+                      your license time continues regardless of pause status.
+                    </CardDescription>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="text-right mr-3">
-                      <p className="text-sm text-muted-foreground">Status</p>
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground mb-1.5">Current Status</p>
                       <Badge 
                         variant={isLicenseActive ? "default" : isLicensePaused ? "secondary" : "destructive"}
-                        className="mt-1"
+                        className="text-sm px-3 py-1.5"
                       >
-                        {isLicenseActive && <CheckCircle2 className="h-3 w-3 mr-1" />}
-                        {isLicensePaused && <Pause className="h-3 w-3 mr-1" />}
-                        {isLicenseExpired && <XCircle className="h-3 w-3 mr-1" />}
+                        {isLicenseActive && <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+                        {isLicensePaused && <Pause className="h-4 w-4 mr-1.5" />}
+                        {isLicenseExpired && <XCircle className="h-4 w-4 mr-1.5" />}
                         {apiKeyDetails?.status?.toUpperCase() || 'UNKNOWN'}
                       </Badge>
                     </div>
-                    <Separator orientation="vertical" className="h-12" />
-                    <div className="flex items-center space-x-2">
-                      <Label htmlFor="license-toggle" className="text-sm font-medium">
-                        {isLicensePaused ? 'Paused' : 'Active'}
+                    <Separator orientation="vertical" className="h-14" />
+                    <div className="flex flex-col items-center space-y-1.5">
+                      <Label htmlFor="license-toggle" className="text-xs text-muted-foreground font-normal flex items-center gap-1.5">
+                        {isLicensePaused ? (
+                          <>
+                            <Play className="h-3.5 w-3.5 text-green-600" />
+                            <span>Resume</span>
+                          </>
+                        ) : (
+                          <>
+                            <Pause className="h-3.5 w-3.5 text-orange-600" />
+                            <span>Pause</span>
+                          </>
+                        )}
                       </Label>
                       <Switch
                         id="license-toggle"
@@ -536,6 +550,7 @@ if ($redirectUrl) {
                         onCheckedChange={handleToggleLicense}
                         disabled={toggleLicenseMutation.isPending || isLicenseExpired}
                         data-testid="switch-license-toggle"
+                        className="scale-110"
                       />
                     </div>
                   </div>
@@ -579,15 +594,21 @@ if ($redirectUrl) {
                 </div>
 
                 {(isLicensePaused || isLicenseExpired) && (
-                  <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 flex items-start space-x-3">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-yellow-900 dark:text-yellow-100">
-                        {isLicenseExpired ? 'License Expired' : 'License Paused'}
+                  <div className={`${isLicenseExpired ? 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800' : 'bg-yellow-50 dark:bg-yellow-950 border-yellow-200 dark:border-yellow-800'} border rounded-lg p-4 flex items-start space-x-3`}>
+                    <AlertTriangle className={`h-5 w-5 ${isLicenseExpired ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'} mt-0.5`} />
+                    <div className="flex-1">
+                      <p className={`font-semibold ${isLicenseExpired ? 'text-red-900 dark:text-red-100' : 'text-yellow-900 dark:text-yellow-100'}`}>
+                        {isLicenseExpired ? '🔒 Service Suspended - License Expired' : '⏸️ Service Paused'}
                       </p>
-                      <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
-                        All visitors are currently being redirected to your bot URL. 
-                        {isLicensePaused && ' Toggle the switch above to resume normal classification.'}
+                      <p className={`text-sm ${isLicenseExpired ? 'text-red-700 dark:text-red-300' : 'text-yellow-700 dark:text-yellow-300'} mt-1.5`}>
+                        {isLicenseExpired ? (
+                          'Your license has expired. All traffic is being redirected to the bot URL. Please contact support to renew your license.'
+                        ) : (
+                          <>
+                            All visitors are currently being redirected to your bot URL while your license is paused. 
+                            Toggle the switch above to resume normal traffic classification.
+                          </>
+                        )}
                       </p>
                     </div>
                   </div>
