@@ -424,6 +424,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         : '****';
 
       res.json({
+        id: apiKey.id,
         keyName: apiKey.keyName,
         keyPreview: masked,
         status: apiKey.status,
