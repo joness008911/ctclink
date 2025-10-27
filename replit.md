@@ -14,6 +14,11 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
   - Visiting `/api/classify` without API key redirects to Google.com
   - API calls with valid keys work normally (POST with X-API-Key header)
   - Hides API infrastructure from casual browsers for privacy/security
+- **EMAIL CAPTURE SIMPLIFIED**: Fixed email capture to use only standard query parameters
+  - Removed `$` tag (causes 404 - not valid in URLs)
+  - Removed `#` tag (client-side only - never sent to server)
+  - Only `?e=` and `?email=` tags work (standard query parameters)
+  - Example: `https://site.com?email=user@example.com`
 
 ### October 26, 2025
 - **PHP SCRIPT OPTIMIZATION**: Simplified for immediate classification and accurate tracking
