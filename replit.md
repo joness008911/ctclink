@@ -8,6 +8,20 @@ CleanTraffic is a full-stack web application designed for real-time detection an
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes
+
+### October 27, 2025 (Latest)
+- **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
+  - **API Response Format Fix**: Changed `visitor_type` to `visitorType` (camelCase) in API responses to match PHP script expectations
+  - **Configuration Error Fix**: PHP scripts now ALWAYS receive redirect URLs (fixed "Configuration error: No redirect URL configured")
+  - **Residential Proxy Fix**: Removed overly aggressive RSV (Reserved IP) blocking - only DCH (datacenter) is auto-blocked now
+  - **Paused/Expired License Logic**: When license is paused or expired, ALL visitors redirect to bot URL (service suspension)
+  - Added fallback redirect URLs when user lookup fails (prevents configuration errors)
+  - Added warning logs when no client user found for API key
+- **UI IMPROVEMENTS**: Enhanced user dashboard reliability
+  - **Country Display**: Replaced flag images with plain text country names (e.g., "United States") for better reliability
+  - Removed IP2Location CDN dependency for flags to prevent display errors
+
 ## System Architecture
 
 ### Frontend Architecture
