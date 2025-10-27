@@ -8,6 +8,13 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 
 ## Recent Changes
 
+### October 27, 2025
+- **BROWSER REDIRECT SECURITY**: Added automatic redirects for browser visits to API domain
+  - Any browser visit to `api.subdomain.com` redirects to Google.com (301 permanent)
+  - Visiting `/api/classify` without API key redirects to Google.com
+  - API calls with valid keys work normally (POST with X-API-Key header)
+  - Hides API infrastructure from casual browsers for privacy/security
+
 ### October 26, 2025
 - **PHP SCRIPT OPTIMIZATION**: Simplified for immediate classification and accurate tracking
   - **Removed JavaScript loading screen**: Classification now happens instantly server-side

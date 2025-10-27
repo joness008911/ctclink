@@ -34,7 +34,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }));
   
-  // Smart routing: Detect API subdomain and show blank page
+  // Smart routing: Detect API subdomain and redirect browsers
   // IMPORTANT: This runs AFTER session/body parsing so API key validation works properly
   app.use((req, res, next) => {
     const host = req.headers.host || '';
@@ -52,9 +52,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return next(); // Let it proceed to normal API key validation and CORS handling
       }
       
-      // Block ALL other requests with blank white page (white-label requirement)
+      // Redirect ALL other browser requests to Google.com (privacy/security)
       // This prevents access to /dashboard, /admin, /api/*, assets, etc. on api subdomain
-      return res.send('');
+      // Anyone typing api.yoursite.com in browser gets redirected away
+      return res.redirect(301, 'https://www.google.com');
     }
     
     // Continue to normal routes for non-api subdomains
@@ -704,9 +705,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
     
     // REQUIRE API key - no anonymous classification
-    // Return blank page for white-label security (don't reveal it's an API)
+    // Redirect to Google for white-label security (don't reveal it's an API)
     if (!apiKey) {
-      return res.send('');
+      return res.redirect(301, 'https://www.google.com');
     }
     
     let limitReached = false;
@@ -741,9 +742,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     const apiKeyFromHeader = req.headers['x-api-key'] as string;
     
     // REQUIRE API key - no anonymous classification
-    // Return blank page for white-label security (don't reveal it's an API)
+    // Redirect to Google for white-label security (don't reveal it's an API)
     if (!apiKeyFromHeader) {
-      return res.send('');
+      return res.redirect(301, 'https://www.google.com');
     }
     
     let limitReached = false;
