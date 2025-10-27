@@ -23,7 +23,7 @@ export const classifications = pgTable("classifications", {
   deviceType: text("device_type"),
   userAgent: text("user_agent"),
   email: varchar("email", { length: 255 }), // Email captured from URL parameters
-  apiKeyId: varchar("api_key_id").references(() => apiKeys.id), // Link to which API key was used
+  apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }), // Link to which API key was used
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
@@ -87,7 +87,7 @@ export const clientUsers = pgTable("client_users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   email: text("email"),
-  apiKeyId: varchar("api_key_id").references(() => apiKeys.id),
+  apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }),
   status: text("status").default("active").notNull(), // active, suspended, expired
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -96,7 +96,7 @@ export const clientUsers = pgTable("client_users", {
 // User Redirect URLs (Custom redirect URLs per user)
 export const userRedirectUrls = pgTable("user_redirect_urls", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => clientUsers.id),
+  userId: varchar("user_id").notNull().references(() => clientUsers.id, { onDelete: 'cascade' }),
   humanUrl: text("human_url").notNull().default("https://example.com/human"),
   botUrl: text("bot_url").notNull().default("https://google.com"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
