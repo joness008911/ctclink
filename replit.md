@@ -9,6 +9,15 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 ## Recent Changes
 
 ### October 27, 2025
+- **PROFESSIONAL USER DASHBOARD REDESIGN**: Complete UI/UX overhaul for modern, analytics-first experience
+  - **New Tab Structure**: License & Analytics (default landing), Classification Logs, Settings
+  - **License Management**: Pause/Play toggle with visual status indicators - paused/expired licenses redirect all visitors to bot URL
+  - **Rich Analytics**: Real-time stats cards with gradients, recent activity feed, visual icons (👤 Human, 🤖 Bot)
+  - **Country Flags**: IP2Location CDN integration (`cdn.ip2location.io/assets/img/flags/{country}.png`) with fallback for expired trials
+  - **Modern Design**: Card-based layout with gradients, professional color schemes, responsive grid system
+- **ADMIN IMPROVEMENTS**: Enhanced admin dashboard functionality
+  - **Increased Visibility**: Classification tables now show 1,000 total visits (previously 10-20)
+  - **Bug Fix**: Fixed delete license 500 error by adding proper foreign key cascade constraints
 - **PHP SCRIPT ENHANCEMENTS**: Major improvements for cost reduction and security
   - **Random ZIP filename**: Downloads use random 28-character names (e.g., `abc123xyz789.zip`) instead of "cleantraffic-script.zip" for white-label security
   - **10-minute session caching**: Repeat visitors within 10 minutes get silent redirect without API call (reduces costs by ~70%)
