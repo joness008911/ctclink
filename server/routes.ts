@@ -1076,7 +1076,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         location: classification.location || 'Unknown',
         browser: classification.browser || 'Unknown',
         device_type: classification.deviceType || 'Unknown', 
-        visitor_type: classification.visitorType || 'Human',
+        visitorType: classification.visitorType || 'Human', // PHP expects camelCase
         isp: classification.isp || 'Unknown'
       };
       
