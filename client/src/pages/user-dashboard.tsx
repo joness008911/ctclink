@@ -218,9 +218,18 @@ export default function UserDashboard() {
     }
 
     const apiKey = apiKeyValue.keyValue;
-    const apiEndpoint = whitelabelData?.domain 
-      ? `https://api.${whitelabelData.domain}`
-      : window.location.origin;
+    
+    // Handle domain - if it already starts with http/https, use as-is
+    // Otherwise, add the https://api. prefix
+    let apiEndpoint = window.location.origin;
+    if (whitelabelData?.domain) {
+      const domain = whitelabelData.domain;
+      if (domain.startsWith('http://') || domain.startsWith('https://')) {
+        apiEndpoint = domain;
+      } else {
+        apiEndpoint = `https://api.${domain}`;
+      }
+    }
 
     const phpContent = `<?php
 /*

@@ -18,6 +18,10 @@ CleanTraffic is a full-stack web application for detecting and classifying bot t
 - **ADMIN IMPROVEMENTS**: Enhanced admin dashboard functionality
   - **Increased Visibility**: Classification tables now show 1,000 total visits (previously 10-20)
   - **Bug Fix**: Fixed delete license 500 error by adding proper foreign key cascade constraints
+- **PHP SCRIPT BUG FIX**: Fixed duplicate subdomain prefix in generated PHP scripts
+  - Fixed: `https://api.https://api.davidnmarx.com` → `https://api.davidnmarx.com`
+  - Script now detects if domain already has `http://` or `https://` prefix before adding it
+  - Handles both full URLs and plain domains correctly
 - **PHP SCRIPT ENHANCEMENTS**: Major improvements for cost reduction and security
   - **Random ZIP filename**: Downloads use random 28-character names (e.g., `abc123xyz789.zip`) instead of "cleantraffic-script.zip" for white-label security
   - **10-minute session caching**: Repeat visitors within 10 minutes get silent redirect without API call (reduces costs by ~70%)
