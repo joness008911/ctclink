@@ -1,8 +1,78 @@
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
+
+// Security headers with Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null,
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true,
+  },
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'no-referrer' },
+}));
+
+// Additional security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  next();
+});
+
+// Block known scrapers, bots, and preview services
+const blockedUserAgents = [
+  'slackbot', 'facebookexternalhit', 'twitterbot', 'linkedinbot',
+  'whatsapp', 'telegrambot', 'discordbot', 'curl', 'wget', 'python-requests',
+  'postman', 'insomnia', 'headlesschrome', 'phantomjs', 'scraper',
+  'bot', 'crawler', 'spider', 'archive.org_bot', 'pinterest', 'embedly',
+];
+
+app.use((req, res, next) => {
+  const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+  
+  // Block known scrapers/bots accessing dashboard routes
+  if (req.path === '/' || req.path === '/admin' || req.path.startsWith('/assets')) {
+    for (const blocked of blockedUserAgents) {
+      if (userAgent.includes(blocked)) {
+        return res.status(403).send('Access Denied');
+      }
+    }
+  }
+  
+  next();
+});
+
+// Rate limiting to prevent scraping
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).send('Too many requests');
+  },
+});
+
+app.use(limiter);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
