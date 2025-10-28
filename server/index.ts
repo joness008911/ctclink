@@ -48,8 +48,11 @@ const blockedUserAgents = [
 app.use((req, res, next) => {
   const userAgent = (req.headers['user-agent'] || '').toLowerCase();
   
-  // Block known scrapers/bots accessing dashboard routes
-  if (req.path === '/' || req.path === '/admin' || req.path.startsWith('/assets')) {
+  // Block known scrapers/bots accessing all routes EXCEPT API endpoints
+  // This protects all dashboard routes, assets, and static files
+  const isApiEndpoint = req.path.startsWith('/api/') || req.path === '/robots.txt';
+  
+  if (!isApiEndpoint) {
     for (const blocked of blockedUserAgents) {
       if (userAgent.includes(blocked)) {
         return res.status(403).send('Access Denied');
@@ -66,8 +69,16 @@ const limiter = rateLimit({
   max: 100, // Limit each IP to 100 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
+  // Skip validation and use req.ip which respects trust proxy
+  skipFailedRequests: false,
+  skipSuccessfulRequests: false,
   handler: (req, res) => {
     res.status(429).send('Too many requests');
+  },
+  // Use a custom key generator to handle proxy properly
+  keyGenerator: (req) => {
+    // Use req.ip which already respects trust proxy setting
+    return req.ip || 'unknown';
   },
 });
 
