@@ -702,7 +702,11 @@ if ($redirectUrl) {
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-mono font-semibold">{format(new Date(c.timestamp), 'HH:mm:ss')}</p>
-                          <p className="text-xs text-muted-foreground">{c.country || 'Unknown'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {c.city && c.countryCode 
+                              ? `${c.city}${c.region ? ', ' + c.region : ''}, ${c.countryCode}`
+                              : (c.country || 'Unknown')}
+                          </p>
                         </div>
                       </div>
                     ))}
@@ -763,7 +767,9 @@ if ($redirectUrl) {
                             <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
                             <TableCell className="text-sm">{c.email || '-'}</TableCell>
                             <TableCell className="text-sm">
-                              {c.country || 'Unknown'}
+                              {c.city && c.countryCode 
+                                ? `${c.city}${c.region ? ', ' + c.region : ''}, ${c.countryCode}`
+                                : (c.country || 'Unknown')}
                             </TableCell>
                             <TableCell className="text-sm">{c.isp || '-'}</TableCell>
                             <TableCell className="text-sm">{c.deviceType || '-'}</TableCell>

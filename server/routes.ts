@@ -912,6 +912,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const isp = geoData.as || 'Unknown';
             const countryCode = geoData.country_code || '';
             const countryName = geoData.country_name || 'Unknown';
+            const cityName = geoData.city_name || 'Unknown';
+            const regionName = geoData.region_name || '';
             
             classificationData = {
               ip: clientIp,
@@ -919,6 +921,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
               isp: isp,
               country_code: countryCode,
               country_name: countryName,
+              city_name: cityName,
+              region_name: regionName,
               browser: browser,
               device_type: deviceType,
               usage_type: geoData.usage_type,
@@ -944,6 +948,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ipAddress: clientIp,
                 location: classificationData.location || 'Unknown',
                 country: classificationData.country_name || 'Unknown',
+                countryCode: classificationData.country_code || 'Unknown',
+                city: classificationData.city_name || 'Unknown',
+                region: classificationData.region_name || '',
                 browser: classificationData.browser || browser,
                 deviceType: classificationData.device_type || deviceType,
                 visitorType: visitorType,
@@ -1112,6 +1119,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ipAddress: clientIp,
         location: classificationData.location || 'Unknown',
         country: classificationData.country_name || 'Unknown',
+        countryCode: classificationData.country_code || 'Unknown',
+        city: classificationData.city_name || 'Unknown',
+        region: classificationData.region_name || '',
         browser: classificationData.browser || browser,
         deviceType: classificationData.device_type || deviceType,
         visitorType: visitorType,

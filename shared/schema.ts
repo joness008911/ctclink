@@ -14,7 +14,9 @@ export const classifications = pgTable("classifications", {
   ipAddress: text("ip_address").notNull(),
   location: text("location"),
   country: text("country"),
+  countryCode: text("country_code"),
   city: text("city"),
+  region: text("region"),
   visitorType: text("visitor_type").notNull(), // 'Human' or 'Bot'
   detectionMethod: text("detection_method").notNull(),
   connectionType: text("connection_type"),
