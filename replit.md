@@ -22,6 +22,12 @@ Preferred communication style: Simple, everyday language.
   - Added support for `$` (custom separator) parameters: `$e=email@example.com` or `$email=email@example.com`
   - Existing `?` (query) parameters continue to work: `?e=email@example.com` or `?email=email@example.com`
   - JavaScript automatically converts hash parameters to query parameters for server-side processing
+- **API Limitation Detection**: Added automatic detection for trial/expired/unpaid IP2Geolocation API plans
+  - Detects when API response lacks `usage_type` field (indicates limited/trial plan)
+  - Automatically classifies all visitors as "Bot" when API is limited (safe default)
+  - Sets detection method to "API Limitation - Cannot Detect (Trial/Expired Plan)" for admin visibility
+  - Redirects all traffic to bot URL to prevent false positives
+  - Admin dashboard shows clear reason so issues can be identified immediately
 
 ### October 27, 2025
 - **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
