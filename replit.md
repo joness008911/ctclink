@@ -10,7 +10,15 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
-### October 27, 2025 (Latest)
+### October 28, 2025 (Latest)
+- **Country Field Fix**: Fixed country showing as "Unknown" in visitor logs by properly extracting and storing country_name from IP2Geolocation API
+- **PHP Script Security Enhancement**: Removed all identifying comments and traces from generated PHP scripts
+  - Eliminated "CleanTraffic" branding from script headers
+  - Removed feature descriptions and explanatory comments
+  - Stripped all comments that could help competitors understand or copy the system
+  - Minimized error messages to prevent information disclosure
+
+### October 27, 2025
 - **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
   - **API Response Format Fix**: Changed `visitor_type` to `visitorType` (camelCase) in API responses to match PHP script expectations
   - **Configuration Error Fix**: PHP scripts now ALWAYS receive redirect URLs (fixed "Configuration error: No redirect URL configured")
