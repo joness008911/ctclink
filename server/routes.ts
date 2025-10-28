@@ -62,6 +62,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   });
 
+  // Serve robots.txt to prevent indexing
+  app.get('/robots.txt', (req, res) => {
+    res.type('text/plain');
+    res.send(`User-agent: *
+Disallow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /assets/
+
+# Prevent all crawling and archiving
+Disallow: /*`);
+  });
+
   // Authentication middleware
   const requireAuth = (req: any, res: any, next: any) => {
     if (req.session?.userId) {
