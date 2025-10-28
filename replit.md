@@ -28,6 +28,11 @@ Preferred communication style: Simple, everyday language.
   - Sets detection method to "API Limitation - Cannot Detect (Trial/Expired Plan)" for admin visibility
   - Redirects all traffic to bot URL to prevent false positives
   - Admin dashboard shows clear reason so issues can be identified immediately
+- **Location Display Format Update**: Changed location display to show City, Region, Country Code format
+  - Format: "Los Angeles, California, US" instead of "United States"
+  - Uses 2-letter country codes (US, BE, AT) instead of full country names
+  - Shows city first, then region (state/province), then country code
+  - Backend now stores city, region, and country code separately for better data granularity
 
 ### October 27, 2025
 - **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
