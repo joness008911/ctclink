@@ -911,12 +911,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             const isp = geoData.as || 'Unknown';
             const countryCode = geoData.country_code || '';
+            const countryName = geoData.country_name || 'Unknown';
             
             classificationData = {
               ip: clientIp,
               location: location,
               isp: isp,
               country_code: countryCode,
+              country_name: countryName,
               browser: browser,
               device_type: deviceType,
               usage_type: geoData.usage_type,
@@ -932,6 +934,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             classificationData = {
               ip: clientIp,
               location: 'Unknown',
+              country_name: 'Unknown',
               isp: 'Unknown',
               country_code: '',
               browser: browser,
@@ -1052,6 +1055,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         classificationData = {
           ip: clientIp,
           location: 'Unknown',
+          country_name: 'Unknown',
           isp: 'Unknown',
           browser: browser,
           device_type: deviceType,
@@ -1063,6 +1067,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const classification = await storage.createClassification({
         ipAddress: clientIp,
         location: classificationData.location || 'Unknown',
+        country: classificationData.country_name || 'Unknown',
         browser: classificationData.browser || browser,
         deviceType: classificationData.device_type || deviceType,
         visitorType: visitorType,

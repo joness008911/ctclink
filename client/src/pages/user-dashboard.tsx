@@ -227,40 +227,20 @@ export default function UserDashboard() {
     }
 
     const phpContent = `<?php
-/*
- * CleanTraffic Bot Protection Script
- * Generated: ${new Date().toISOString()}
- * 
- * Features:
- * - 10-minute session caching (reduces API costs - silent redirect for repeat visitors)
- * - Enhanced bot detection (headless browsers, known bots, suspicious patterns)
- * - Immediate classification and redirect (no loading screen)
- * - Server-side browser/device detection from user agent
- * - Email capture from URL query parameters (?e= or ?email=)
- * - Security headers (HSTS, CSP, X-Frame-Options)
- * - Query string forwarding to redirect URLs
- * - Redirect URLs configured in your CleanTraffic dashboard
- */
-
-// ============ CONFIGURATION ============
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
 
-// ============ SESSION & FINGERPRINTING ============
 session_start();
 
-// Create unique visitor fingerprint: IP + User Agent
 $visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $visitorUserAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $visitorFingerprint = md5($visitorIp . $visitorUserAgent);
 
-// ============ CHECK SESSION CACHE (10-MINUTE) ============
 if (isset($_SESSION['ct_' . $visitorFingerprint])) {
     $cached = $_SESSION['ct_' . $visitorFingerprint];
     $cacheAge = time() - $cached['timestamp'];
     
-    // If cache is less than 10 minutes old, use cached redirect
-    if ($cacheAge < 600) { // 600 seconds = 10 minutes
+    if ($cacheAge < 600) {
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         header('Pragma: no-cache');
         header('Expires: 0');
@@ -274,26 +254,20 @@ if (isset($_SESSION['ct_' . $visitorFingerprint])) {
         header('Location: ' . $cachedUrl);
         exit;
     } else {
-        // Cache expired, clear it
         unset($_SESSION['ct_' . $visitorFingerprint]);
     }
 }
 
-// ============ ENHANCED BOT DETECTION ============
 function isLikelyBot($userAgent) {
     if (empty($userAgent) || strlen($userAgent) < 10) {
         return true;
     }
     
     $botPatterns = [
-        // Headless browsers
         'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 'WebDriver',
-        // Known bots
         'Googlebot', 'Bingbot', 'Slurp', 'DuckDuckBot', 'Baiduspider', 'YandexBot',
         'facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'WhatsApp',
-        // Scrapers
         'Scrapy', 'curl', 'wget', 'python-requests', 'Go-http-client',
-        // Other indicators
         'bot', 'crawler', 'spider', 'scraper'
     ];
     
@@ -308,16 +282,13 @@ function isLikelyBot($userAgent) {
 
 $isBot = isLikelyBot($visitorUserAgent);
 
-// ============ EMAIL CAPTURE ============
 $email = $_GET['email'] ?? $_GET['e'] ?? null;
 
-// ============ SECURITY HEADERS ============
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Content-Security-Policy: default-src \\'self\\'; frame-ancestors \\'none\\'');
 
-// ============ DEVICE DETECTION ============
 function detectDevice($userAgent) {
     if (preg_match('/mobile|android|iphone|ipad|ipod/i', $userAgent)) {
         return 'Mobile';
@@ -341,7 +312,6 @@ function detectBrowser($userAgent) {
 $deviceType = detectDevice($visitorUserAgent);
 $browser = detectBrowser($visitorUserAgent);
 
-// ============ API CLASSIFICATION ============
 $redirectUrl = null;
 $visitorType = null;
 
@@ -379,9 +349,7 @@ if ($httpCode === 200 && $response) {
     }
 }
 
-// ============ CACHE RESULT FOR 10 MINUTES ============
 if ($redirectUrl) {
-    // Store classification result in session (10-minute cache)
     $_SESSION['ct_' . $visitorFingerprint] = [
         'redirectUrl' => $redirectUrl,
         'visitorType' => $visitorType,
@@ -389,15 +357,11 @@ if ($redirectUrl) {
     ];
 }
 
-// ============ REDIRECT ============
-// Add anti-caching headers for bot protection
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 header('Expires: 0');
 
-// Redirect URL MUST come from API response (set in your CleanTraffic dashboard)
 if ($redirectUrl) {
-    // Forward all query parameters from incoming URL
     if (!empty($_SERVER['QUERY_STRING'])) {
         $separator = (strpos($redirectUrl, '?') !== false) ? '&' : '?';
         $redirectUrl .= $separator . $_SERVER['QUERY_STRING'];
@@ -406,9 +370,8 @@ if ($redirectUrl) {
     header('Location: ' . $redirectUrl);
     exit;
 } else {
-    // API did not return a redirect URL - configuration error
     header('HTTP/1.1 500 Internal Server Error');
-    exit('Configuration error: No redirect URL configured in CleanTraffic dashboard');
+    exit('Configuration error');
 }
 ?>`;
 
