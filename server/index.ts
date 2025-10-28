@@ -39,10 +39,21 @@ app.use((req, res, next) => {
 
 // Block known scrapers, bots, and preview services
 const blockedUserAgents = [
-  'slackbot', 'facebookexternalhit', 'twitterbot', 'linkedinbot',
-  'whatsapp', 'telegrambot', 'discordbot', 'curl', 'wget', 'python-requests',
-  'postman', 'insomnia', 'headlesschrome', 'phantomjs', 'scraper',
-  'bot', 'crawler', 'spider', 'archive.org_bot', 'pinterest', 'embedly',
+  'slackbot', 'slack-imgproxy', 'slackbot-linkexpanding',
+  'facebookexternalhit', 'facebookcatalog', 'facebot',
+  'twitterbot', 'linkedinbot', 'linkedin',
+  'whatsapp', 'whatsappbot',
+  'telegram', 'telegrambot',
+  'discordbot', 'discord',
+  'curl', 'wget', 'python-requests', 'python-urllib',
+  'postman', 'insomnia', 'httpie',
+  'headlesschrome', 'phantomjs', 'selenium', 'puppeteer',
+  'scraper', 'scrapy', 'bot', 'crawler', 'spider',
+  'archive.org_bot', 'ia_archiver',
+  'pinterest', 'pinterestbot',
+  'embedly', 'outbrain', 'quora',
+  'applebot', 'bingpreview', 'googlebot', 'baiduspider',
+  'yandexbot', 'seznambot', 'bingbot', 'duckduckbot',
 ];
 
 app.use((req, res, next) => {
@@ -69,16 +80,10 @@ const limiter = rateLimit({
   max: 100, // Limit each IP to 100 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip validation and use req.ip which respects trust proxy
   skipFailedRequests: false,
   skipSuccessfulRequests: false,
   handler: (req, res) => {
     res.status(429).send('Too many requests');
-  },
-  // Use a custom key generator to handle proxy properly
-  keyGenerator: (req) => {
-    // Use req.ip which already respects trust proxy setting
-    return req.ip || 'unknown';
   },
 });
 
