@@ -928,7 +928,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // Cache the response for 30 minutes
             ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`📍 API Response: IP=${clientIp}, Country=${countryCode}, ISP=${isp}`);
+            console.log(`📍 API Response: IP=${clientIp}, Country=${countryCode}, ISP=${isp}, UsageType=${geoData.usage_type || 'MISSING'}`);
+            
+            // CHECK FOR API LIMITATION (Trial/Expired/Unpaid Plan)
+            if (!geoData.usage_type) {
+              console.warn(`⚠️ API LIMITATION DETECTED: IP2Geo returned no usage_type field for IP ${clientIp}`);
+              console.warn(`⚠️ This indicates trial/expired/unpaid API plan - Cannot determine if human or bot`);
+              visitorType = 'Bot';
+              detectionMethod = 'API Limitation - Cannot Detect (Trial/Expired Plan)';
+              classificationData.visitor_type = visitorType;
+              classificationData.detection_method = detectionMethod;
+              
+              // Skip all other classification logic - go straight to saving and redirecting
+              const classification = await storage.createClassification({
+                ipAddress: clientIp,
+                location: classificationData.location || 'Unknown',
+                country: classificationData.country_name || 'Unknown',
+                browser: classificationData.browser || browser,
+                deviceType: classificationData.device_type || deviceType,
+                visitorType: visitorType,
+                isp: classificationData.isp || 'Unknown',
+                detectionMethod: detectionMethod,
+                email: email || undefined,
+                apiKeyId: apiKeyId,
+              });
+
+              const response: any = {
+                ip: clientIp,
+                location: classification.location || 'Unknown',
+                browser: classification.browser || 'Unknown',
+                device_type: classification.deviceType || 'Unknown', 
+                visitorType: 'Bot',
+                isp: classification.isp || 'Unknown'
+              };
+              
+              // Always redirect to bot URL when API is limited
+              if (apiKeyId) {
+                const user = await storage.getClientUserByApiKey(apiKeyId);
+                const redirectUrls = user ? await storage.getUserRedirectUrls(user.id) : undefined;
+                const botUrl = redirectUrls?.botUrl || 'https://google.com';
+                response.redirectUrl = botUrl;
+                console.log(`⚠️ API LIMITED: Redirecting ALL visitors to bot URL - ${botUrl}`);
+              }
+              
+              return res.json(response);
+            }
           } else {
             console.error(`IP2Geolocation API error: ${response.status}`);
             classificationData = {
