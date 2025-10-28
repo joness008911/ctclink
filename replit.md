@@ -17,6 +17,11 @@ Preferred communication style: Simple, everyday language.
   - Removed feature descriptions and explanatory comments
   - Stripped all comments that could help competitors understand or copy the system
   - Minimized error messages to prevent information disclosure
+- **Enhanced Email Auto-Grab**: Extended email capture to support multiple URL parameter formats
+  - Added support for `#` (hash/fragment) parameters: `#e=email@example.com` or `#email=email@example.com`
+  - Added support for `$` (custom separator) parameters: `$e=email@example.com` or `$email=email@example.com`
+  - Existing `?` (query) parameters continue to work: `?e=email@example.com` or `?email=email@example.com`
+  - JavaScript automatically converts hash parameters to query parameters for server-side processing
 
 ### October 27, 2025
 - **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
