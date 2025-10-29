@@ -74,14 +74,17 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting to prevent scraping
+// Rate limiting to prevent scraping - only apply to non-API routes
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // Increased limit for legitimate usage
   standardHeaders: true,
   legacyHeaders: false,
-  skipFailedRequests: false,
-  skipSuccessfulRequests: false,
+  skip: (req) => {
+    // Skip rate limiting for API routes (they have their own auth)
+    // Only rate limit static files and public pages
+    return req.path.startsWith('/api/');
+  },
   handler: (req, res) => {
     res.status(429).send('Too many requests');
   },
