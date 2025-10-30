@@ -1,6 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -73,24 +72,6 @@ app.use((req, res, next) => {
   
   next();
 });
-
-// Rate limiting to prevent scraping - only apply to non-API routes
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Increased limit for legitimate usage
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => {
-    // Skip rate limiting for API routes (they have their own auth)
-    // Only rate limit static files and public pages
-    return req.path.startsWith('/api/');
-  },
-  handler: (req, res) => {
-    res.status(429).send('Too many requests');
-  },
-});
-
-app.use(limiter);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

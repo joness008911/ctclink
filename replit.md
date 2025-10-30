@@ -35,12 +35,12 @@ Preferred communication style: Simple, everyday language.
   - Backend now stores city, region, and country code separately for better data granularity
 - **Security Enhancements**: Implemented comprehensive security measures to prevent scraping, previewing, and unauthorized access
   - **Server-Side Security Headers**: Added Helmet middleware with strict CSP, HSTS (1 year with preload), X-Frame-Options (deny), and Referrer-Policy (no-referrer)
-  - **Bot/Scraper Blocking**: Middleware blocks known scrapers and preview bots (Slack, Facebook, Twitter, curl, wget, etc.) from all non-API routes
-  - **Rate Limiting**: 100 requests per 15 minutes per IP to prevent abuse and scraping attempts
+  - **Bot/Scraper Blocking**: Middleware blocks known scrapers and preview bots (Slack, Facebook, Twitter, Telegram, curl, wget, etc.) from all non-API routes
   - **SEO Prevention**: Meta tags for noindex/nofollow/noarchive, minimal Open Graph data, robots.txt disallows all crawling
   - **Client-Side Protection**: Disabled right-click context menu, developer tools shortcuts (F12, Ctrl+Shift+I), view source (Ctrl+U), and text selection on non-form elements
   - **Cache Control**: Headers prevent caching of sensitive pages
   - **Permissions Policy**: Disabled geolocation, microphone, camera, and payment APIs
+  - Note: Rate limiting was removed due to conflicts with proxy configuration; bot blocking provides primary protection
 
 ### October 27, 2025
 - **CRITICAL BUG FIXES**: Fixed production issues with PHP script integration
