@@ -853,44 +853,18 @@ Disallow: /*`);
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
       // Use original CleanTraffic API classification system
-      let cleanTrafficApiKey = '';
-      
-      // PERMANENT STORAGE: Try database first (most reliable)
-      try {
-        const { settings } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        
-        const dbKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
-        if (dbKey.length > 0 && dbKey[0].value) {
-          cleanTrafficApiKey = dbKey[0].value;
-          console.log("API key loaded from database (permanent storage)");
-        }
-      } catch (dbError) {
-        console.warn("Could not read API key from database:", dbError);
-      }
-      
-      // Fallback to file if not in database
-      if (!cleanTrafficApiKey) {
-        try {
-          const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-          if (fs.existsSync(keyFile)) {
-            const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-            if (fileKey) {
-              cleanTrafficApiKey = fileKey;
-              console.log("API key loaded from file (fallback)");
-            }
-          }
-        } catch (readError) {
-          console.warn("Could not read API key from file:", readError);
-        }
-      }
+      // Load API key from storage layer (works with both MemStorage and DatabaseStorage)
+      const cleanTrafficApiKey = await storage.getSetting('cleantraffic_api_key');
       
       if (!cleanTrafficApiKey) {
+        console.warn("CleanTraffic API key not configured in storage");
         return res.status(500).json({ 
           message: "CleanTraffic API key not configured",
-          error: "Missing API key in environment variables"
+          error: "Missing API key in storage"
         });
       }
+      
+      console.log("✅ API key loaded from storage");
 
       // CASCADING CLASSIFICATION LOGIC
       // Step 1: Country Check → Step 2: ISP Blacklist → Step 3: API Call (Proxy) → Step 4: ISP Whitelist
