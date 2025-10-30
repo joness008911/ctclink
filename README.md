@@ -1,49 +1,32 @@
 # CleanTraffic - Quick Setup Guide
 
-Get your bot detection system running in under 5 minutes.
+Get started with CleanTraffic in under 2 minutes.
 
-## Step 1: Admin Login
-- Go to `/admin`
-- Username: `Mark02`
-- Password: `Markstorey@2015`
-
-## Step 2: Configure System
-1. Click **Settings** tab
-2. Enter your configuration details
-3. Click **Update**
-
-## Step 3: Create API Key
-1. Go to **API Keys** tab
-2. Click **Create API Key**
-3. Enter a name (e.g., "Production")
-4. Copy the generated key (starts with `ak_...`)
-
-## Step 4: Create Client User
-1. Go to **Client Users** tab
-2. Click **Create Client User**
-3. Fill in:
-   - Username
-   - Password
-   - Select the API key you just created
-4. Click **Create**
-
-## Step 5: Set Redirect URLs (Client Dashboard)
-1. **Logout** from admin
-2. Login at `/` with your client username/password
+## Step 1: Login
+1. Go to your CleanTraffic dashboard
+2. Enter your username and password (provided by your administrator)
 3. Enter your API key when prompted
-4. Go to **Settings** → Update redirect URLs:
-   - **Human URL**: Where real visitors go (e.g., your website)
-   - **Bot URL**: Where bots go (e.g., `https://google.com`)
-5. Click **Save**
+4. Click **Login**
 
-## Step 6: Download Integration Script
-1. In client dashboard, scroll to **Download Integration Script**
+## Step 2: Configure Redirect URLs
+1. Go to **Settings** tab
+2. Set your redirect destinations:
+   - **Human URL**: Where real visitors should go (your main website)
+   - **Bot URL**: Where bots should go (e.g., `https://google.com`)
+3. Click **Save**
+
+## Step 3: Download Integration Script
+1. Scroll to **Download Integration Script**
 2. Click **Download Script**
-3. Upload this file to your website
-4. Access it via browser - it will automatically redirect based on detection
+3. Upload the file to your website
+4. Share the script URL with your visitors
 
-## Step 7: Deploy (Optional)
-Click **Publish** in Replit to make your CleanTraffic dashboard live with a permanent URL.
+## Step 4: Monitor Traffic
+View real-time analytics in your dashboard:
+- Total visitor classifications
+- Human vs bot traffic breakdown
+- Recent visitor activity
+- Detection details
 
 ---
 
