@@ -159,6 +159,8 @@ Disallow: /*`);
     try {
       const { username, password } = req.body;
       
+      console.log("User login attempt:", { username, passwordLength: password?.length });
+      
       if (!username || !password) {
         return res.status(400).json({ message: "Username and password required" });
       }
@@ -166,11 +168,16 @@ Disallow: /*`);
       // Find client user by username
       const user = await storage.getClientUserByUsername(username);
       if (!user) {
+        console.log("User not found:", username);
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
+      console.log("User found:", { username: user.username, hashedPasswordPrefix: user.password.substring(0, 10) });
+
       // Use bcrypt to compare passwords
       const passwordMatch = await bcrypt.compare(password, user.password);
+      console.log("Password match result:", passwordMatch);
+      
       if (!passwordMatch) {
         return res.status(401).json({ message: "Invalid credentials" });
       }
@@ -1297,13 +1304,9 @@ Disallow: /*`);
   // Get IP2Geolocation API key status (with masked key and last updated)
   app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
     try {
-      // PERMANENT STORAGE: Try database first
-      const { settings } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
+      const apiKey = await storage.getSetting('cleantraffic_api_key');
       
-      const dbKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
-      
-      if (dbKey.length === 0 || !dbKey[0].value) {
+      if (!apiKey) {
         return res.json({
           hasKey: false,
           keyPreview: null,
@@ -1311,21 +1314,15 @@ Disallow: /*`);
         });
       }
       
-      const apiKey = dbKey[0].value;
-      const lastUpdated = dbKey[0].updatedAt;
-      
       // Create masked key: first 4 + ***** + last 4
       const maskedKey = apiKey.length > 8 
         ? `${apiKey.substring(0, 4)}*****${apiKey.substring(apiKey.length - 4)}`
         : '****';
       
-      // Safely handle timestamp - use current time if missing
-      const timestamp = lastUpdated ? lastUpdated.toISOString() : new Date().toISOString();
-      
       res.json({
         hasKey: true,
         keyPreview: maskedKey,
-        lastUpdated: timestamp
+        lastUpdated: new Date().toISOString()
       });
     } catch (error) {
       console.error("Check IP2Geo API key status error:", error);
@@ -1404,33 +1401,9 @@ Disallow: /*`);
         });
       }
       
-      // PERMANENT STORAGE: Save to database first (most important for persistence)
-      try {
-        const { settings } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        
-        // Check if key exists
-        const existingKey = await db.select().from(settings).where(eq(settings.key, 'cleantraffic_api_key')).limit(1);
-        
-        if (existingKey.length > 0) {
-          // Update existing key
-          await db.update(settings)
-            .set({ value: trimmedKey, updatedAt: new Date() })
-            .where(eq(settings.key, 'cleantraffic_api_key'));
-          console.log("API key updated in database (permanent storage)");
-        } else {
-          // Insert new key with timestamp
-          await db.insert(settings).values({
-            key: 'cleantraffic_api_key',
-            value: trimmedKey,
-            updatedAt: new Date()
-          });
-          console.log("API key saved to database (permanent storage)");
-        }
-      } catch (dbError) {
-        console.error("Database save error (non-fatal):", dbError);
-        // Continue even if database save fails
-      }
+      // Save to storage layer (works with both MemStorage and DatabaseStorage)
+      await storage.setSetting('cleantraffic_api_key', trimmedKey);
+      console.log("API key saved to storage");
       
       // Update both environment variables for immediate effect
       process.env.IP2GEO_API_KEY = trimmedKey;
