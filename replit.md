@@ -11,6 +11,13 @@ Preferred communication style: Simple, everyday language.
 ## Recent Changes
 
 ### October 30, 2025 (Latest)
+- **🔒 CRITICAL SECURITY FIX - FAIL-SECURE CLASSIFICATION**: Fixed severe vulnerability where unknown IPs bypassed bot detection
+  - **Changed Default to 'Bot'**: All visitors now start as Bot and must prove they're human (was defaulting to Human - DANGEROUS!)
+  - **User Agent Validation**: Missing or suspicious user agents (bot, crawler, spider, scraper, curl, wget, python, headless) are immediately blocked
+  - **API Failure Protection**: ANY error during classification now defaults to Bot (was Human - allowing unknown traffic through)
+  - **Fail-Secure Principle**: System now blocks unknown/suspicious traffic by default instead of allowing it
+  - **Security Impact**: Prevents bots from exploiting API failures, network issues, or system errors to bypass detection
+  - **IP/CIDR Blocklist Schema**: Added database tables for network-level blocking (implementation pending)
 - **✅ PERMANENT DATABASE RESTORED**: Created fresh Neon database with permanent storage
   - All data now persists across server restarts (API keys, users, classifications, settings)
   - Fixed root cause: Removed async constructor calls that created zombie database connections
