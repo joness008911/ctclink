@@ -13,6 +13,10 @@ import {
   type InsertIspWhitelist,
   type IspBlacklist,
   type InsertIspBlacklist,
+  type IpBlocklist,
+  type InsertIpBlocklist,
+  type CidrBlocklist,
+  type InsertCidrBlocklist,
   type ClientUser,
   type InsertClientUser,
   type UserRedirectUrls,
@@ -24,6 +28,8 @@ import {
   countryWhitelist,
   ispWhitelist,
   ispBlacklist,
+  ipBlocklist,
+  cidrBlocklist,
   clientUsers,
   userRedirectUrls,
   settings
@@ -122,6 +128,20 @@ export interface IStorage {
   removeIspFromBlacklist(id: string): Promise<boolean>;
   toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean>;
   isIspBlacklisted(ispName: string): Promise<boolean>;
+  
+  // IP Blocklist methods
+  getIpBlocklist(): Promise<IpBlocklist[]>;
+  addIpToBlocklist(ip: InsertIpBlocklist): Promise<IpBlocklist>;
+  removeIpFromBlocklist(id: string): Promise<boolean>;
+  toggleIpBlocklist(id: string, enabled: boolean): Promise<boolean>;
+  isIpBlocked(ipAddress: string): Promise<boolean>;
+  
+  // CIDR Blocklist methods
+  getCidrBlocklist(): Promise<CidrBlocklist[]>;
+  addCidrToBlocklist(cidr: InsertCidrBlocklist): Promise<CidrBlocklist>;
+  removeCidrFromBlocklist(id: string): Promise<boolean>;
+  toggleCidrBlocklist(id: string, enabled: boolean): Promise<boolean>;
+  isIpInBlockedCidrRange(ipAddress: string): Promise<boolean>;
   
   // Client User methods (for end-user customers)
   createClientUser(user: InsertClientUser): Promise<ClientUser>;

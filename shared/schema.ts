@@ -83,6 +83,24 @@ export const ispBlacklist = pgTable("isp_blacklist", {
   addedAt: timestamp("added_at").defaultNow().notNull(),
 });
 
+// IP Blocklist (Block specific IPs or IP ranges)
+export const ipBlocklist = pgTable("ip_blocklist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ipAddress: varchar("ip_address", { length: 45 }).notNull().unique(), // Supports both IPv4 and IPv6
+  reason: varchar("reason", { length: 255 }),
+  enabled: boolean("enabled").default(true).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
+// CIDR Blocklist (Block IP ranges using CIDR notation)
+export const cidrBlocklist = pgTable("cidr_blocklist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cidrRange: varchar("cidr_range", { length: 50 }).notNull().unique(), // e.g., "192.168.1.0/24"
+  reason: varchar("reason", { length: 255 }),
+  enabled: boolean("enabled").default(true).notNull(),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+});
+
 // Client Users (End-user customers who use the CleanTraffic service)
 export const clientUsers = pgTable("client_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -150,6 +168,16 @@ export const insertIspBlacklistSchema = createInsertSchema(ispBlacklist).omit({
   addedAt: true,
 });
 
+export const insertIpBlocklistSchema = createInsertSchema(ipBlocklist).omit({
+  id: true,
+  addedAt: true,
+});
+
+export const insertCidrBlocklistSchema = createInsertSchema(cidrBlocklist).omit({
+  id: true,
+  addedAt: true,
+});
+
 export const insertClientUserSchema = createInsertSchema(clientUsers).omit({
   id: true,
   createdAt: true,
@@ -177,6 +205,10 @@ export type InsertIspWhitelist = z.infer<typeof insertIspWhitelistSchema>;
 export type IspWhitelist = typeof ispWhitelist.$inferSelect;
 export type InsertIspBlacklist = z.infer<typeof insertIspBlacklistSchema>;
 export type IspBlacklist = typeof ispBlacklist.$inferSelect;
+export type InsertIpBlocklist = z.infer<typeof insertIpBlocklistSchema>;
+export type IpBlocklist = typeof ipBlocklist.$inferSelect;
+export type InsertCidrBlocklist = z.infer<typeof insertCidrBlocklistSchema>;
+export type CidrBlocklist = typeof cidrBlocklist.$inferSelect;
 export type InsertClientUser = z.infer<typeof insertClientUserSchema>;
 export type ClientUser = typeof clientUsers.$inferSelect;
 export type InsertUserRedirectUrls = z.infer<typeof insertUserRedirectUrlsSchema>;
