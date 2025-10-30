@@ -7,12 +7,10 @@ Get your bot detection system running in under 5 minutes.
 - Username: `Mark02`
 - Password: `Markstorey@2015`
 
-## Step 2: Add IP2Location API Key
+## Step 2: Configure System
 1. Click **Settings** tab
-2. Paste your IP2Location API key
-3. Click **Update Key**
-
-> Don't have an API key? Get one free at [ip2location.io](https://www.ip2location.io/)
+2. Enter your configuration details
+3. Click **Update**
 
 ## Step 3: Create API Key
 1. Go to **API Keys** tab
@@ -40,7 +38,7 @@ Get your bot detection system running in under 5 minutes.
 
 ## Step 6: Download Integration Script
 1. In client dashboard, scroll to **Download Integration Script**
-2. Click **Download PHP Script**
+2. Click **Download Script**
 3. Upload this file to your website
 4. Access it via browser - it will automatically redirect based on detection
 
@@ -51,7 +49,7 @@ Click **Publish** in Replit to make your CleanTraffic dashboard live with a perm
 
 ## How It Works
 
-When someone visits your PHP script:
+When someone visits your integration script:
 - ✅ **Human visitors** → Redirected to your Human URL
 - ❌ **Bot traffic** → Redirected to your Bot URL
 
