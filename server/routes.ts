@@ -866,15 +866,41 @@ Disallow: /*`);
       
       console.log("✅ API key loaded from storage");
 
-      // CASCADING CLASSIFICATION LOGIC
-      // Step 1: Country Check → Step 2: ISP Blacklist → Step 3: API Call (Proxy) → Step 4: ISP Whitelist
+      // CASCADING CLASSIFICATION LOGIC (FAIL-SECURE)
+      // DEFAULT TO BOT - Only allow as Human after passing all security checks
+      // Step 1: Basic Security Checks → Step 2: API Call → Step 3: Country/ISP Rules → Step 4: Final Verdict
       
       let classificationData: any = {};
-      let visitorType = 'Human';
-      let detectionMethod = 'IP Analysis';
-      let blockReason = '';
+      let visitorType = 'Bot'; // 🔒 FAIL-SECURE: Default to Bot for safety
+      let detectionMethod = 'Unknown/Unverified';
+      let blockReason = 'Default security policy - verification required';
 
-      // Call API first to get country and ISP data
+      // SECURITY CHECK 1: User Agent Validation
+      if (!userAgent || userAgent.trim() === '') {
+        visitorType = 'Bot';
+        detectionMethod = 'Missing User Agent';
+        blockReason = 'No user agent provided - likely bot/scraper';
+        console.log(`🚫 BLOCKED (Missing User Agent): ${clientIp}`);
+      }
+      // Check for suspicious/bot user agents
+      else if (userAgent && (
+        userAgent.toLowerCase().includes('bot') ||
+        userAgent.toLowerCase().includes('crawler') ||
+        userAgent.toLowerCase().includes('spider') ||
+        userAgent.toLowerCase().includes('scraper') ||
+        userAgent.toLowerCase().includes('curl') ||
+        userAgent.toLowerCase().includes('wget') ||
+        userAgent.toLowerCase().includes('python') ||
+        userAgent.toLowerCase().includes('java/') ||
+        userAgent.toLowerCase().includes('headless')
+      )) {
+        visitorType = 'Bot';
+        detectionMethod = 'Suspicious User Agent';
+        blockReason = `Detected bot/scraper user agent: ${userAgent.substring(0, 50)}`;
+        console.log(`🚫 BLOCKED (Suspicious UA): ${clientIp} - ${userAgent.substring(0, 50)}`);
+      }
+
+      // Call API first to get country and ISP data (only if not already blocked)
       try {
         // Check cache first for faster response
         const cachedData = ip2geoCache.get(clientIp);
@@ -1010,11 +1036,11 @@ Disallow: /*`);
         }
 
         // PRIORITY 2: COUNTRY WHITELIST (Optional - If exists)
-        if (visitorType === 'Human' && countryCode) {
+        if (visitorType !== 'Bot' || countryCode) { // Check even if Bot (may promote to Human)
           const countryWhitelist = await storage.getCountryWhitelist();
           const hasCountryWhitelist = countryWhitelist.length > 0;
           
-          if (hasCountryWhitelist) {
+          if (hasCountryWhitelist && countryCode) {
             const isCountryWhitelisted = await storage.isCountryAllowed(countryCode);
             
             if (isCountryWhitelisted) {
@@ -1025,7 +1051,10 @@ Disallow: /*`);
                 blockReason = `Datacenter traffic from whitelisted country: ${countryCode}`;
                 console.log(`🚫 BLOCKED (Priority 2 - DCH in Whitelisted Country): ${clientIp} - ${countryCode}`);
               } else {
-                // Country whitelisted and NOT datacenter = HUMAN
+                // Country whitelisted and NOT datacenter = HUMAN ✅
+                visitorType = 'Human';
+                detectionMethod = 'Country Whitelist';
+                blockReason = '';
                 console.log(`✅ ALLOWED (Priority 2 - Country Whitelisted): ${clientIp} - ${countryCode}, Usage: ${usageType}`);
               }
             } else {
@@ -1035,6 +1064,10 @@ Disallow: /*`);
               blockReason = `Country not whitelisted: ${countryCode}`;
               console.log(`🚫 BLOCKED (Priority 2 - Country Not Whitelisted): ${clientIp} - ${countryCode}`);
             }
+          } else if (!hasCountryWhitelist && visitorType !== 'Bot') {
+            // No country whitelist configured, allow to continue to next check
+            visitorType = 'Human';
+            detectionMethod = 'IP Analysis';
           }
         }
 
@@ -1093,10 +1126,11 @@ Disallow: /*`);
         console.log(`✅ Final Classification: ${clientIp} = ${visitorType} (${detectionMethod})`);
         
       } catch (error) {
-        console.error("Classification error:", error);
-        // Fallback to 'Human' if error occurs
-        visitorType = 'Human';
-        detectionMethod = 'Error Fallback';
+        console.error("🚨 CRITICAL: Classification error -  FAIL-SECURE activated:", error);
+        // 🔒 FAIL-SECURE: Default to Bot on ANY error for safety
+        visitorType = 'Bot';
+        detectionMethod = 'Error - API Failure (Fail-Secure)';
+        blockReason = 'System error during classification - blocked for safety';
         classificationData = {
           ip: clientIp,
           location: 'Unknown',
@@ -1107,6 +1141,7 @@ Disallow: /*`);
           visitor_type: visitorType,
           detection_method: detectionMethod
         };
+        console.log(`🚫 BLOCKED (Error Fail-Secure): ${clientIp} - API/System error, blocked for safety`);
       }
 
       const classification = await storage.createClassification({
