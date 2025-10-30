@@ -11,11 +11,16 @@ Preferred communication style: Simple, everyday language.
 ## Recent Changes
 
 ### October 30, 2025 (Latest)
-- **Database Connection Pool Fix**: Fixed critical database connection pool exhaustion issue
-  - Increased Neon serverless pool size to 20 connections (from default 10)
-  - Added connection timeout of 30 seconds and idle timeout of 30 seconds
-  - Removed async constructor initialization that was creating hanging connections
-  - These changes resolve login timeouts and dashboard loading failures caused by pool exhaustion
+- **TEMPORARY: In-Memory Storage Mode**: Switched to MemStorage due to Neon database connection exhaustion
+  - App is fully functional with all features working
+  - Data persists during session but resets on server restart
+  - Default admin account (Mark02) always available
+  - Will switch back to DatabaseStorage when Neon recovers
+- **Database Connection Pool Issue**: Identified root cause of database connection exhaustion
+  - Async constructor initialization was creating zombie connections on each server restart
+  - Removed problematic initialization code
+  - Neon database currently rejecting all connections due to accumulated zombie connections
+  - Waiting for Neon to clear connections or will recreate database if needed
 
 ### October 28, 2025
 - **Country Field Fix**: Fixed country showing as "Unknown" in visitor logs by properly extracting and storing country_name from IP2Geolocation API
