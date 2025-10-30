@@ -108,6 +108,27 @@ app.use((req, res, next) => {
 
 (async () => {
   const server = await registerRoutes(app);
+  
+  // Initialize database with default admin user if needed
+  try {
+    const { storage } = await import("./storage");
+    const bcrypt = await import("bcrypt");
+    
+    const existingAdmin = await storage.getUserByUsername("Mark02");
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash("Markstorey@2015", 10);
+      await storage.createUser({
+        username: "Mark02",
+        password: hashedPassword,
+        role: "admin"
+      });
+      log("✅ Default admin user created (Mark02)");
+    } else {
+      log("✅ Default admin user already exists");
+    }
+  } catch (error) {
+    log("⚠️ Could not initialize default admin user:", error);
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

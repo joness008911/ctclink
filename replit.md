@@ -11,22 +11,16 @@ Preferred communication style: Simple, everyday language.
 ## Recent Changes
 
 ### October 30, 2025 (Latest)
-- **MemStorage Complete Implementation**: Fixed all missing storage methods in MemStorage class
+- **✅ PERMANENT DATABASE RESTORED**: Created fresh Neon database with permanent storage
+  - All data now persists across server restarts (API keys, users, classifications, settings)
+  - Fixed root cause: Removed async constructor calls that created zombie database connections
+  - Auto-initialization creates default admin user (Mark02/Markstorey@2015) on first startup
+  - Classification endpoint now uses storage layer instead of direct database access (fixes caching issues)
+- **Storage Layer Improvements**: Completed full MemStorage implementation during database downtime
   - Added 29 missing methods across 8 categories (API keys, country/ISP management, client users, settings)
-  - All admin dashboard features now fully operational: classifications, API keys, detection rules, client users, country/ISP whitelists/blacklists
-  - Client user login system fully functional
-  - Added storage maps for: countryWhitelist, ispWhitelist, ispBlacklist, clientUsers, redirectUrls, settings
-  - All endpoints returning proper 200/401 responses instead of 500 errors
-- **TEMPORARY: In-Memory Storage Mode**: Using MemStorage due to Neon database connection exhaustion
-  - App is fully functional with all features working
-  - Data persists during session but resets on server restart
-  - Default admin account (Mark02/Markstorey@2015) always available
-  - Will switch back to DatabaseStorage when Neon recovers
-- **Database Connection Pool Issue**: Identified root cause of database connection exhaustion
-  - Async constructor initialization was creating zombie connections on each server restart
-  - Removed problematic initialization code
-  - Neon database currently rejecting all connections due to accumulated zombie connections
-  - Waiting for Neon to clear connections or will recreate database if needed
+  - All admin dashboard features fully operational: classifications, API keys, detection rules, client users, whitelists/blacklists
+  - Fixed IP2 API key endpoints to use storage abstraction instead of direct database access
+  - Fixed classification endpoint to load API key from storage (resolves stale key issues)
 
 ### October 28, 2025
 - **Country Field Fix**: Fixed country showing as "Unknown" in visitor logs by properly extracting and storing country_name from IP2Geolocation API
