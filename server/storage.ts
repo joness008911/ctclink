@@ -410,39 +410,8 @@ export class MemStorage implements IStorage {
 
 export class DatabaseStorage implements IStorage {
   constructor() {
-    this.initializeDefaults();
-  }
-
-  private async initializeDefaults() {
-    try {
-      // Check if admin user exists, if not create one
-      const existingAdmin = await this.getUserByUsername("Mark02");
-      if (!existingAdmin) {
-        await this.createUser({
-          username: "Mark02",
-          password: "Markstorey@2015" // In production, this should be hashed
-        });
-      }
-
-      // Check if detection rules exist, if not create defaults
-      const existingRules = await this.getDetectionRules();
-      if (!existingRules) {
-        await this.updateDetectionRules({
-          name: "Default Rules",
-          enabled: true,
-          rules: {
-            isp: true,
-            mobile: true,
-            vpn: true,
-            proxy: true,
-            tor: true,
-            datacenter: true
-          }
-        });
-      }
-    } catch (error) {
-      console.log("Database initialization will be handled on first request");
-    }
+    // Initialization removed to prevent connection pool exhaustion
+    // Defaults should already exist from previous runs
   }
 
   async getUser(id: string): Promise<User | undefined> {
