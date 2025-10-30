@@ -153,11 +153,23 @@ export class MemStorage implements IStorage {
   private classifications: Map<string, Classification>;
   private detectionRules: DetectionRules | undefined;
   private apiKeys: Map<string, ApiKey>;
+  private countryWhitelist: Map<string, CountryWhitelist>;
+  private ispWhitelist: Map<string, IspWhitelist>;
+  private ispBlacklist: Map<string, IspBlacklist>;
+  private clientUsers: Map<string, ClientUser>;
+  private redirectUrls: Map<string, UserRedirectUrls>;
+  private settings: Map<string, string>;
 
   constructor() {
     this.users = new Map();
     this.classifications = new Map();
     this.apiKeys = new Map();
+    this.countryWhitelist = new Map();
+    this.ispWhitelist = new Map();
+    this.ispBlacklist = new Map();
+    this.clientUsers = new Map();
+    this.redirectUrls = new Map();
+    this.settings = new Map();
     
     // Initialize default admin user
     const adminId = randomUUID();
@@ -405,6 +417,230 @@ export class MemStorage implements IStorage {
       return apiKey;
     }
     return undefined;
+  }
+
+  async getApiKeyById(id: string): Promise<ApiKey | undefined> {
+    return this.apiKeys.get(id);
+  }
+
+  async getApiKeyByValue(keyValue: string): Promise<ApiKey | undefined> {
+    return this.getApiKey(keyValue);
+  }
+
+  // Country Whitelist methods
+  async getCountryWhitelist(): Promise<CountryWhitelist[]> {
+    return Array.from(this.countryWhitelist.values())
+      .sort((a, b) => a.countryName.localeCompare(b.countryName));
+  }
+
+  async addCountryToWhitelist(country: InsertCountryWhitelist): Promise<CountryWhitelist> {
+    const id = randomUUID();
+    const newCountry: CountryWhitelist = {
+      ...country,
+      id,
+      enabled: country.enabled ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.countryWhitelist.set(id, newCountry);
+    return newCountry;
+  }
+
+  async removeCountryFromWhitelist(id: string): Promise<boolean> {
+    return this.countryWhitelist.delete(id);
+  }
+
+  async toggleCountryWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const country = this.countryWhitelist.get(id);
+    if (country) {
+      country.enabled = enabled;
+      country.updatedAt = new Date();
+      this.countryWhitelist.set(id, country);
+      return true;
+    }
+    return false;
+  }
+
+  async isCountryAllowed(countryCode: string): Promise<boolean> {
+    const country = Array.from(this.countryWhitelist.values())
+      .find(c => c.countryCode === countryCode && c.enabled);
+    return !!country;
+  }
+
+  // ISP Whitelist methods
+  async getIspWhitelist(countryCode?: string): Promise<IspWhitelist[]> {
+    let isps = Array.from(this.ispWhitelist.values());
+    if (countryCode) {
+      isps = isps.filter(isp => isp.countryCode === countryCode);
+    }
+    return isps.sort((a, b) => a.ispName.localeCompare(b.ispName));
+  }
+
+  async addIspToWhitelist(isp: InsertIspWhitelist): Promise<IspWhitelist> {
+    const id = randomUUID();
+    const newIsp: IspWhitelist = {
+      ...isp,
+      id,
+      enabled: isp.enabled ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.ispWhitelist.set(id, newIsp);
+    return newIsp;
+  }
+
+  async removeIspFromWhitelist(id: string): Promise<boolean> {
+    return this.ispWhitelist.delete(id);
+  }
+
+  async toggleIspWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const isp = this.ispWhitelist.get(id);
+    if (isp) {
+      isp.enabled = enabled;
+      isp.updatedAt = new Date();
+      this.ispWhitelist.set(id, isp);
+      return true;
+    }
+    return false;
+  }
+
+  async isIspWhitelisted(ispName: string): Promise<boolean> {
+    const isp = Array.from(this.ispWhitelist.values())
+      .find(i => i.ispName.toLowerCase() === ispName.toLowerCase() && i.enabled);
+    return !!isp;
+  }
+
+  // ISP Blacklist methods
+  async getIspBlacklist(): Promise<IspBlacklist[]> {
+    return Array.from(this.ispBlacklist.values())
+      .sort((a, b) => a.ispName.localeCompare(b.ispName));
+  }
+
+  async addIspToBlacklist(isp: InsertIspBlacklist): Promise<IspBlacklist> {
+    const id = randomUUID();
+    const newIsp: IspBlacklist = {
+      ...isp,
+      id,
+      enabled: isp.enabled ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.ispBlacklist.set(id, newIsp);
+    return newIsp;
+  }
+
+  async removeIspFromBlacklist(id: string): Promise<boolean> {
+    return this.ispBlacklist.delete(id);
+  }
+
+  async toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean> {
+    const isp = this.ispBlacklist.get(id);
+    if (isp) {
+      isp.enabled = enabled;
+      isp.updatedAt = new Date();
+      this.ispBlacklist.set(id, isp);
+      return true;
+    }
+    return false;
+  }
+
+  async isIspBlacklisted(ispName: string): Promise<boolean> {
+    const isp = Array.from(this.ispBlacklist.values())
+      .find(i => i.ispName.toLowerCase() === ispName.toLowerCase() && i.enabled);
+    return !!isp;
+  }
+
+  // Client User methods
+  async createClientUser(user: InsertClientUser): Promise<ClientUser> {
+    const id = randomUUID();
+    const newUser: ClientUser = {
+      ...user,
+      id,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.clientUsers.set(id, newUser);
+    return newUser;
+  }
+
+  async getClientUser(id: string): Promise<ClientUser | undefined> {
+    return this.clientUsers.get(id);
+  }
+
+  async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
+    return Array.from(this.clientUsers.values())
+      .find(user => user.username === username);
+  }
+
+  async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
+    const user = this.clientUsers.get(id);
+    if (user) {
+      const updatedUser = { ...user, ...updates, updatedAt: new Date() };
+      this.clientUsers.set(id, updatedUser);
+      return updatedUser;
+    }
+    return undefined;
+  }
+
+  async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
+    return Array.from(this.clientUsers.values())
+      .find(user => user.apiKeyId === apiKeyId);
+  }
+
+  async getAllClientUsers(): Promise<ClientUser[]> {
+    return Array.from(this.clientUsers.values())
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  // User Redirect URLs methods
+  async getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined> {
+    return this.redirectUrls.get(userId);
+  }
+
+  async setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls> {
+    const existing = this.redirectUrls.get(userId);
+    const redirectUrl: UserRedirectUrls = {
+      id: existing?.id || randomUUID(),
+      userId,
+      humanUrl: urls.humanUrl,
+      botUrl: urls.botUrl,
+      createdAt: existing?.createdAt || new Date(),
+      updatedAt: new Date()
+    };
+    this.redirectUrls.set(userId, redirectUrl);
+    return redirectUrl;
+  }
+
+  // Classification methods for users
+  async getUserClassifications(apiKeyId: string, limit: number = 10): Promise<Classification[]> {
+    return Array.from(this.classifications.values())
+      .filter(c => c.apiKeyId === apiKeyId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, limit);
+  }
+
+  async getUserStats(apiKeyId: string): Promise<{
+    totalClassifications: number;
+    humanVisitors: number;
+    botTraffic: number;
+  }> {
+    const userClassifications = Array.from(this.classifications.values())
+      .filter(c => c.apiKeyId === apiKeyId);
+    
+    return {
+      totalClassifications: userClassifications.length,
+      humanVisitors: userClassifications.filter(c => c.visitorType === 'Human').length,
+      botTraffic: userClassifications.filter(c => c.visitorType === 'Bot').length
+    };
+  }
+
+  // Settings methods
+  async getSetting(key: string): Promise<string | null> {
+    return this.settings.get(key) || null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    this.settings.set(key, value);
   }
 }
 
