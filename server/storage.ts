@@ -235,6 +235,17 @@ export class MemStorage implements IStorage {
   }
 
   async createClassification(insertClassification: InsertClassification): Promise<Classification> {
+    // Auto-cleanup: Keep only last 50 classifications
+    if (this.classifications.size >= 50) {
+      const sorted = Array.from(this.classifications.entries())
+        .sort((a, b) => new Date(a[1].timestamp).getTime() - new Date(b[1].timestamp).getTime());
+      
+      const toDelete = this.classifications.size - 49; // Keep 49, add 1 new = 50 total
+      for (let i = 0; i < toDelete; i++) {
+        this.classifications.delete(sorted[i][0]);
+      }
+    }
+    
     const id = randomUUID();
     const classification: Classification = { 
       ...insertClassification,
@@ -245,7 +256,6 @@ export class MemStorage implements IStorage {
       isp: insertClassification.isp || null,
       browser: insertClassification.browser || null,
       deviceType: insertClassification.deviceType || null,
-      userAgent: insertClassification.userAgent || null,
       id, 
       timestamp: new Date() 
     };
@@ -686,6 +696,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createClassification(classification: InsertClassification): Promise<Classification> {
+    // Auto-cleanup: Keep only last 50 classifications
+    const countResult = await db.select({ count: count() }).from(classifications);
+    const total = countResult[0]?.count || 0;
+    
+    if (total >= 50) {
+      // Delete oldest entries to maintain 50 records max
+      const toDelete = total - 49; // Keep 49, add 1 new = 50 total
+      const oldestRecords = await db
+        .select({ id: classifications.id })
+        .from(classifications)
+        .orderBy(classifications.timestamp)
+        .limit(toDelete);
+      
+      for (const record of oldestRecords) {
+        await db.delete(classifications).where(eq(classifications.id, record.id));
+      }
+    }
+    
     const [newClassification] = await db.insert(classifications).values(classification).returning();
     return newClassification;
   }

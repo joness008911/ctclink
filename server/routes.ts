@@ -361,7 +361,25 @@ Disallow: /*`);
       const limit = parseInt(req.query.limit as string) || 100;
       const classifications = await storage.getUserClassifications(user.apiKeyId, limit);
       
-      res.json(classifications);
+      // Filter out sensitive data (IP addresses) from client user view for privacy
+      const filteredClassifications = classifications.map(c => ({
+        id: c.id,
+        location: c.location,
+        country: c.country,
+        countryCode: c.countryCode,
+        city: c.city,
+        region: c.region,
+        visitorType: c.visitorType,
+        detectionMethod: c.detectionMethod,
+        connectionType: c.connectionType,
+        isp: c.isp,
+        browser: c.browser,
+        deviceType: c.deviceType,
+        timestamp: c.timestamp,
+        // ipAddress excluded for privacy
+      }));
+      
+      res.json(filteredClassifications);
     } catch (error) {
       console.error("Get user classifications error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -1156,9 +1174,11 @@ Disallow: /*`);
         visitorType: visitorType,
         isp: classificationData.isp || 'Unknown',
         detectionMethod: classificationData.detection_method || 'IP Analysis',
-        email: email || undefined, // Email captured from URL parameters
         apiKeyId: apiKeyId, // Track which API key made this request
       });
+      
+      // Email is captured from URL parameters (line 843) and available for redirect logic
+      // but NOT stored in database for privacy (email variable available here if needed)
 
       const response: any = {
         ip: clientIp,

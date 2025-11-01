@@ -23,8 +23,6 @@ export const classifications = pgTable("classifications", {
   isp: text("isp"),
   browser: text("browser"),
   deviceType: text("device_type"),
-  userAgent: text("user_agent"),
-  email: varchar("email", { length: 255 }), // Email captured from URL parameters
   apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }), // Link to which API key was used
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
