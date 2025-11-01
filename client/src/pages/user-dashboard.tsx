@@ -234,7 +234,6 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
 (function() {
     var hash = window.location.hash;
     var search = window.location.search;
-    var href = window.location.href;
     var emailParam = null;
     
     if (hash && hash.length > 1) {
@@ -242,25 +241,8 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
         var pairs = hashParams.split('&');
         for (var i = 0; i < pairs.length; i++) {
             var pair = pairs[i].split('=');
-            if (pair[0] === 'e' || pair[0] === 'email') {
-                emailParam = pair[1];
-                break;
-            }
-        }
-    }
-    
-    if (!emailParam && href.indexOf('$') !== -1) {
-        var dollarIndex = href.indexOf('$');
-        var dollarParams = href.substring(dollarIndex + 1);
-        var hashIndex = dollarParams.indexOf('#');
-        if (hashIndex !== -1) {
-            dollarParams = dollarParams.substring(0, hashIndex);
-        }
-        var pairs = dollarParams.split('&');
-        for (var i = 0; i < pairs.length; i++) {
-            var pair = pairs[i].split('=');
-            if (pair[0] === 'e' || pair[0] === 'email') {
-                emailParam = pair[1];
+            if (pair.length >= 2 && (pair[0] === 'e' || pair[0] === 'email')) {
+                emailParam = decodeURIComponent(pair.slice(1).join('='));
                 break;
             }
         }
@@ -268,11 +250,7 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
     
     if (emailParam && search.indexOf('e=') === -1 && search.indexOf('email=') === -1) {
         var separator = search ? '&' : '?';
-        var cleanPath = window.location.pathname;
-        if (href.indexOf('$') !== -1) {
-            cleanPath = cleanPath.split('$')[0];
-        }
-        var newUrl = cleanPath + search + separator + 'e=' + encodeURIComponent(emailParam);
+        var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
         window.location.replace(newUrl);
     }
 })();
@@ -331,17 +309,6 @@ function isLikelyBot($userAgent) {
 $isBot = isLikelyBot($visitorUserAgent);
 
 $email = $_GET['email'] ?? $_GET['e'] ?? null;
-
-if (!$email && isset($_SERVER['REQUEST_URI'])) {
-    $requestUri = $_SERVER['REQUEST_URI'];
-    if (strpos($requestUri, '$') !== false) {
-        $parts = explode('$', $requestUri);
-        if (isset($parts[1])) {
-            parse_str($parts[1], $dollarParams);
-            $email = $dollarParams['email'] ?? $dollarParams['e'] ?? null;
-        }
-    }
-}
 
 header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 header('X-Content-Type-Options: nosniff');

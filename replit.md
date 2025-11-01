@@ -11,6 +11,12 @@ Preferred communication style: Simple, everyday language.
 ## Recent Changes
 
 ### November 1, 2025 (Latest)
+- **📧 EMAIL AUTO-GRAB FIX**: Fixed email parameter extraction bugs and removed non-working dollar separator
+  - **Fixed Hash Parameter Bug**: Corrected email extraction from `#e=email` format to prevent duplication issues
+  - **Improved URL Decoding**: Added proper `decodeURIComponent` handling for email values
+  - **Removed Dollar Separator**: Eliminated `$e=email` method (web servers return 404 for `$` in URL paths)
+  - **Working Methods**: `?e=email` and `#e=email` both work correctly now
+  - **Diagnostic Page**: Replaced "Configuration error" with beautiful diagnostic page explaining setup requirements
 - **🔒 PRIVACY-FOCUSED DATA RETENTION**: Implemented privacy-first storage model with minimal data retention
   - **Last 50 Classifications Only**: Auto-cleanup deletes older records, keeping only 50 most recent for debugging
   - **No Email Storage**: Email capture via `?e=email` still works for redirect logic but never stored in database
@@ -46,9 +52,8 @@ Preferred communication style: Simple, everyday language.
   - Removed feature descriptions and explanatory comments
   - Stripped all comments that could help competitors understand or copy the system
   - Minimized error messages to prevent information disclosure
-- **Enhanced Email Auto-Grab**: Extended email capture to support multiple URL parameter formats
+- **Enhanced Email Auto-Grab**: Extended email capture to support hash/fragment URL parameters
   - Added support for `#` (hash/fragment) parameters: `#e=email@example.com` or `#email=email@example.com`
-  - Added support for `$` (custom separator) parameters: `$e=email@example.com` or `$email=email@example.com`
   - Existing `?` (query) parameters continue to work: `?e=email@example.com` or `?email=email@example.com`
   - JavaScript automatically converts hash parameters to query parameters for server-side processing
 - **API Limitation Detection**: Added automatic detection for trial/expired/unpaid IP2Geolocation API plans
