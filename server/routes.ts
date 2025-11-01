@@ -994,7 +994,6 @@ Disallow: /*`);
                 visitorType: visitorType,
                 isp: classificationData.isp || 'Unknown',
                 detectionMethod: detectionMethod,
-                email: email || undefined,
                 apiKeyId: apiKeyId,
               });
 

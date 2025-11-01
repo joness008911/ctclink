@@ -10,7 +10,17 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
-### October 30, 2025 (Latest)
+### November 1, 2025 (Latest)
+- **🔒 PRIVACY-FOCUSED DATA RETENTION**: Implemented privacy-first storage model with minimal data retention
+  - **Last 50 Classifications Only**: Auto-cleanup deletes older records, keeping only 50 most recent for debugging
+  - **No Email Storage**: Email capture via `?e=email` still works for redirect logic but never stored in database
+  - **No User Agent Storage**: Removed userAgent field to eliminate browser fingerprinting data
+  - **Client User Privacy**: Client users never see IP addresses in their dashboard (only Country, ISP, Device, Time)
+  - **Admin Debugging**: Admin dashboard still shows IP addresses for last 50 classifications (debugging only)
+  - **Auto-Cleanup Logic**: Both DatabaseStorage and MemStorage automatically delete oldest records when limit reached
+  - **GDPR/CCPA Friendly**: Minimal data retention (50 records max) significantly reduces privacy compliance burden
+
+### October 30, 2025
 - **🔒 CRITICAL SECURITY FIX - FAIL-SECURE CLASSIFICATION**: Fixed severe vulnerability where unknown IPs bypassed bot detection
   - **Changed Default to 'Bot'**: All visitors now start as Bot and must prove they're human (was defaulting to Human - DANGEROUS!)
   - **User Agent Validation**: Missing or suspicious user agents (bot, crawler, spider, scraper, curl, wget, python, headless) are immediately blocked
