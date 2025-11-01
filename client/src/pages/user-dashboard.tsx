@@ -429,8 +429,91 @@ if ($redirectUrl) {
     header('Location: ' . $redirectUrl);
     exit;
 } else {
-    header('HTTP/1.1 500 Internal Server Error');
-    exit('Configuration error');
+    http_response_code(200);
+    echo '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Script Status</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            padding: 40px;
+        }
+        .status { 
+            background: #fee; 
+            color: #c33; 
+            padding: 15px 20px; 
+            border-radius: 8px; 
+            margin-bottom: 25px;
+            border-left: 4px solid #c33;
+        }
+        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
+        h2 { color: #666; margin: 25px 0 15px 0; font-size: 18px; }
+        p { color: #666; line-height: 1.6; margin-bottom: 12px; }
+        ul { margin-left: 20px; color: #666; line-height: 1.8; }
+        code { 
+            background: #f5f5f5; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            font-family: monospace;
+            color: #c33;
+        }
+        .info { 
+            background: #e3f2fd; 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin-top: 20px;
+            border-left: 4px solid #2196F3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚠️ Script Configuration Issue</h1>
+        
+        <div class="status">
+            <strong>Status:</strong> Unable to redirect visitor
+        </div>
+        
+        <p>The classification script is installed but cannot redirect visitors. This usually means:</p>
+        
+        <h2>Common Causes:</h2>
+        <ul>
+            <li><strong>Missing Redirect URLs:</strong> Human and Bot redirect URLs are not configured in your dashboard</li>
+            <li><strong>License Issue:</strong> Your license may be paused or expired</li>
+            <li><strong>API Connection:</strong> Unable to reach the classification API</li>
+        </ul>
+        
+        <h2>How to Fix:</h2>
+        <ul>
+            <li>Log into your CleanTraffic dashboard</li>
+            <li>Go to the "Redirect URLs" section</li>
+            <li>Configure both Human and Bot redirect URLs</li>
+            <li>Ensure your license is active (not paused/expired)</li>
+        </ul>
+        
+        <div class="info">
+            <strong>💡 Note:</strong> If you\'re seeing this while testing, that\'s normal. The script works automatically when integrated into your traffic flow. Direct browser visits will show this diagnostic page when redirect URLs aren\'t set.
+        </div>
+    </div>
+</body>
+</html>';
+    exit;
 }
 ?>`;
 
