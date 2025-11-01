@@ -697,7 +697,7 @@ if ($redirectUrl) {
                           )}
                           <div>
                             <p className="font-semibold text-sm">{c.visitorType}</p>
-                            <p className="text-xs text-muted-foreground font-mono">{c.ipAddress}</p>
+                            <p className="text-xs text-muted-foreground">{c.isp || 'Unknown ISP'}</p>
                           </div>
                         </div>
                         <div className="text-right">
@@ -738,8 +738,6 @@ if ($redirectUrl) {
                         <TableRow>
                           <TableHead>Time</TableHead>
                           <TableHead>Classification</TableHead>
-                          <TableHead>IP Address</TableHead>
-                          <TableHead>Email</TableHead>
                           <TableHead>Country</TableHead>
                           <TableHead>ISP</TableHead>
                           <TableHead>Device</TableHead>
@@ -764,8 +762,6 @@ if ($redirectUrl) {
                                 </Badge>
                               )}
                             </TableCell>
-                            <TableCell className="font-mono text-sm">{c.ipAddress}</TableCell>
-                            <TableCell className="text-sm">{c.email || '-'}</TableCell>
                             <TableCell className="text-sm">
                               {c.city && c.countryCode 
                                 ? `${c.city}${c.region ? ', ' + c.region : ''}, ${c.countryCode}`
