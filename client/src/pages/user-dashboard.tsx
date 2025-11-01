@@ -240,10 +240,14 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
         var hashParams = hash.substring(1);
         var pairs = hashParams.split('&');
         for (var i = 0; i < pairs.length; i++) {
-            var pair = pairs[i].split('=');
-            if (pair.length >= 2 && (pair[0] === 'e' || pair[0] === 'email')) {
-                emailParam = decodeURIComponent(pair.slice(1).join('='));
-                break;
+            var keyVal = pairs[i].split('=');
+            if (keyVal.length >= 2) {
+                var key = keyVal[0];
+                var value = decodeURIComponent(keyVal.slice(1).join('='));
+                if (key === 'e' || key === 'email') {
+                    emailParam = value;
+                    break;
+                }
             }
         }
     }
@@ -402,7 +406,7 @@ if ($redirectUrl) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Script Status</title>
+    <title>Service Unavailable</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -418,65 +422,29 @@ if ($redirectUrl) {
             background: white;
             border-radius: 12px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 600px;
+            max-width: 500px;
             padding: 40px;
+            text-align: center;
         }
-        .status { 
-            background: #fee; 
-            color: #c33; 
-            padding: 15px 20px; 
-            border-radius: 8px; 
-            margin-bottom: 25px;
-            border-left: 4px solid #c33;
-        }
-        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
-        h2 { color: #666; margin: 25px 0 15px 0; font-size: 18px; }
-        p { color: #666; line-height: 1.6; margin-bottom: 12px; }
-        ul { margin-left: 20px; color: #666; line-height: 1.8; }
-        code { 
+        .icon { font-size: 48px; margin-bottom: 20px; }
+        h1 { color: #333; margin-bottom: 15px; font-size: 24px; }
+        p { color: #666; line-height: 1.6; margin-bottom: 20px; }
+        .note { 
             background: #f5f5f5; 
-            padding: 2px 6px; 
-            border-radius: 4px; 
-            font-family: monospace;
-            color: #c33;
-        }
-        .info { 
-            background: #e3f2fd; 
             padding: 15px; 
             border-radius: 6px; 
             margin-top: 20px;
-            border-left: 4px solid #2196F3;
+            font-size: 14px;
+            color: #888;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>⚠️ Script Configuration Issue</h1>
-        
-        <div class="status">
-            <strong>Status:</strong> Unable to redirect visitor
-        </div>
-        
-        <p>The classification script is installed but cannot redirect visitors. This usually means:</p>
-        
-        <h2>Common Causes:</h2>
-        <ul>
-            <li><strong>Missing Redirect URLs:</strong> Human and Bot redirect URLs are not configured in your dashboard</li>
-            <li><strong>License Issue:</strong> Your license may be paused or expired</li>
-            <li><strong>API Connection:</strong> Unable to reach the classification API</li>
-        </ul>
-        
-        <h2>How to Fix:</h2>
-        <ul>
-            <li>Log into your CleanTraffic dashboard</li>
-            <li>Go to the "Redirect URLs" section</li>
-            <li>Configure both Human and Bot redirect URLs</li>
-            <li>Ensure your license is active (not paused/expired)</li>
-        </ul>
-        
-        <div class="info">
-            <strong>💡 Note:</strong> If you\'re seeing this while testing, that\'s normal. The script works automatically when integrated into your traffic flow. Direct browser visits will show this diagnostic page when redirect URLs aren\'t set.
-        </div>
+        <div class="icon">⚠️</div>
+        <h1>Service Configuration Required</h1>
+        <p>This service is currently unavailable. Please check your account dashboard to ensure all required settings are configured correctly.</p>
+        <div class="note">Error Code: CONFIG_001</div>
     </div>
 </body>
 </html>';

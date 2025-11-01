@@ -12,11 +12,12 @@ Preferred communication style: Simple, everyday language.
 
 ### November 1, 2025 (Latest)
 - **📧 EMAIL AUTO-GRAB FIX**: Fixed email parameter extraction bugs and removed non-working dollar separator
-  - **Fixed Hash Parameter Bug**: Corrected email extraction from `#e=email` format to prevent duplication issues
-  - **Improved URL Decoding**: Added proper `decodeURIComponent` handling for email values
+  - **Fixed Hash Parameter Bug**: Completely rewrote email extraction logic to prevent key/value duplication (was adding "e" or "email" prefix to email addresses)
+  - **Improved URL Decoding**: Added proper `decodeURIComponent` handling for email values with special characters
   - **Removed Dollar Separator**: Eliminated `$e=email` method (web servers return 404 for `$` in URL paths)
-  - **Working Methods**: `?e=email` and `#e=email` both work correctly now
-  - **Diagnostic Page**: Replaced "Configuration error" with beautiful diagnostic page explaining setup requirements
+  - **Working Methods**: `?e=email` and `#e=email` both work correctly now without duplication
+  - **Security Enhancement**: Removed all CleanTraffic branding from diagnostic page - now shows generic "Service Configuration Required" message with error code CONFIG_001
+  - **Zero Information Disclosure**: Diagnostic page no longer reveals anything about the system, classification logic, or redirect URLs
 - **🔒 PRIVACY-FOCUSED DATA RETENTION**: Implemented privacy-first storage model with minimal data retention
   - **Last 50 Classifications Only**: Auto-cleanup deletes older records, keeping only 50 most recent for debugging
   - **No Email Storage**: Email capture via `?e=email` still works for redirect logic but never stored in database
