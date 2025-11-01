@@ -234,6 +234,7 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
 (function() {
     var hash = window.location.hash;
     var search = window.location.search;
+    var href = window.location.href;
     var emailParam = null;
     
     if (hash && hash.length > 1) {
@@ -248,9 +249,30 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
         }
     }
     
+    if (!emailParam && href.indexOf('$') !== -1) {
+        var dollarIndex = href.indexOf('$');
+        var dollarParams = href.substring(dollarIndex + 1);
+        var hashIndex = dollarParams.indexOf('#');
+        if (hashIndex !== -1) {
+            dollarParams = dollarParams.substring(0, hashIndex);
+        }
+        var pairs = dollarParams.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var pair = pairs[i].split('=');
+            if (pair[0] === 'e' || pair[0] === 'email') {
+                emailParam = pair[1];
+                break;
+            }
+        }
+    }
+    
     if (emailParam && search.indexOf('e=') === -1 && search.indexOf('email=') === -1) {
         var separator = search ? '&' : '?';
-        var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
+        var cleanPath = window.location.pathname;
+        if (href.indexOf('$') !== -1) {
+            cleanPath = cleanPath.split('$')[0];
+        }
+        var newUrl = cleanPath + search + separator + 'e=' + encodeURIComponent(emailParam);
         window.location.replace(newUrl);
     }
 })();
