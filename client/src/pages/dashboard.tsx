@@ -1,8 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, Code, Copy, Menu, Server } from "lucide-react";
-import Sidebar from "@/components/sidebar";
-import StatsCards from "@/components/stats-cards";
+import { CheckCircle, Code, Copy, LogOut, Server, Shield, User } from "lucide-react";
 import ClassificationTable from "@/components/classification-table";
 import DetectionRules from "@/components/detection-rules";
 import ApiKeyManagement from "@/components/api-key-management";
@@ -16,9 +14,34 @@ import ClientUserManagement from "@/components/client-user-management";
 import WhitelabelDomainSettings from "@/components/whitelabel-domain-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { authApi, type User as AuthUser } from "@/lib/auth";
 
 export default function Dashboard() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
+  const { data: user } = useQuery<AuthUser>({
+    queryKey: ["/api/auth/user"],
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: authApi.logout,
+    onSuccess: () => {
+      queryClient.clear();
+      toast({
+        title: "Success",
+        description: "Logged out successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Logout failed",
+        variant: "destructive",
+      });
+    },
+  });
 
   const copyApiUrl = () => {
     const apiUrl = `${window.location.origin}/api/classify`;
@@ -30,37 +53,44 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-muted flex">
-      <Sidebar />
-
-      {/* Main Content */}
-      <div className="flex-1 overflow-auto">
-        {/* Header */}
-        <header className="bg-background shadow-sm border-b border-border">
-          <div className="flex items-center justify-between px-6 py-4">
-            <div>
-              <h2 className="text-2xl font-bold text-foreground">CleanTraffic Dashboard</h2>
-              <p className="text-muted-foreground">Pure, clean visitor data with real-time analytics</p>
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+      {/* Header */}
+      <header className="bg-card/50 backdrop-blur-sm shadow-sm border-b border-border sticky top-0 z-10">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Shield className="h-8 w-8 text-primary" />
+              <div>
+                <h2 className="text-2xl font-bold text-foreground">CleanTraffic Admin</h2>
+                <p className="text-sm text-muted-foreground">Pure, clean visitor data with real-time analytics</p>
+              </div>
             </div>
             <div className="flex items-center space-x-4">
-              <div className="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-medium">
+              <div className="bg-green-600 text-white px-3 py-1.5 rounded-full text-sm font-medium">
                 <div className="w-2 h-2 bg-white rounded-full inline-block mr-2 animate-pulse"></div>
                 Live
               </div>
+              <div className="hidden md:flex items-center space-x-2 bg-muted/50 rounded-lg px-3 py-2">
+                <User className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{user?.username || 'Admin'}</span>
+              </div>
               <Button 
                 variant="outline" 
-                size="sm"
-                className="lg:hidden"
-                data-testid="button-mobile-menu"
+                onClick={() => logoutMutation.mutate()}
+                disabled={logoutMutation.isPending}
+                data-testid="button-logout"
+                className="gap-2"
               >
-                <Menu className="h-4 w-4" />
+                <LogOut className="h-4 w-4" />
+                Logout
               </Button>
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {/* Dashboard Content */}
-        <main className="p-6">
+      {/* Dashboard Content */}
+      <main className="container mx-auto p-6">
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="mb-6">
               <TabsTrigger value="overview" data-testid="tab-overview">📊 Dashboard</TabsTrigger>
@@ -184,8 +214,7 @@ export default function Dashboard() {
               </div>
             </TabsContent>
           </Tabs>
-        </main>
-      </div>
+      </main>
     </div>
   );
 }
