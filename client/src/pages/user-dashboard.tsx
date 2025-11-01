@@ -616,6 +616,67 @@ if ($redirectUrl) {
               </CardContent>
             </Card>
 
+            <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 shadow-md border-2 border-blue-200 dark:border-blue-800">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-blue-900 dark:text-blue-100">
+                  <Shield className="h-5 w-5" />
+                  Important Legal & Privacy Notice
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-white/80 dark:bg-black/20 p-4 rounded-lg border border-blue-200 dark:border-blue-700">
+                  <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2 flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-orange-600" />
+                    User Liability & Responsibility
+                  </h3>
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    You are solely responsible for how you use CleanTraffic and any consequences arising from its use. 
+                    By using this service, you agree to comply with all applicable laws and regulations, including but not limited to 
+                    privacy laws (GDPR, CCPA), anti-discrimination laws, and search engine guidelines. You are liable for ensuring 
+                    your implementation is lawful and ethical.
+                  </p>
+                </div>
+
+                <div className="bg-white/80 dark:bg-black/20 p-4 rounded-lg border border-green-200 dark:border-green-700">
+                  <h3 className="font-semibold text-green-900 dark:text-green-100 mb-2 flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-green-600" />
+                    Privacy Protection
+                  </h3>
+                  <p className="text-sm text-green-800 dark:text-green-200 mb-2">
+                    <strong>We prioritize visitor privacy:</strong>
+                  </p>
+                  <ul className="text-sm text-green-800 dark:text-green-200 list-disc list-inside space-y-1 ml-2">
+                    <li><strong>No Email Storage:</strong> Email capture works for redirect logic but is never stored in our database</li>
+                    <li><strong>No IP Address Display:</strong> Your dashboard shows Country, ISP, and Device only - no visitor IP addresses</li>
+                    <li><strong>Last 50 Records Only:</strong> We automatically delete older classification records to minimize data retention</li>
+                    <li><strong>No Personal Tracking:</strong> We do not store any personally identifiable information about your visitors</li>
+                  </ul>
+                </div>
+
+                <div className="bg-white/80 dark:bg-black/20 p-4 rounded-lg border border-purple-200 dark:border-purple-700">
+                  <h3 className="font-semibold text-purple-900 dark:text-purple-100 mb-2 flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-purple-600" />
+                    Service Purpose: Security Only
+                  </h3>
+                  <p className="text-sm text-purple-800 dark:text-purple-200">
+                    <strong>CleanTraffic is designed exclusively for legitimate security and bot prevention purposes.</strong> 
+                    It analyzes visitor IP addresses to detect datacenter traffic, VPNs, proxies, and automated bots, 
+                    then redirects visitors accordingly. This service should NOT be used for cloaking (showing different content 
+                    to search engines), fraudulent activities, discrimination, or any illegal purposes. Use responsibly.
+                  </p>
+                </div>
+
+                <div className="bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
+                  <p className="text-xs text-orange-800 dark:text-orange-200 flex items-center gap-2">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    <span>
+                      <strong>Disclaimer:</strong> CleanTraffic provides tools only. You are responsible for compliance with all applicable laws in your jurisdiction.
+                    </span>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card className="bg-gradient-to-br from-card to-muted/20 shadow-md hover:shadow-lg transition-shadow border-2">
                 <CardHeader className="pb-3">
