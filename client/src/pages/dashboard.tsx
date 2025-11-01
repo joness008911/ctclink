@@ -73,12 +73,32 @@ export default function Dashboard() {
             </TabsList>
             
             <TabsContent value="overview">
-              <StatsCards />
+              <ClassificationTable />
+            </TabsContent>
 
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-6">
-                <ClassificationTable />
+            <TabsContent value="client-users">
+              <ClientUserManagement />
+            </TabsContent>
 
-                {/* Right Panel */}
+            <TabsContent value="countries">
+              <CountryWhitelist />
+            </TabsContent>
+
+            <TabsContent value="isp-whitelist">
+              <IspWhitelist />
+            </TabsContent>
+
+            <TabsContent value="isp-blacklist">
+              <IspBlacklist />
+            </TabsContent>
+
+            <TabsContent value="analytics">
+              <AnalyticsDashboard />
+            </TabsContent>
+
+            <TabsContent value="settings">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                {/* Left Column */}
                 <div className="space-y-6">
                   {/* API Endpoint Info */}
                   <Card className="shadow border border-border">
@@ -119,10 +139,6 @@ export default function Dashboard() {
 
                   <RedirectUrlManagement />
 
-                  <Ip2GeoKeyManagement />
-
-                  <ApiKeyManagement />
-
                   {/* System Status */}
                   <Card className="shadow border border-border">
                     <CardHeader>
@@ -156,31 +172,16 @@ export default function Dashboard() {
                     </CardContent>
                   </Card>
                 </div>
+
+                {/* Right Column */}
+                <div className="space-y-6">
+                  <Ip2GeoKeyManagement />
+
+                  <ApiKeyManagement />
+
+                  <WhitelabelDomainSettings />
+                </div>
               </div>
-            </TabsContent>
-
-            <TabsContent value="client-users">
-              <ClientUserManagement />
-            </TabsContent>
-
-            <TabsContent value="countries">
-              <CountryWhitelist />
-            </TabsContent>
-
-            <TabsContent value="isp-whitelist">
-              <IspWhitelist />
-            </TabsContent>
-
-            <TabsContent value="isp-blacklist">
-              <IspBlacklist />
-            </TabsContent>
-
-            <TabsContent value="analytics">
-              <AnalyticsDashboard />
-            </TabsContent>
-
-            <TabsContent value="settings">
-              <WhitelabelDomainSettings />
             </TabsContent>
           </Tabs>
         </main>
