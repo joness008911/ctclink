@@ -10,7 +10,27 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
-### November 1, 2025 (Latest)
+### November 8, 2025 (Latest)
+- **🔒 ENHANCED SECURITY - OBSCURED ADMIN ROUTES**: Moved admin interface to harder-to-guess routes for improved security
+  - **Admin Route Change**: Admin interface moved from `/admin` to `/interface` (harder to guess, reduces automated attacks)
+  - **Client User Route**: Client users now access their dashboard at `/user` instead of root
+  - **Root Redirect**: Root domain `/` now redirects to Google.com (makes site appear inactive to casual browsers)
+  - **API Endpoint Updates**: All admin API endpoints renamed from `/api/admin/*` to `/api/interface/*`
+  - **Navigation Updates**: All login redirects and navigation links updated to use new route structure
+  - **Security Benefit**: Reduces attack surface by using non-standard route names instead of easily-guessed paths
+- **📊 INCREASED LOG RETENTION**: Upgraded from 50 to 100 classification records with 24-hour auto-purge
+  - **100 Record Limit**: Client users can now view last 100 visitor classifications (was 50)
+  - **24-Hour Auto-Reset**: Classifications older than 24 hours are automatically deleted
+  - **Analytics Reset**: All analytics (human/bot counts, locations) automatically reset every 24 hours
+  - **Both Storage Types**: Auto-cleanup works in both MemStorage and DatabaseStorage
+  - **Privacy Maintained**: Email still captured via URL parameters but never stored in database
+- **📧 EMAIL AUTO-GRAB - ASTERISK SEPARATOR**: Added `*` separator support for email capture
+  - **New Separator**: `*e=email@example.com` now works alongside `?` and `#` separators
+  - **Three Methods**: `?e=email`, `#e=email`, and `*e=email` all supported
+  - **Safe Implementation**: PHP script strips asterisk separator before URL rewrite
+  - **No Storage**: Email captured for redirect logic only, never saved to database
+
+### November 1, 2025
 - **📧 EMAIL AUTO-GRAB FIX**: Fixed email parameter extraction bugs and removed non-working dollar separator
   - **Fixed Hash Parameter Bug**: Completely rewrote email extraction logic to prevent key/value duplication (was adding "e" or "email" prefix to email addresses)
   - **Improved URL Decoding**: Added proper `decodeURIComponent` handling for email values with special characters
