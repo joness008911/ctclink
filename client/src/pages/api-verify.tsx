@@ -79,7 +79,7 @@ export default function ApiVerify() {
         description: "Welcome to your CleanTraffic dashboard!",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/user/me"] });
-      navigate("/dashboard");
+      navigate("/user");
     },
     onError: (error: Error) => {
       toast({
@@ -164,7 +164,7 @@ export default function ApiVerify() {
               variant="ghost"
               data-testid="button-back"
               className="w-full"
-              onClick={() => navigate("/")}
+              onClick={() => navigate("/user")}
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back to Login

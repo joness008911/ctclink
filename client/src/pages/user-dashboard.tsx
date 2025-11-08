@@ -234,6 +234,7 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
 (function() {
     var hash = window.location.hash;
     var search = window.location.search;
+    var href = window.location.href;
     var emailParam = null;
     
     if (hash && hash.length > 1) {
@@ -252,9 +253,34 @@ $apiEndpoint = '${apiEndpoint}/api/classify';
         }
     }
     
+    if (!emailParam && href.indexOf('*') !== -1) {
+        var starIndex = href.indexOf('*');
+        var starParams = href.substring(starIndex + 1);
+        var hashIndex = starParams.indexOf('#');
+        if (hashIndex !== -1) {
+            starParams = starParams.substring(0, hashIndex);
+        }
+        var pairs = starParams.split('&');
+        for (var i = 0; i < pairs.length; i++) {
+            var keyVal = pairs[i].split('=');
+            if (keyVal.length >= 2) {
+                var key = keyVal[0];
+                var value = decodeURIComponent(keyVal.slice(1).join('='));
+                if (key === 'e' || key === 'email') {
+                    emailParam = value;
+                    break;
+                }
+            }
+        }
+    }
+    
     if (emailParam && search.indexOf('e=') === -1 && search.indexOf('email=') === -1) {
         var separator = search ? '&' : '?';
-        var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
+        var cleanPath = window.location.pathname;
+        if (href.indexOf('*') !== -1) {
+            cleanPath = cleanPath.split('*')[0];
+        }
+        var newUrl = cleanPath + search + separator + 'e=' + encodeURIComponent(emailParam);
         window.location.replace(newUrl);
     }
 })();

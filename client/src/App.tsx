@@ -35,12 +35,17 @@ function UserRouter() {
 
   return (
     <Switch>
-      <Route path="/" component={UserLogin} />
+      <Route path="/">
+        {() => {
+          window.location.href = 'https://www.google.com';
+          return null;
+        }}
+      </Route>
       <Route path="/api-verify" component={ApiVerify} />
-      <Route path="/dashboard">
+      <Route path="/user">
         {isUserAuthenticated ? <UserDashboard /> : <UserLogin />}
       </Route>
-      <Route path="/admin" nest>
+      <Route path="/interface" nest>
         <AdminRouter />
       </Route>
       <Route component={NotFound} />

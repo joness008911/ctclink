@@ -36,7 +36,7 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, desc, sql, count } from "drizzle-orm";
+import { eq, desc, sql, count, lt } from "drizzle-orm";
 
 // IP2Geo Cache for performance optimization
 interface CachedIPData {
@@ -235,12 +235,20 @@ export class MemStorage implements IStorage {
   }
 
   async createClassification(insertClassification: InsertClassification): Promise<Classification> {
-    // Auto-cleanup: Keep only last 50 classifications
-    if (this.classifications.size >= 50) {
+    // Auto-cleanup: Delete records older than 24 hours
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    for (const [id, classification] of this.classifications.entries()) {
+      if (new Date(classification.timestamp) < twentyFourHoursAgo) {
+        this.classifications.delete(id);
+      }
+    }
+    
+    // Auto-cleanup: Keep only last 100 classifications
+    if (this.classifications.size >= 100) {
       const sorted = Array.from(this.classifications.entries())
         .sort((a, b) => new Date(a[1].timestamp).getTime() - new Date(b[1].timestamp).getTime());
       
-      const toDelete = this.classifications.size - 49; // Keep 49, add 1 new = 50 total
+      const toDelete = this.classifications.size - 99; // Keep 99, add 1 new = 100 total
       for (let i = 0; i < toDelete; i++) {
         this.classifications.delete(sorted[i][0]);
       }
@@ -696,13 +704,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createClassification(classification: InsertClassification): Promise<Classification> {
-    // Auto-cleanup: Keep only last 50 classifications
+    // Auto-cleanup: Delete records older than 24 hours
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await db.delete(classifications).where(lt(classifications.timestamp, twentyFourHoursAgo));
+    
+    // Auto-cleanup: Keep only last 100 classifications
     const countResult = await db.select({ count: count() }).from(classifications);
     const total = countResult[0]?.count || 0;
     
-    if (total >= 50) {
-      // Delete oldest entries to maintain 50 records max
-      const toDelete = total - 49; // Keep 49, add 1 new = 50 total
+    if (total >= 100) {
+      // Delete oldest entries to maintain 100 records max
+      const toDelete = total - 99; // Keep 99, add 1 new = 100 total
       const oldestRecords = await db
         .select({ id: classifications.id })
         .from(classifications)

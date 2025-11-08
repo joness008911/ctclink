@@ -21,7 +21,7 @@ export default function ClientUserManagement() {
   const [selectedApiKeyId, setSelectedApiKeyId] = useState("");
 
   const { data: clientUsers = [], isLoading } = useQuery<any[]>({
-    queryKey: ["/api/admin/client-users"],
+    queryKey: ["/api/interface/client-users"],
   });
 
   const { data: apiKeys = [], isLoading: isLoadingApiKeys } = useQuery<any[]>({
@@ -30,7 +30,7 @@ export default function ClientUserManagement() {
 
   const createUserMutation = useMutation({
     mutationFn: async (userData: any) => {
-      const response = await apiRequest("POST", "/api/admin/client-users", userData);
+      const response = await apiRequest("POST", "/api/interface/client-users", userData);
       return response.json();
     },
     onSuccess: () => {
@@ -38,7 +38,7 @@ export default function ClientUserManagement() {
         title: "User Created",
         description: "Client user has been created successfully",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/client-users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/interface/client-users"] });
       setIsCreateDialogOpen(false);
       setNewUsername("");
       setNewPassword("");
@@ -56,7 +56,7 @@ export default function ClientUserManagement() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (userId: string) => {
-      const response = await apiRequest("DELETE", `/api/admin/client-users/${userId}`);
+      const response = await apiRequest("DELETE", `/api/interface/client-users/${userId}`);
       return response.json();
     },
     onSuccess: () => {
@@ -64,7 +64,7 @@ export default function ClientUserManagement() {
         title: "User Deleted",
         description: "Client user has been removed",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/client-users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/interface/client-users"] });
     },
     onError: (error: Error) => {
       toast({

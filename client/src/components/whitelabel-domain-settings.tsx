@@ -18,7 +18,7 @@ export default function WhitelabelDomainSettings() {
   const [domain, setDomain] = useState("");
 
   const { data: currentDomain, isLoading } = useQuery<WhitelabelDomainResponse>({
-    queryKey: ["/api/admin/whitelabel-domain"],
+    queryKey: ["/api/interface/whitelabel-domain"],
   });
 
   useEffect(() => {
@@ -29,10 +29,10 @@ export default function WhitelabelDomainSettings() {
 
   const updateDomainMutation = useMutation({
     mutationFn: async (newDomain: string) => {
-      return apiRequest("POST", "/api/admin/whitelabel-domain", { domain: newDomain });
+      return apiRequest("POST", "/api/interface/whitelabel-domain", { domain: newDomain });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/whitelabel-domain"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/interface/whitelabel-domain"] });
       toast({
         title: "Success",
         description: "White-label domain updated successfully",

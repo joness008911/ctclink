@@ -53,7 +53,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Redirect ALL other browser requests to Google.com (privacy/security)
-      // This prevents access to /dashboard, /admin, /api/*, assets, etc. on api subdomain
+      // This prevents access to /user, /interface, /api/*, assets, etc. on api subdomain
       // Anyone typing api.yoursite.com in browser gets redirected away
       return res.redirect(301, 'https://www.google.com');
     }
@@ -67,7 +67,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.type('text/plain');
     res.send(`User-agent: *
 Disallow: /
-Disallow: /admin
+Disallow: /interface
+Disallow: /user
 Disallow: /api/
 Disallow: /assets/
 
@@ -504,7 +505,7 @@ Disallow: /*`);
   // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
   
   // Get all client users (Admin only)
-  app.get("/api/admin/client-users", requireAuth, async (req, res) => {
+  app.get("/api/interface/client-users", requireAuth, async (req, res) => {
     try {
       const users = await storage.getAllClientUsers();
       res.json(users);
@@ -515,7 +516,7 @@ Disallow: /*`);
   });
 
   // Create a client user (Admin only)
-  app.post("/api/admin/client-users", requireAuth, async (req, res) => {
+  app.post("/api/interface/client-users", requireAuth, async (req, res) => {
     try {
       const { username, password, email, apiKeyId } = req.body;
       
@@ -560,7 +561,7 @@ Disallow: /*`);
   });
 
   // Delete a client user (Admin only)
-  app.delete("/api/admin/client-users/:id", requireAuth, async (req, res) => {
+  app.delete("/api/interface/client-users/:id", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
       
@@ -585,7 +586,7 @@ Disallow: /*`);
   // ========== WHITE-LABEL DOMAIN SETTINGS ==========
   
   // Get white-label domain setting
-  app.get("/api/admin/whitelabel-domain", requireAuth, async (req, res) => {
+  app.get("/api/interface/whitelabel-domain", requireAuth, async (req, res) => {
     try {
       const domain = await storage.getSetting('whitelabel_domain');
       res.json({ domain: domain || '' });
@@ -596,7 +597,7 @@ Disallow: /*`);
   });
   
   // Set white-label domain setting
-  app.post("/api/admin/whitelabel-domain", requireAuth, async (req, res) => {
+  app.post("/api/interface/whitelabel-domain", requireAuth, async (req, res) => {
     try {
       const { domain } = req.body;
       
