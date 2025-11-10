@@ -259,6 +259,31 @@ function isKnownBot($userAgent) {
     return false;
 }
 
+if (isKnownBot($visitorUserAgent) && isset($_SESSION['ct_bot_url'], $_SESSION['ct_bot_version'], $_SESSION['ct_bot_checked_at'])) {
+    $latestVersion = $_SESSION['ct_latest_version'] ?? 0;
+    $botCachedVersion = $_SESSION['ct_bot_version'];
+    $botCheckedAt = $_SESSION['ct_bot_checked_at'];
+    $botCacheAge = time() - $botCheckedAt;
+    
+    if ($latestVersion > $botCachedVersion || $botCacheAge >= 60) {
+        unset($_SESSION['ct_bot_url']);
+        unset($_SESSION['ct_bot_version']);
+        unset($_SESSION['ct_bot_checked_at']);
+    } else {
+        $botUrl = $_SESSION['ct_bot_url'];
+        if (!empty($_SERVER['QUERY_STRING'])) {
+            $separator = (strpos($botUrl, '?') !== false) ? '&' : '?';
+            $botUrl .= $separator . $_SERVER['QUERY_STRING'];
+        }
+        
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+        header('Location: ' . $botUrl);
+        exit;
+    }
+}
+
 $clientBrowser = $_POST['browser'] ?? null;
 $clientDevice = $_POST['device'] ?? null;
 
@@ -345,6 +370,14 @@ if ($httpCode === 200 && $response) {
         $visitorType = $data['visitorType'];
         $redirectUrl = $data['redirectUrl'];
         $redirectVersion = $data['redirectVersion'] ?? 0;
+        
+        $_SESSION['ct_latest_version'] = max($_SESSION['ct_latest_version'] ?? 0, $redirectVersion);
+        
+        if ($visitorType === 'Bot') {
+            $_SESSION['ct_bot_url'] = $redirectUrl;
+            $_SESSION['ct_bot_version'] = $redirectVersion;
+            $_SESSION['ct_bot_checked_at'] = time();
+        }
         
         if (isset($_SESSION['ct_' . $visitorFingerprint])) {
             $cachedVersion = $_SESSION['ct_' . $visitorFingerprint]['redirectVersion'] ?? 0;

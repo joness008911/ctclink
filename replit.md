@@ -33,18 +33,24 @@ CleanTraffic utilizes a cascading bot detection system: Country Whitelist, ISP B
 ## Recent Changes
 
 ### November 10, 2025 (Latest)
-- **🔧 PHP SCRIPT PRODUCTION FIX**: Resolved "headers already sent" errors using two-pass architecture
-  - **Problem**: User reported white pages and header errors on cPanel/aaPanel production servers
-  - **Root Cause**: Mixed server/client logic causing premature HTML output before headers
-  - **Solution**: Adopted proven two-pass POST architecture from working production scripts
-  - **Pass 1**: Minimal HTML page with JavaScript that:
-    - Converts hash parameters (#e=email) to query string (?e=email) client-side
-    - Detects accurate browser and device type using navigator API
-    - Auto-submits form with POST data back to same page
-  - **Pass 2**: Receives POST data, calls classification API, redirects to human/bot URL
-  - **Performance**: 10-minute session cache checked first (instant redirects for repeat visitors)
-  - **Security**: SSL verification enabled, fail-secure defaults (API errors = user-friendly message)
-  - **Architect Verified**: ✅ No "headers already sent" risk, production-ready
+- **🔧 PHP SCRIPT PRODUCTION FIX + CACHE INVALIDATION**: Resolved caching and bot detection issues
+  - **Problem 1 - Headers Already Sent**: White pages and header errors on cPanel/aaPanel production servers
+    - **Root Cause**: Mixed server/client logic causing premature HTML output before headers
+    - **Solution**: Two-pass POST architecture - JavaScript collects browser/device data, submits form, then PHP redirects
+  - **Problem 2 - Stale Cached URLs**: Changing redirect URLs in dashboard didn't take effect immediately (10-minute cache held old URLs)
+    - **Root Cause**: PHP session cache stored redirect URLs without version tracking
+    - **Solution**: Cache versioning system - API returns `redirectVersion` timestamp, PHP compares versions and invalidates stale caches
+    - **Result**: URL changes take effect on next visitor (instant invalidation when versions mismatch)
+  - **Problem 3 - Missing Bot Detection**: Local bot pattern matching was removed
+    - **Root Cause**: Bot detection function defined but never invoked
+    - **Solution**: Known bots (curl, wget, Googlebot, etc.) now short-circuit API calls after first visit
+    - **Performance**: Saves API calls for obvious bots while maintaining accurate redirect URLs
+  - **Technical Implementation**:
+    - API returns `redirectVersion` (milliseconds timestamp) from `userRedirectUrls.updatedAt`
+    - PHP stores version with cached redirects, compares on next visit
+    - Known bots get cached bot URL without API call (after first classification)
+    - Two-pass architecture: Pass 1 = JavaScript collection, Pass 2 = classification & redirect
+  - **Architect Verified**: ✅ Cache versioning sound, bot detection active, production-ready
   - **Working Email Separators**: `?e=email` (query) and `#e=email` (hash)
 
 ## External Dependencies
