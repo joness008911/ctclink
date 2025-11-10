@@ -28,7 +28,24 @@ The system employs session-based authentication with Express sessions. Passwords
 
 ### System Design Choices
 
-CleanTraffic utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling. PHP integration scripts use random ZIP filenames for security, 10-minute session caching for API calls, and enhanced bot detection (headless browser/known crawler identification). Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+CleanTraffic utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+
+## Recent Changes
+
+### November 10, 2025 (Latest)
+- **🔧 PHP SCRIPT PRODUCTION FIX**: Resolved "headers already sent" errors using two-pass architecture
+  - **Problem**: User reported white pages and header errors on cPanel/aaPanel production servers
+  - **Root Cause**: Mixed server/client logic causing premature HTML output before headers
+  - **Solution**: Adopted proven two-pass POST architecture from working production scripts
+  - **Pass 1**: Minimal HTML page with JavaScript that:
+    - Converts hash parameters (#e=email) to query string (?e=email) client-side
+    - Detects accurate browser and device type using navigator API
+    - Auto-submits form with POST data back to same page
+  - **Pass 2**: Receives POST data, calls classification API, redirects to human/bot URL
+  - **Performance**: 10-minute session cache checked first (instant redirects for repeat visitors)
+  - **Security**: SSL verification enabled, fail-secure defaults (API errors = user-friendly message)
+  - **Architect Verified**: ✅ No "headers already sent" risk, production-ready
+  - **Working Email Separators**: `?e=email` (query) and `#e=email` (hash)
 
 ## External Dependencies
 
