@@ -1200,7 +1200,9 @@ Disallow: /*`);
             const user = await storage.getClientUserByApiKey(apiKeyId);
             const redirectUrls = user ? await storage.getUserRedirectUrls(user.id) : undefined;
             const botUrl = redirectUrls?.botUrl || 'https://google.com';
+            const redirectVersion = redirectUrls?.updatedAt ? new Date(redirectUrls.updatedAt).getTime() : 0;
             response.redirectUrl = botUrl;
+            response.redirectVersion = redirectVersion;
             response.visitorType = 'Bot'; // Force bot classification when paused/expired
             console.log(`⚠️ License ${apiKeyDetails.status.toUpperCase()}: Redirecting all visitors to bot URL`);
           } else {
@@ -1208,11 +1210,13 @@ Disallow: /*`);
             const user = await storage.getClientUserByApiKey(apiKeyId);
             let humanUrl = 'https://example.com/human';
             let botUrl = 'https://google.com';
+            let redirectVersion = 0;
             
             if (user) {
               const redirectUrls = await storage.getUserRedirectUrls(user.id);
               humanUrl = redirectUrls?.humanUrl || humanUrl;
               botUrl = redirectUrls?.botUrl || botUrl;
+              redirectVersion = redirectUrls?.updatedAt ? new Date(redirectUrls.updatedAt).getTime() : 0;
             } else {
               console.warn(`⚠️ No client user found for API key ID: ${apiKeyId} - using default redirect URLs`);
             }
@@ -1221,6 +1225,7 @@ Disallow: /*`);
             response.redirectUrl = classification.visitorType === 'Human' 
               ? humanUrl 
               : botUrl;
+            response.redirectVersion = redirectVersion;
           }
         } catch (error) {
           console.error("Error fetching redirect URLs:", error);
@@ -1228,6 +1233,7 @@ Disallow: /*`);
           response.redirectUrl = classification.visitorType === 'Human' 
             ? 'https://example.com/human' 
             : 'https://google.com';
+          response.redirectVersion = 0;
         }
       }
       
