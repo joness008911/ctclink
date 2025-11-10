@@ -270,7 +270,7 @@ if (isKnownBot($visitorUserAgent) && isset($_SESSION['ct_bot_url'], $_SESSION['c
         unset($_SESSION['ct_bot_version']);
         unset($_SESSION['ct_bot_checked_at']);
     } else {
-        $botUrl = $_SESSION['ct_bot_url'];
+        $botUrl = rtrim($_SESSION['ct_bot_url'], '#');
         if (!empty($_SERVER['QUERY_STRING'])) {
             $separator = (strpos($botUrl, '?') !== false) ? '&' : '?';
             $botUrl .= $separator . $_SERVER['QUERY_STRING'];
@@ -396,6 +396,8 @@ if ($redirectUrl) {
         'redirectVersion' => $redirectVersion,
         'timestamp' => time()
     ];
+    
+    $redirectUrl = rtrim($redirectUrl, '#');
     
     if (!empty($_SERVER['QUERY_STRING'])) {
         $separator = (strpos($redirectUrl, '?') !== false) ? '&' : '?';
