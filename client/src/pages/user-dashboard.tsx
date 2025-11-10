@@ -237,25 +237,26 @@ $visitorIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 $visitorUserAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $visitorFingerprint = md5($visitorIp . $visitorUserAgent);
 
-if (isset($_SESSION['ct_' . $visitorFingerprint])) {
-    $cached = $_SESSION['ct_' . $visitorFingerprint];
-    $cacheAge = time() - $cached['timestamp'];
-    
-    if ($cacheAge < $cacheDuration) {
-        $cachedUrl = $cached['redirectUrl'];
-        if (!empty($_SERVER['QUERY_STRING'])) {
-            $separator = (strpos($cachedUrl, '?') !== false) ? '&' : '?';
-            $cachedUrl .= $separator . $_SERVER['QUERY_STRING'];
-        }
-        
-        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-        header('Pragma: no-cache');
-        header('Expires: 0');
-        header('Location: ' . $cachedUrl);
-        exit;
-    } else {
-        unset($_SESSION['ct_' . $visitorFingerprint]);
+function isKnownBot($userAgent) {
+    if (empty($userAgent) || strlen($userAgent) < 10) {
+        return true;
     }
+    
+    $botPatterns = [
+        'bot', 'crawl', 'spider', 'scrape',
+        'Googlebot', 'Bingbot', 'Slurp', 'DuckDuckBot', 'Baiduspider', 'YandexBot',
+        'facebookexternalhit', 'Twitterbot', 'LinkedInBot', 'WhatsApp', 'TelegramBot',
+        'curl', 'wget', 'python-requests', 'Go-http-client', 'Java/', 'Apache-HttpClient',
+        'HeadlessChrome', 'PhantomJS', 'Puppeteer', 'Selenium', 'WebDriver'
+    ];
+    
+    foreach ($botPatterns as $pattern) {
+        if (stripos($userAgent, $pattern) !== false) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 $clientBrowser = $_POST['browser'] ?? null;
@@ -336,12 +337,21 @@ curl_close($ch);
 
 $redirectUrl = null;
 $visitorType = 'Bot';
+$redirectVersion = 0;
 
 if ($httpCode === 200 && $response) {
     $data = json_decode($response, true);
     if ($data && isset($data['visitorType'], $data['redirectUrl'])) {
         $visitorType = $data['visitorType'];
         $redirectUrl = $data['redirectUrl'];
+        $redirectVersion = $data['redirectVersion'] ?? 0;
+        
+        if (isset($_SESSION['ct_' . $visitorFingerprint])) {
+            $cachedVersion = $_SESSION['ct_' . $visitorFingerprint]['redirectVersion'] ?? 0;
+            if ($redirectVersion > $cachedVersion && $redirectVersion > 0) {
+                unset($_SESSION['ct_' . $visitorFingerprint]);
+            }
+        }
     }
 }
 
@@ -349,6 +359,7 @@ if ($redirectUrl) {
     $_SESSION['ct_' . $visitorFingerprint] = [
         'redirectUrl' => $redirectUrl,
         'visitorType' => $visitorType,
+        'redirectVersion' => $redirectVersion,
         'timestamp' => time()
     ];
     
