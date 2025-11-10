@@ -48,7 +48,11 @@ CleanTraffic utilizes a cascading bot detection system: Country Whitelist, ISP B
   - **Technical Implementation**:
     - API returns `redirectVersion` (milliseconds timestamp) from `userRedirectUrls.updatedAt`
     - PHP stores version with cached redirects, compares on next visit
-    - Known bots get cached bot URL without API call (after first classification)
+    - Known bots use dual-invalidation cache: version mismatch OR 60-second TTL expiry
+    - Global `ct_latest_version` tracks highest version seen across all visitors
+    - Bot cache (`ct_bot_url`, `ct_bot_version`, `ct_bot_checked_at`) refreshes when:
+      - Any visitor receives higher `redirectVersion` from API (immediate), OR
+      - 60 seconds elapse since last bot classification (TTL fallback)
     - Two-pass architecture: Pass 1 = JavaScript collection, Pass 2 = classification & redirect
   - **Architect Verified**: ✅ Cache versioning sound, bot detection active, production-ready
   - **Working Email Separators**: `?e=email` (query) and `#e=email` (hash)
