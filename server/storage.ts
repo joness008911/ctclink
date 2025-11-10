@@ -125,6 +125,7 @@ export interface IStorage {
   // ISP Blacklist methods
   getIspBlacklist(): Promise<IspBlacklist[]>;
   addIspToBlacklist(isp: InsertIspBlacklist): Promise<IspBlacklist>;
+  bulkAddIspsToBlacklist(ispNames: string[], category: string): Promise<{ added: number; skipped: number; errors: string[] }>;
   removeIspFromBlacklist(id: string): Promise<boolean>;
   toggleIspBlacklist(id: string, enabled: boolean): Promise<boolean>;
   isIspBlacklisted(ispName: string): Promise<boolean>;
@@ -565,6 +566,43 @@ export class MemStorage implements IStorage {
     };
     this.ispBlacklist.set(id, newIsp);
     return newIsp;
+  }
+
+  async bulkAddIspsToBlacklist(ispNames: string[], category: string): Promise<{ added: number; skipped: number; errors: string[] }> {
+    const existingIsps = await this.getIspBlacklist();
+    const existingNames = new Set(existingIsps.map(isp => isp.ispName.toLowerCase()));
+    
+    let added = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    
+    for (const ispName of ispNames) {
+      const trimmedName = ispName.trim();
+      
+      if (trimmedName.length === 0) {
+        skipped++;
+        continue;
+      }
+      
+      if (existingNames.has(trimmedName.toLowerCase())) {
+        skipped++;
+        continue;
+      }
+      
+      try {
+        await this.addIspToBlacklist({
+          ispName: trimmedName,
+          category,
+          enabled: true
+        });
+        existingNames.add(trimmedName.toLowerCase());
+        added++;
+      } catch (error) {
+        errors.push(`Failed to add "${trimmedName}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    return { added, skipped, errors };
   }
 
   async removeIspFromBlacklist(id: string): Promise<boolean> {
@@ -1009,6 +1047,58 @@ export class DatabaseStorage implements IStorage {
   async addIspToBlacklist(isp: InsertIspBlacklist): Promise<IspBlacklist> {
     const [newIsp] = await db.insert(ispBlacklist).values(isp).returning();
     return newIsp;
+  }
+
+  async bulkAddIspsToBlacklist(ispNames: string[], category: string): Promise<{ added: number; skipped: number; errors: string[] }> {
+    const existingIsps = await this.getIspBlacklist();
+    const existingNames = new Set(existingIsps.map(isp => isp.ispName.toLowerCase()));
+    
+    let added = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    
+    // Limit to 1000 ISPs per request to avoid performance issues
+    const maxBulkSize = 1000;
+    if (ispNames.length > maxBulkSize) {
+      return {
+        added: 0,
+        skipped: 0,
+        errors: [`Too many ISPs in one request. Maximum is ${maxBulkSize}, received ${ispNames.length}`]
+      };
+    }
+    
+    for (const ispName of ispNames) {
+      const trimmedName = ispName.trim();
+      
+      if (trimmedName.length === 0) {
+        skipped++;
+        continue;
+      }
+      
+      if (trimmedName.length > 255) {
+        errors.push(`ISP name too long (max 255 chars): "${trimmedName.substring(0, 50)}..."`);
+        continue;
+      }
+      
+      if (existingNames.has(trimmedName.toLowerCase())) {
+        skipped++;
+        continue;
+      }
+      
+      try {
+        await this.addIspToBlacklist({
+          ispName: trimmedName,
+          category,
+          enabled: true
+        });
+        existingNames.add(trimmedName.toLowerCase());
+        added++;
+      } catch (error) {
+        errors.push(`Failed to add "${trimmedName}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+    
+    return { added, skipped, errors };
   }
 
   async removeIspFromBlacklist(id: string): Promise<boolean> {

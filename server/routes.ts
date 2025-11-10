@@ -1770,6 +1770,28 @@ Disallow: /*`);
     }
   });
 
+  // Bulk add ISPs to blacklist
+  app.post("/api/isp-blacklist/bulk", requireAuth, async (req, res) => {
+    try {
+      const { ispNames, category } = req.body;
+      
+      if (!ispNames || !Array.isArray(ispNames)) {
+        return res.status(400).json({ message: "ispNames array is required" });
+      }
+      
+      if (ispNames.length === 0) {
+        return res.status(400).json({ message: "ispNames array cannot be empty" });
+      }
+      
+      const result = await storage.bulkAddIspsToBlacklist(ispNames, category || "Other");
+      
+      res.json(result);
+    } catch (error) {
+      console.error("Bulk add ISPs error:", error);
+      res.status(500).json({ message: "Failed to bulk add ISPs to blacklist" });
+    }
+  });
+
   // Load default blacklist (50+ bot ISPs)
   app.post("/api/isp-blacklist/load-defaults", requireAuth, async (req, res) => {
     try {

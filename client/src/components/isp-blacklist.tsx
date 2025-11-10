@@ -28,6 +28,8 @@ export default function IspBlacklist() {
   const [filterCategory, setFilterCategory] = useState("all");
   const [newIspName, setNewIspName] = useState("");
   const [newIspCategory, setNewIspCategory] = useState("Datacenter");
+  const [bulkIspText, setBulkIspText] = useState("");
+  const [bulkCategory, setBulkCategory] = useState("Datacenter");
 
   const { data: blacklistedIsps = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/isp-blacklist"],
@@ -44,6 +46,13 @@ export default function IspBlacklist() {
         description: `${data.loaded} bot ISPs loaded into blacklist`,
       });
     },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to load default blacklist",
+        variant: "destructive",
+      });
+    },
   });
 
   const addIspMutation = useMutation({
@@ -58,6 +67,13 @@ export default function IspBlacklist() {
         description: "ISP added to blacklist",
       });
     },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add ISP to blacklist",
+        variant: "destructive",
+      });
+    },
   });
 
   const removeIspMutation = useMutation({
@@ -66,6 +82,38 @@ export default function IspBlacklist() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/isp-blacklist"] });
+      toast({
+        title: "Success",
+        description: "ISP removed from blacklist",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to remove ISP from blacklist",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const bulkAddMutation = useMutation({
+    mutationFn: async (data: { ispNames: string[]; category: string }) => {
+      return apiRequest("POST", "/api/isp-blacklist/bulk", data);
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/isp-blacklist"] });
+      setBulkIspText("");
+      toast({
+        title: "Success",
+        description: `${data.added} ISPs added to blacklist`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to bulk add ISPs",
+        variant: "destructive",
+      });
     },
   });
 
@@ -82,6 +130,36 @@ export default function IspBlacklist() {
     addIspMutation.mutate({
       ispName: newIspName.trim(),
       category: newIspCategory,
+    });
+  };
+
+  const handleBulkAdd = () => {
+    if (!bulkIspText.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter ISP names (one per line)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const ispNames = bulkIspText
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+
+    if (ispNames.length === 0) {
+      toast({
+        title: "Error",
+        description: "No valid ISP names found",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    bulkAddMutation.mutate({
+      ispNames,
+      category: bulkCategory,
     });
   };
 
@@ -181,6 +259,46 @@ export default function IspBlacklist() {
               <Plus className="h-4 w-4 mr-2" />
               Add to Blacklist
             </Button>
+          </div>
+
+          <div className="border rounded-lg p-4 space-y-4 bg-muted/50">
+            <h3 className="font-medium">Bulk Upload ISPs</h3>
+            <p className="text-sm text-muted-foreground">
+              Enter multiple ISP names (one per line) to add them all at once
+            </p>
+            <textarea
+              placeholder={"Example:\nAmazon.com\nGoogle LLC\nMicrosoft Corporation\nDigitalOcean"}
+              value={bulkIspText}
+              onChange={(e) => setBulkIspText(e.target.value)}
+              className="w-full h-32 p-3 border rounded-md resize-none font-mono text-sm"
+              data-testid="textarea-bulk-upload"
+            />
+            <div className="flex items-center gap-4">
+              <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                <SelectTrigger className="w-48" data-testid="select-bulk-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Datacenter">Datacenter</SelectItem>
+                  <SelectItem value="VPN">VPN</SelectItem>
+                  <SelectItem value="Proxy">Proxy</SelectItem>
+                  <SelectItem value="Tor">Tor</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                onClick={handleBulkAdd}
+                disabled={bulkAddMutation.isPending}
+                variant="default"
+                data-testid="button-bulk-upload"
+              >
+                {bulkAddMutation.isPending && (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                )}
+                <Plus className="h-4 w-4 mr-2" />
+                Bulk Add ISPs
+              </Button>
+            </div>
           </div>
 
           <div className="border rounded-lg">
