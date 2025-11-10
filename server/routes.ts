@@ -58,6 +58,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.redirect(301, 'https://www.google.com');
     }
     
+    // Redirect /api and /api/* to Google.com for privacy (except /api/classify)
+    if (req.path === '/api' || (req.path.startsWith('/api/') && req.path !== '/api/classify')) {
+      return res.redirect(301, 'https://www.google.com');
+    }
+    
     // Continue to normal routes for non-api subdomains
     next();
   });
