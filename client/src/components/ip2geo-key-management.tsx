@@ -78,7 +78,7 @@ export default function Ip2GeoKeyManagement() {
         <CardHeader>
           <CardTitle className="text-lg font-semibold text-foreground">
             <Globe className="text-primary mr-2 inline h-5 w-5" />
-            CleanTraffic API
+            IP2Location API
           </CardTitle>
         </CardHeader>
         <CardContent>
