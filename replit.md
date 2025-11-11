@@ -1,8 +1,8 @@
-# CleanTraffic - Pure, Clean Visitor Data
+# Bot Detection System
 
 ## Overview
 
-CleanTraffic is a full-stack web application for real-time bot vs. human visitor detection and classification. It provides administrators with a dashboard for monitoring statistics, managing detection rules, and viewing classification results. The system aims to deliver clean, reliable website visitor data, supporting business insights and market potential by filtering out irrelevant bot traffic.
+A white-label, anonymous full-stack web application for real-time bot vs. human visitor detection and classification. It provides administrators with a dashboard for monitoring statistics, managing detection rules, and viewing classification results. The system delivers reliable website visitor data with complete brand removal and privacy-focused data retention.
 
 ## User Preferences
 
@@ -20,7 +20,7 @@ The backend is an Express.js application in TypeScript, providing a RESTful API.
 
 ### Data Storage Solutions
 
-CleanTraffic primarily uses PostgreSQL (Neon serverless with connection pooling) via Drizzle ORM for type-safe database operations. An abstracted storage layer supports both in-memory (development) and PostgreSQL (production). The schema includes `users`, `classifications`, `detection_rules`, and `settings` for permanent configurations like API keys.
+The system primarily uses PostgreSQL (Neon serverless with connection pooling) via Drizzle ORM for type-safe database operations. An abstracted storage layer supports both in-memory (development) and PostgreSQL (production). The schema includes `users`, `classifications`, `detection_rules`, and `settings` for permanent configurations like API keys.
 
 ### Authentication and Authorization
 
@@ -28,11 +28,34 @@ The system employs session-based authentication with Express sessions. Passwords
 
 ### System Design Choices
 
-CleanTraffic utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+The system utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+
+### White-Label & Privacy Features
+
+The system is completely white-labeled with no product name or branding visible to users:
+- No product names in UI (admin dashboard, user dashboard, login pages)
+- Generic page titles and empty meta descriptions
+- robots.txt blocks all search engines
+- localStorage keys use generic "app_remember_me" instead of branded keys
+- All taglines and marketing text removed
+- Maintains full functionality without any visible branding
 
 ## Recent Changes
 
-### November 10, 2025 (Latest)
+### November 11, 2025 (Latest)
+- **✅ COMPLETE WHITE-LABEL IMPLEMENTATION**: Removed all product branding and names
+  - **HTML Changes**: Updated page title to "Dashboard" with empty meta description
+  - **UI Changes**: Removed all product names, taglines, and marketing text from login pages, dashboards, sidebar
+  - **localStorage Keys**: Changed from branded keys to generic "app_remember_me"
+  - **SEO Prevention**: Created public/robots.txt to block all search engines ("User-agent: *, Disallow: /")
+  - **Privacy Focus**: Legal notices updated to use generic "this service" instead of product names
+  - **Zero Branding**: Users see only form fields and navigation, no product identity
+  - **ISP Blacklist Bulk Upload**: Added bulk upload feature (up to 1000 ISPs)
+    - Frontend: Textarea for pasting multiple ISP names, category selection
+    - Backend: Deduplication, validation, error handling, detailed feedback
+    - Returns: {added, skipped, errors[]} with actionable error messages
+
+### November 10, 2025
 - **🔧 PHP SCRIPT PRODUCTION FIX + CACHE INVALIDATION**: Resolved caching and bot detection issues
   - **Problem 1 - Headers Already Sent**: White pages and header errors on cPanel/aaPanel production servers
     - **Root Cause**: Mixed server/client logic causing premature HTML output before headers
