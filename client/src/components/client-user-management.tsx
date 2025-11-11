@@ -107,7 +107,7 @@ export default function ClientUserManagement() {
               Client User Management
             </CardTitle>
             <CardDescription>
-              Manage client users who access the CleanTraffic service
+              Manage client users who access the service
             </CardDescription>
           </div>
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
@@ -121,7 +121,7 @@ export default function ClientUserManagement() {
               <DialogHeader>
                 <DialogTitle>Create New Client User</DialogTitle>
                 <DialogDescription>
-                  Create a new user account for accessing CleanTraffic
+                  Create a new user account for accessing the service
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">

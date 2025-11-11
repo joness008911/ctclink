@@ -155,7 +155,7 @@ export default function WhitelabelDomainSettings() {
           <div className="space-y-2 text-sm text-muted-foreground">
             <div className="flex items-start">
               <span className="text-green-600 mr-2">✓</span>
-              <span>Client users download PHP scripts with YOUR domain (not CleanTraffic)</span>
+              <span>Client users download PHP scripts with YOUR domain</span>
             </div>
             <div className="flex items-start">
               <span className="text-green-600 mr-2">✓</span>
