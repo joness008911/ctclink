@@ -18,7 +18,7 @@ export default function ApiVerify() {
   const [rememberMe, setRememberMe] = useState(false);
 
   useEffect(() => {
-    const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+    const savedCreds = localStorage.getItem('app_remember_me');
     console.log("[API Verify] Loading saved credentials:", savedCreds);
     if (savedCreds) {
       try {
@@ -44,7 +44,7 @@ export default function ApiVerify() {
     mutationFn: (apiKey: string) => userAuthApi.verifyApiKey({ apiKey }),
     onSuccess: (data) => {
       if (rememberMe) {
-        const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+        const savedCreds = localStorage.getItem('app_remember_me');
         let existingCreds = {};
         if (savedCreds) {
           try {
@@ -53,20 +53,20 @@ export default function ApiVerify() {
             console.error("Failed to parse saved credentials");
           }
         }
-        localStorage.setItem('cleantraffic_remember_me', JSON.stringify({
+        localStorage.setItem('app_remember_me', JSON.stringify({
           ...existingCreds,
           apiKey
         }));
       } else {
-        const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+        const savedCreds = localStorage.getItem('app_remember_me');
         if (savedCreds) {
           try {
             const creds = JSON.parse(savedCreds);
             delete creds.apiKey;
             if (Object.keys(creds).length > 0) {
-              localStorage.setItem('cleantraffic_remember_me', JSON.stringify(creds));
+              localStorage.setItem('app_remember_me', JSON.stringify(creds));
             } else {
-              localStorage.removeItem('cleantraffic_remember_me');
+              localStorage.removeItem('app_remember_me');
             }
           } catch (e) {
             console.error("Failed to update saved credentials");
@@ -76,7 +76,7 @@ export default function ApiVerify() {
       
       toast({
         title: "API Key Verified",
-        description: "Welcome to your CleanTraffic dashboard!",
+        description: "Welcome to your dashboard!",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/user/me"] });
       navigate("/user");

@@ -49,10 +49,6 @@ export default function Sidebar() {
           <div className="bg-white bg-opacity-20 rounded-lg p-2">
             <Shield className="text-xl h-6 w-6" />
           </div>
-          <div>
-            <h1 className="text-lg font-semibold">CleanTraffic</h1>
-            <p className="text-sm opacity-80">Pure, clean visitor data</p>
-          </div>
         </div>
       </div>
       

@@ -60,10 +60,6 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Shield className="h-8 w-8 text-primary" />
-              <div>
-                <h2 className="text-2xl font-bold text-foreground">CleanTraffic Admin</h2>
-                <p className="text-sm text-muted-foreground">Pure, clean visitor data with real-time analytics</p>
-              </div>
             </div>
             <div className="flex items-center space-x-4">
               <div className="bg-green-600 text-white px-3 py-1.5 rounded-full text-sm font-medium">

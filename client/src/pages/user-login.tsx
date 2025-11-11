@@ -18,7 +18,7 @@ export default function UserLogin() {
   const [rememberMe, setRememberMe] = useState(false);
 
   useEffect(() => {
-    const savedCreds = localStorage.getItem('cleantraffic_remember_me');
+    const savedCreds = localStorage.getItem('app_remember_me');
     if (savedCreds) {
       try {
         const { username: savedUsername, password: savedPassword } = JSON.parse(savedCreds);
@@ -35,12 +35,12 @@ export default function UserLogin() {
     mutationFn: userAuthApi.login,
     onSuccess: (data) => {
       if (rememberMe) {
-        localStorage.setItem('cleantraffic_remember_me', JSON.stringify({
+        localStorage.setItem('app_remember_me', JSON.stringify({
           username,
           password
         }));
       } else {
-        localStorage.removeItem('cleantraffic_remember_me');
+        localStorage.removeItem('app_remember_me');
       }
       
       toast({
@@ -78,10 +78,6 @@ export default function UserLogin() {
           <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
             <ShieldCheck className="w-8 h-8 text-primary" />
           </div>
-          <CardTitle className="text-2xl font-bold">CleanTraffic</CardTitle>
-          <CardDescription className="text-base">
-            Login to manage your traffic filtering
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -137,9 +133,6 @@ export default function UserLogin() {
             </Button>
           </form>
 
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            <p>Step 1 of 2: Enter your credentials</p>
-          </div>
         </CardContent>
       </Card>
     </div>

@@ -470,8 +470,7 @@ die('Service temporarily unavailable. Please try again later.');
             <div className="flex items-center space-x-3">
               <Shield className="h-8 w-8 text-primary" />
               <div>
-                <h1 className="text-2xl font-bold text-foreground">CleanTraffic</h1>
-                <p className="text-sm text-muted-foreground">Welcome back, {user?.username}</p>
+                <p className="text-sm text-muted-foreground">{user?.username}</p>
               </div>
             </div>
             <Button 
@@ -686,7 +685,6 @@ die('Service temporarily unavailable. Please try again later.');
                   <div className="text-center py-12 text-muted-foreground">
                     <Activity className="h-12 w-12 mx-auto mb-3 opacity-30" />
                     <p className="font-medium">No visitors yet</p>
-                    <p className="text-sm mt-1">Install the PHP script to start tracking visitor data</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -966,7 +964,7 @@ die('Service temporarily unavailable. Please try again later.');
                     User Liability & Responsibility
                   </h3>
                   <p className="text-sm text-blue-800 dark:text-blue-200">
-                    You are solely responsible for how you use CleanTraffic and any consequences arising from its use. 
+                    You are solely responsible for how you use this service and any consequences arising from its use. 
                     By using this service, you agree to comply with all applicable laws and regulations, including but not limited to 
                     privacy laws (GDPR, CCPA), anti-discrimination laws, and search engine guidelines. You are liable for ensuring 
                     your implementation is lawful and ethical.
@@ -995,7 +993,7 @@ die('Service temporarily unavailable. Please try again later.');
                     Service Purpose: Security Only
                   </h3>
                   <p className="text-sm text-purple-800 dark:text-purple-200">
-                    <strong>CleanTraffic is designed exclusively for legitimate security and bot prevention purposes.</strong> 
+                    <strong>This service is designed exclusively for legitimate security and bot prevention purposes.</strong> 
                     It analyzes visitor IP addresses to detect datacenter traffic, VPNs, proxies, and automated bots, 
                     then redirects visitors accordingly. This service should NOT be used for cloaking (showing different content 
                     to search engines), fraudulent activities, discrimination, or any illegal purposes. Use responsibly.
@@ -1006,7 +1004,7 @@ die('Service temporarily unavailable. Please try again later.');
                   <p className="text-xs text-orange-800 dark:text-orange-200 flex items-center gap-2">
                     <AlertTriangle className="h-3.5 w-3.5" />
                     <span>
-                      <strong>Disclaimer:</strong> CleanTraffic provides tools only. You are responsible for compliance with all applicable laws in your jurisdiction.
+                      <strong>Disclaimer:</strong> This service provides tools only. You are responsible for compliance with all applicable laws in your jurisdiction.
                     </span>
                   </p>
                 </div>

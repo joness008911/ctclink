@@ -53,8 +53,6 @@ export default function Login() {
             <div className="bg-primary rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
               <Shield className="text-primary-foreground text-2xl h-8 w-8" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">CleanTraffic</h1>
-            <p className="text-muted-foreground mt-2">Pure, clean visitor data</p>
           </div>
           
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -110,12 +108,6 @@ export default function Login() {
             </Button>
           </form>
           
-          <div className="mt-6 p-4 bg-muted rounded-md">
-            <p className="text-sm text-muted-foreground text-center">
-              <Shield className="inline mr-2 h-4 w-4" />
-              Secure admin access for CleanTraffic analytics
-            </p>
-          </div>
         </CardContent>
       </Card>
     </div>
