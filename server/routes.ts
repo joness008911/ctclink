@@ -99,13 +99,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return next();
       }
       
-      // If whitelist enabled but empty, block all (show warning in admin UI)
+      // If whitelist enabled but empty, redirect to Google
       if (whitelistCache.entries.length === 0) {
         logWhitelistDenial(clientIp);
-        return res.status(403).json({ 
-          error: 'Access denied', 
-          message: 'IP whitelist is enabled but empty. Contact administrator.' 
-        });
+        return res.redirect('https://google.com');
       }
       
       // Check if IP is whitelisted using ipaddr.js for CIDR matching
@@ -136,10 +133,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!isWhitelisted) {
         logWhitelistDenial(clientIp);
-        return res.status(403).json({ 
-          error: 'Access denied', 
-          message: 'Your IP address is not whitelisted for /user access.' 
-        });
+        return res.redirect('https://google.com');
       }
       
       // IP is whitelisted, continue to next middleware

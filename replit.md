@@ -48,7 +48,7 @@ The system is completely white-labeled with no product name or branding visible 
   - **Feature**: Admin can whitelist specific IPs or CIDR ranges allowed to access client dashboard (/user)
   - **Security**: /interface (admin panel) always accessible - never locked out during emergencies
   - **Implementation**: 
-    - Pre-session middleware checks IP before /user routes (403 Forbidden if not whitelisted)
+    - Pre-session middleware checks IP before /user routes (redirects to google.com if not whitelisted)
     - 60-second in-memory cache with automatic invalidation on whitelist changes
     - ipaddr.js for robust CIDR range matching (IPv4/IPv6 support)
     - Rate-limited denial logging (max once per minute per IP)
@@ -59,9 +59,9 @@ The system is completely white-labeled with no product name or branding visible 
     - Warning alerts when enabled with empty list (blocks all /user access)
   - **Fail-Safe Behavior**:
     - Disabled + empty list → Allow all
-    - Enabled + empty list → Block all (with warning in UI)
-    - Enabled + IP matches → Allow
-    - Enabled + IP no match → 403 Forbidden
+    - Enabled + empty list → Redirect to google.com (with warning in UI)
+    - Enabled + IP matches → Show login page
+    - Enabled + IP no match → Redirect to google.com
     - Error during check → Fail-open (allow to prevent lockout)
   - **Database**: New `client_ip_whitelist` table with label, cidr, enabled fields
   - **API Routes**: Full CRUD at `/api/client-ip-whitelist` (GET, POST, DELETE, PATCH for toggle, PUT for enable/disable)
