@@ -99,6 +99,15 @@ export const cidrBlocklist = pgTable("cidr_blocklist", {
   addedAt: timestamp("added_at").defaultNow().notNull(),
 });
 
+// Client IP Whitelist (IPs/CIDR ranges allowed to access /user dashboard)
+export const clientIpWhitelist = pgTable("client_ip_whitelist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  label: varchar("label", { length: 255 }).notNull(), // e.g., "Office Network", "Home IP"
+  cidr: varchar("cidr", { length: 50 }).notNull(), // e.g., "192.168.1.100" or "10.0.0.0/24"
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Client Users (End-user customers who use the CleanTraffic service)
 export const clientUsers = pgTable("client_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -176,6 +185,11 @@ export const insertCidrBlocklistSchema = createInsertSchema(cidrBlocklist).omit(
   addedAt: true,
 });
 
+export const insertClientIpWhitelistSchema = createInsertSchema(clientIpWhitelist).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertClientUserSchema = createInsertSchema(clientUsers).omit({
   id: true,
   createdAt: true,
@@ -207,6 +221,8 @@ export type InsertIpBlocklist = z.infer<typeof insertIpBlocklistSchema>;
 export type IpBlocklist = typeof ipBlocklist.$inferSelect;
 export type InsertCidrBlocklist = z.infer<typeof insertCidrBlocklistSchema>;
 export type CidrBlocklist = typeof cidrBlocklist.$inferSelect;
+export type InsertClientIpWhitelist = z.infer<typeof insertClientIpWhitelistSchema>;
+export type ClientIpWhitelist = typeof clientIpWhitelist.$inferSelect;
 export type InsertClientUser = z.infer<typeof insertClientUserSchema>;
 export type ClientUser = typeof clientUsers.$inferSelect;
 export type InsertUserRedirectUrls = z.infer<typeof insertUserRedirectUrlsSchema>;
