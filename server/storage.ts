@@ -17,6 +17,8 @@ import {
   type InsertIpBlocklist,
   type CidrBlocklist,
   type InsertCidrBlocklist,
+  type ClientIpWhitelist,
+  type InsertClientIpWhitelist,
   type ClientUser,
   type InsertClientUser,
   type UserRedirectUrls,
@@ -30,6 +32,7 @@ import {
   ispBlacklist,
   ipBlocklist,
   cidrBlocklist,
+  clientIpWhitelist,
   clientUsers,
   userRedirectUrls,
   settings
@@ -144,6 +147,15 @@ export interface IStorage {
   toggleCidrBlocklist(id: string, enabled: boolean): Promise<boolean>;
   isIpInBlockedCidrRange(ipAddress: string): Promise<boolean>;
   
+  // Client IP Whitelist methods (for /user dashboard access control)
+  getClientIpWhitelist(): Promise<ClientIpWhitelist[]>;
+  addIpToWhitelist(ip: InsertClientIpWhitelist): Promise<ClientIpWhitelist>;
+  removeIpFromWhitelist(id: string): Promise<boolean>;
+  toggleIpWhitelist(id: string, enabled: boolean): Promise<boolean>;
+  isIpWhitelisted(ipAddress: string): Promise<boolean>;
+  isClientWhitelistEnabled(): Promise<boolean>;
+  setClientWhitelistEnabled(enabled: boolean): Promise<void>;
+  
   // Client User methods (for end-user customers)
   createClientUser(user: InsertClientUser): Promise<ClientUser>;
   getClientUser(id: string): Promise<ClientUser | undefined>;
@@ -177,6 +189,7 @@ export class MemStorage implements IStorage {
   private countryWhitelist: Map<string, CountryWhitelist>;
   private ispWhitelist: Map<string, IspWhitelist>;
   private ispBlacklist: Map<string, IspBlacklist>;
+  private clientIpWhitelist: Map<string, ClientIpWhitelist>;
   private clientUsers: Map<string, ClientUser>;
   private redirectUrls: Map<string, UserRedirectUrls>;
   private settings: Map<string, string>;
@@ -188,6 +201,7 @@ export class MemStorage implements IStorage {
     this.countryWhitelist = new Map();
     this.ispWhitelist = new Map();
     this.ispBlacklist = new Map();
+    this.clientIpWhitelist = new Map();
     this.clientUsers = new Map();
     this.redirectUrls = new Map();
     this.settings = new Map();
@@ -717,6 +731,77 @@ export class MemStorage implements IStorage {
 
   async setSetting(key: string, value: string): Promise<void> {
     this.settings.set(key, value);
+  }
+
+  // Client IP Whitelist methods
+  async getClientIpWhitelist(): Promise<ClientIpWhitelist[]> {
+    return Array.from(this.clientIpWhitelist.values())
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  async addIpToWhitelist(ip: InsertClientIpWhitelist): Promise<ClientIpWhitelist> {
+    const id = randomUUID();
+    const newIp: ClientIpWhitelist = {
+      ...ip,
+      id,
+      enabled: ip.enabled ?? true,
+      createdAt: new Date()
+    };
+    this.clientIpWhitelist.set(id, newIp);
+    return newIp;
+  }
+
+  async removeIpFromWhitelist(id: string): Promise<boolean> {
+    return this.clientIpWhitelist.delete(id);
+  }
+
+  async toggleIpWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const ip = this.clientIpWhitelist.get(id);
+    if (ip) {
+      ip.enabled = enabled;
+      this.clientIpWhitelist.set(id, ip);
+      return true;
+    }
+    return false;
+  }
+
+  async isIpWhitelisted(ipAddress: string): Promise<boolean> {
+    const whitelistEnabled = await this.isClientWhitelistEnabled();
+    
+    if (!whitelistEnabled) {
+      return true;
+    }
+    
+    const enabledEntries = Array.from(this.clientIpWhitelist.values())
+      .filter(entry => entry.enabled);
+    
+    if (enabledEntries.length === 0) {
+      return false;
+    }
+    
+    for (const entry of enabledEntries) {
+      if (entry.cidr === ipAddress) {
+        return true;
+      }
+      
+      if (entry.cidr.includes('/')) {
+        const cidrPrefix = entry.cidr.split('/')[0];
+        if (ipAddress.startsWith(cidrPrefix.substring(0, cidrPrefix.lastIndexOf('.')))) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  async isClientWhitelistEnabled(): Promise<boolean> {
+    const setting = this.settings.get('clientWhitelistEnabled');
+    return setting === 'true';
+  }
+
+  async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
+    this.settings.set('clientWhitelistEnabled', enabled ? 'true' : 'false');
   }
 }
 
@@ -1253,6 +1338,84 @@ export class DatabaseStorage implements IStorage {
         .insert(settings)
         .values({ key, value });
     }
+  }
+
+  // Client IP Whitelist methods
+  async getClientIpWhitelist(): Promise<ClientIpWhitelist[]> {
+    const results = await db
+      .select()
+      .from(clientIpWhitelist)
+      .orderBy(clientIpWhitelist.label);
+    return results;
+  }
+
+  async addIpToWhitelist(ip: InsertClientIpWhitelist): Promise<ClientIpWhitelist> {
+    const [newIp] = await db
+      .insert(clientIpWhitelist)
+      .values({
+        ...ip,
+        enabled: ip.enabled ?? true
+      })
+      .returning();
+    return newIp;
+  }
+
+  async removeIpFromWhitelist(id: string): Promise<boolean> {
+    const result = await db
+      .delete(clientIpWhitelist)
+      .where(eq(clientIpWhitelist.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async toggleIpWhitelist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(clientIpWhitelist)
+      .set({ enabled })
+      .where(eq(clientIpWhitelist.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async isIpWhitelisted(ipAddress: string): Promise<boolean> {
+    const whitelistEnabled = await this.isClientWhitelistEnabled();
+    
+    if (!whitelistEnabled) {
+      return true;
+    }
+    
+    const enabledEntries = await db
+      .select()
+      .from(clientIpWhitelist)
+      .where(eq(clientIpWhitelist.enabled, true));
+    
+    if (enabledEntries.length === 0) {
+      return false;
+    }
+    
+    for (const entry of enabledEntries) {
+      if (entry.cidr === ipAddress) {
+        return true;
+      }
+      
+      if (entry.cidr.includes('/')) {
+        const cidrPrefix = entry.cidr.split('/')[0];
+        if (ipAddress.startsWith(cidrPrefix.substring(0, cidrPrefix.lastIndexOf('.')))) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  }
+
+  async isClientWhitelistEnabled(): Promise<boolean> {
+    const setting = await this.getSetting('clientWhitelistEnabled');
+    return setting === 'true';
+  }
+
+  async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
+    await this.setSetting('clientWhitelistEnabled', enabled ? 'true' : 'false');
   }
 }
 
