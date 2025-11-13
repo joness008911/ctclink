@@ -28,7 +28,7 @@ The system employs session-based authentication with Express sessions. Passwords
 
 ### System Design Choices
 
-The system utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+The system utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling, with 10-minute silent logging to reduce log spam from repeat visitors. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
 
 ### White-Label & Privacy Features
 
@@ -42,7 +42,19 @@ The system is completely white-labeled with no product name or branding visible 
 
 ## Recent Changes
 
-### November 11, 2025 (Latest)
+### November 13, 2025 (Latest)
+- **🔇 10-MINUTE SILENT LOGGING**: Implemented intelligent rate limiting for classification logs
+  - **Feature**: First visit from an IP address is logged normally, subsequent visits from the same IP within 10 minutes are processed silently (not logged), then logging resumes after 10 minutes
+  - **Purpose**: Reduces log spam from repeat visitors while maintaining accurate classification responses
+  - **Implementation**: In-memory tracking map (`ipLastLogTime`) with hourly cleanup to prevent memory leaks
+  - **Behavior**: 
+    - First visit from IP X at 1:00 PM → Logged to database ✅
+    - Same IP visits at 1:05 PM → Silent (not logged) 🔇
+    - Same IP visits at 1:11 PM → Logged to database ✅ (10+ minutes elapsed)
+  - **Benefits**: Cleaner logs, reduced database writes, maintained classification accuracy
+  - **Console Logging**: Shows "📝 Logged classification" or "🔇 Silent mode" with time remaining until next log
+
+### November 11, 2025
 - **✅ COMPLETE WHITE-LABEL IMPLEMENTATION**: Removed all product branding and names
   - **HTML Changes**: Updated page title to "Dashboard" with empty meta description
   - **UI Changes**: Removed all product names, taglines, and marketing text from login pages, dashboards, sidebar

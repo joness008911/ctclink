@@ -18,9 +18,25 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
 
+// 10-minute silent logging: Track last log time for each IP
+// First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
+const ipLastLogTime = new Map<string, number>();
+const SILENT_LOG_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
   app.set('trust proxy', true);
+  
+  // Clean up old IP log entries every hour to prevent memory leak
+  setInterval(() => {
+    const now = Date.now();
+    const entries = Array.from(ipLastLogTime.entries());
+    for (const [ip, lastLogTime] of entries) {
+      if (now - lastLogTime > SILENT_LOG_DURATION) {
+        ipLastLogTime.delete(ip);
+      }
+    }
+  }, 60 * 60 * 1000); // Run cleanup every hour
   
   // Session middleware
   app.use(session({
@@ -1162,20 +1178,50 @@ Disallow: /*`);
         console.log(`🚫 BLOCKED (Error Fail-Secure): ${clientIp} - API/System error, blocked for safety`);
       }
 
-      const classification = await storage.createClassification({
-        ipAddress: clientIp,
-        location: classificationData.location || 'Unknown',
-        country: classificationData.country_name || 'Unknown',
-        countryCode: classificationData.country_code || 'Unknown',
-        city: classificationData.city_name || 'Unknown',
-        region: classificationData.region_name || '',
-        browser: classificationData.browser || browser,
-        deviceType: classificationData.device_type || deviceType,
-        visitorType: visitorType,
-        isp: classificationData.isp || 'Unknown',
-        detectionMethod: classificationData.detection_method || 'IP Analysis',
-        apiKeyId: apiKeyId, // Track which API key made this request
-      });
+      // 10-MINUTE SILENT LOGGING: Check if this IP was logged recently
+      // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
+      const now = Date.now();
+      const lastLogTime = ipLastLogTime.get(clientIp);
+      const shouldLog = !lastLogTime || (now - lastLogTime > SILENT_LOG_DURATION);
+      
+      let classification: any;
+      
+      if (shouldLog) {
+        // Log this classification to the database
+        classification = await storage.createClassification({
+          ipAddress: clientIp,
+          location: classificationData.location || 'Unknown',
+          country: classificationData.country_name || 'Unknown',
+          countryCode: classificationData.country_code || 'Unknown',
+          city: classificationData.city_name || 'Unknown',
+          region: classificationData.region_name || '',
+          browser: classificationData.browser || browser,
+          deviceType: classificationData.device_type || deviceType,
+          visitorType: visitorType,
+          isp: classificationData.isp || 'Unknown',
+          detectionMethod: classificationData.detection_method || 'IP Analysis',
+          apiKeyId: apiKeyId, // Track which API key made this request
+        });
+        
+        // Update the last log time for this IP
+        ipLastLogTime.set(clientIp, now);
+        console.log(`📝 Logged classification for ${clientIp}`);
+      } else {
+        // Silent mode: Skip logging, but construct classification object from data
+        const timeSinceLastLog = Math.round((now - lastLogTime) / 1000); // seconds
+        console.log(`🔇 Silent mode: ${clientIp} last logged ${timeSinceLastLog}s ago (${Math.round(SILENT_LOG_DURATION / 1000 - timeSinceLastLog)}s until next log)`);
+        
+        classification = {
+          ipAddress: clientIp,
+          location: classificationData.location || 'Unknown',
+          country: classificationData.country_name || 'Unknown',
+          city: classificationData.city_name || 'Unknown',
+          browser: classificationData.browser || browser,
+          deviceType: classificationData.device_type || deviceType,
+          visitorType: visitorType,
+          isp: classificationData.isp || 'Unknown',
+        };
+      }
       
       // Email is captured from URL parameters (line 843) and available for redirect logic
       // but NOT stored in database for privacy (email variable available here if needed)
