@@ -17,11 +17,43 @@ import { UAParser } from "ua-parser-js";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
+import * as ipaddr from "ipaddr.js";
 
 // 10-minute silent logging: Track last log time for each IP
 // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
 const ipLastLogTime = new Map<string, number>();
 const SILENT_LOG_DURATION = 10 * 60 * 1000; // 10 minutes in milliseconds
+
+// IP Whitelist Cache: Store whitelist entries and enabled status in memory
+// Refreshes every 60 seconds to avoid DB lookups on every /user request
+interface WhitelistCache {
+  enabled: boolean;
+  entries: Array<{ cidr: string; enabled: boolean }>;
+  lastRefresh: number;
+}
+const whitelistCache: WhitelistCache = {
+  enabled: false,
+  entries: [],
+  lastRefresh: 0
+};
+const WHITELIST_CACHE_TTL = 60 * 1000; // 60 seconds
+
+// Cache invalidation helper - call this when whitelist is modified
+export function invalidateWhitelistCache() {
+  whitelistCache.lastRefresh = 0; // Force refresh on next request
+  console.log('🔄 IP whitelist cache invalidated');
+}
+
+// Rate-limited logging for IP whitelist denials (prevent log spam)
+const whitelistDenialLog = new Map<string, number>();
+function logWhitelistDenial(ip: string) {
+  const now = Date.now();
+  const lastLog = whitelistDenialLog.get(ip);
+  if (!lastLog || (now - lastLog > 60000)) { // Log max once per minute per IP
+    console.log(`🚫 IP whitelist: Blocked ${ip} from /user access`);
+    whitelistDenialLog.set(ip, now);
+  }
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Trust proxy to get real client IP
@@ -37,6 +69,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   }, 60 * 60 * 1000); // Run cleanup every hour
+  
+  // IP Whitelist Middleware - Runs BEFORE session to block unauthorized /user access early
+  app.use(async (req, res, next) => {
+    // Only check /user routes - exempt /interface (admin), /api, /assets, etc.
+    if (!req.path.startsWith('/user')) {
+      return next();
+    }
+    
+    // Get client IP - trust proxy headers from known reverse proxies
+    const clientIp = (req.ip || req.socket.remoteAddress || '').replace('::ffff:', '');
+    
+    try {
+      // Refresh cache if expired
+      const now = Date.now();
+      if (now - whitelistCache.lastRefresh > WHITELIST_CACHE_TTL) {
+        const [enabled, entries] = await Promise.all([
+          storage.isClientWhitelistEnabled(),
+          storage.getClientIpWhitelist()
+        ]);
+        whitelistCache.enabled = enabled;
+        whitelistCache.entries = entries.filter(e => e.enabled).map(e => ({ cidr: e.cidr, enabled: e.enabled }));
+        whitelistCache.lastRefresh = now;
+        console.log(`♻️ IP whitelist cache refreshed: ${enabled ? 'ENABLED' : 'DISABLED'}, ${whitelistCache.entries.length} entries`);
+      }
+      
+      // If whitelist disabled, allow all
+      if (!whitelistCache.enabled) {
+        return next();
+      }
+      
+      // If whitelist enabled but empty, block all (show warning in admin UI)
+      if (whitelistCache.entries.length === 0) {
+        logWhitelistDenial(clientIp);
+        return res.status(403).json({ 
+          error: 'Access denied', 
+          message: 'IP whitelist is enabled but empty. Contact administrator.' 
+        });
+      }
+      
+      // Check if IP is whitelisted using ipaddr.js for CIDR matching
+      let isWhitelisted = false;
+      const normalizedIp = ipaddr.process(clientIp);
+      
+      for (const entry of whitelistCache.entries) {
+        try {
+          // Check if entry is CIDR range (contains /)
+          if (entry.cidr.includes('/')) {
+            const [rangeAddr, prefixLength] = ipaddr.parseCIDR(entry.cidr);
+            if (normalizedIp.kind() === rangeAddr.kind() && normalizedIp.match(rangeAddr, prefixLength)) {
+              isWhitelisted = true;
+              break;
+            }
+          } else {
+            // Exact IP match
+            if (ipaddr.process(entry.cidr).toString() === normalizedIp.toString()) {
+              isWhitelisted = true;
+              break;
+            }
+          }
+        } catch (err) {
+          // Invalid CIDR notation in database - skip entry
+          console.error(`⚠️ Invalid whitelist entry: ${entry.cidr}`, err);
+        }
+      }
+      
+      if (!isWhitelisted) {
+        logWhitelistDenial(clientIp);
+        return res.status(403).json({ 
+          error: 'Access denied', 
+          message: 'Your IP address is not whitelisted for /user access.' 
+        });
+      }
+      
+      // IP is whitelisted, continue to next middleware
+      next();
+      
+    } catch (error) {
+      console.error('🚨 IP whitelist middleware error:', error);
+      // Fail-open on error to avoid locking out all users
+      next();
+    }
+  });
   
   // Session middleware
   app.use(session({
@@ -1954,6 +2068,104 @@ Disallow: /*`);
       }
     } catch (error) {
       console.error("Toggle ISP blacklist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ============================================
+  // Client IP Whitelist Management Routes
+  // ============================================
+
+  // Get all IP whitelist entries
+  app.get("/api/client-ip-whitelist", requireAuth, async (req, res) => {
+    try {
+      const entries = await storage.getClientIpWhitelist();
+      res.json(entries);
+    } catch (error) {
+      console.error("Get IP whitelist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add new IP to whitelist
+  app.post("/api/client-ip-whitelist", requireAuth, async (req, res) => {
+    try {
+      const { label, cidr } = req.body;
+      
+      if (!label || !cidr) {
+        return res.status(400).json({ message: "Label and CIDR are required" });
+      }
+
+      const entry = await storage.addIpToWhitelist({ label, cidr, enabled: true });
+      invalidateWhitelistCache(); // Force cache refresh
+      res.json({ success: true, entry });
+    } catch (error: any) {
+      console.error("Add IP to whitelist error:", error);
+      if (error.message?.includes('duplicate') || error.code === '23505') {
+        res.status(400).json({ message: "This IP/CIDR already exists in the whitelist" });
+      } else {
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  });
+
+  // Remove IP from whitelist
+  app.delete("/api/client-ip-whitelist/:id", requireAuth, async (req, res) => {
+    try {
+      const success = await storage.removeIpFromWhitelist(req.params.id);
+      if (success) {
+        invalidateWhitelistCache(); // Force cache refresh
+        res.json({ success: true, message: "IP removed from whitelist" });
+      } else {
+        res.status(404).json({ message: "IP entry not found" });
+      }
+    } catch (error) {
+      console.error("Remove IP from whitelist error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Toggle IP whitelist entry status
+  app.patch("/api/client-ip-whitelist/:id/toggle", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      const success = await storage.toggleIpWhitelist(req.params.id, enabled);
+      if (success) {
+        invalidateWhitelistCache(); // Force cache refresh
+        res.json({ success: true, message: "IP whitelist entry status updated" });
+      } else {
+        res.status(404).json({ message: "IP entry not found" });
+      }
+    } catch (error) {
+      console.error("Toggle IP whitelist entry error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get whitelist enabled status
+  app.get("/api/client-ip-whitelist/status", requireAuth, async (req, res) => {
+    try {
+      const enabled = await storage.isClientWhitelistEnabled();
+      res.json({ enabled });
+    } catch (error) {
+      console.error("Get whitelist status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Set whitelist enabled status
+  app.put("/api/client-ip-whitelist/status", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ message: "enabled must be a boolean" });
+      }
+      
+      await storage.setClientWhitelistEnabled(enabled);
+      invalidateWhitelistCache(); // Force cache refresh
+      res.json({ success: true, enabled, message: `IP whitelist ${enabled ? 'enabled' : 'disabled'}` });
+    } catch (error) {
+      console.error("Set whitelist status error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

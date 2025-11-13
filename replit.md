@@ -43,6 +43,29 @@ The system is completely white-labeled with no product name or branding visible 
 ## Recent Changes
 
 ### November 13, 2025 (Latest)
+
+- **🔒 IP WHITELIST FOR CLIENT DASHBOARD ACCESS**: Implemented IP-based access control for /user routes
+  - **Feature**: Admin can whitelist specific IPs or CIDR ranges allowed to access client dashboard (/user)
+  - **Security**: /interface (admin panel) always accessible - never locked out during emergencies
+  - **Implementation**: 
+    - Pre-session middleware checks IP before /user routes (403 Forbidden if not whitelisted)
+    - 60-second in-memory cache with automatic invalidation on whitelist changes
+    - ipaddr.js for robust CIDR range matching (IPv4/IPv6 support)
+    - Rate-limited denial logging (max once per minute per IP)
+  - **Admin UI**: New "🔒 IP Whitelist" tab in admin dashboard
+    - Enable/disable toggle (disabled = allow all)
+    - Add entries with label + CIDR/IP (e.g., "192.168.1.100" or "10.0.0.0/24")
+    - Delete entries, toggle individual entry status
+    - Warning alerts when enabled with empty list (blocks all /user access)
+  - **Fail-Safe Behavior**:
+    - Disabled + empty list → Allow all
+    - Enabled + empty list → Block all (with warning in UI)
+    - Enabled + IP matches → Allow
+    - Enabled + IP no match → 403 Forbidden
+    - Error during check → Fail-open (allow to prevent lockout)
+  - **Database**: New `client_ip_whitelist` table with label, cidr, enabled fields
+  - **API Routes**: Full CRUD at `/api/client-ip-whitelist` (GET, POST, DELETE, PATCH for toggle, PUT for enable/disable)
+
 - **🔇 10-MINUTE SILENT LOGGING**: Implemented intelligent rate limiting for classification logs
   - **Feature**: First visit from an IP address is logged normally, subsequent visits from the same IP within 10 minutes are processed silently (not logged), then logging resumes after 10 minutes
   - **Purpose**: Reduces log spam from repeat visitors while maintaining accurate classification responses

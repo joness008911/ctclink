@@ -1,6 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle, Code, Copy, LogOut, Server, Shield, User } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { CheckCircle, Code, Copy, LogOut, Server, Shield, User, ShieldCheck, Trash2, AlertCircle, Info } from "lucide-react";
 import ClassificationTable from "@/components/classification-table";
 import DetectionRules from "@/components/detection-rules";
 import ApiKeyManagement from "@/components/api-key-management";
@@ -16,10 +20,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authApi, type User as AuthUser } from "@/lib/auth";
+import { apiRequest } from "@/lib/queryClient";
+import { useState } from "react";
+
+interface IpWhitelistEntry {
+  id: string;
+  label: string;
+  cidr: string;
+  enabled: boolean;
+}
+
+interface IpWhitelistStatus {
+  enabled: boolean;
+}
 
 export default function Dashboard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const [ipLabel, setIpLabel] = useState("");
+  const [ipCidr, setIpCidr] = useState("");
   
   const { data: user } = useQuery<AuthUser>({
     queryKey: ["/api/auth/user"],
@@ -43,6 +63,97 @@ export default function Dashboard() {
     },
   });
 
+  const { data: ipWhitelistEntries = [], isLoading: isLoadingEntries } = useQuery<IpWhitelistEntry[]>({
+    queryKey: ["/api/client-ip-whitelist"],
+  });
+
+  const { data: ipWhitelistStatus } = useQuery<IpWhitelistStatus>({
+    queryKey: ["/api/client-ip-whitelist/status"],
+  });
+
+  const addIpWhitelistMutation = useMutation({
+    mutationFn: async (data: { label: string; cidr: string }) => {
+      return await apiRequest("POST", "/api/client-ip-whitelist", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-ip-whitelist"] });
+      setIpLabel("");
+      setIpCidr("");
+      toast({
+        title: "Success",
+        description: "IP whitelist entry added successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add IP whitelist entry",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteIpWhitelistMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/client-ip-whitelist/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-ip-whitelist"] });
+      toast({
+        title: "Success",
+        description: "IP whitelist entry deleted successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete IP whitelist entry",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleIpWhitelistEntryMutation = useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
+      return await apiRequest("PATCH", `/api/client-ip-whitelist/${id}/toggle`, { enabled });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-ip-whitelist"] });
+      toast({
+        title: "Success",
+        description: "IP whitelist entry updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update IP whitelist entry",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const toggleIpWhitelistStatusMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      return await apiRequest("PUT", "/api/client-ip-whitelist/status", { enabled });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/client-ip-whitelist"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/client-ip-whitelist/status"] });
+      toast({
+        title: "Success",
+        description: "IP whitelist status updated successfully",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update IP whitelist status",
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyApiUrl = () => {
     const apiUrl = `${window.location.origin}/api/classify`;
     navigator.clipboard.writeText(apiUrl);
@@ -50,6 +161,19 @@ export default function Dashboard() {
       title: "Copied",
       description: "API URL copied to clipboard",
     });
+  };
+
+  const handleAddIpWhitelist = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ipLabel.trim() || !ipCidr.trim()) {
+      toast({
+        title: "Error",
+        description: "Both label and CIDR/IP are required",
+        variant: "destructive",
+      });
+      return;
+    }
+    addIpWhitelistMutation.mutate({ label: ipLabel, cidr: ipCidr });
   };
 
   return (
@@ -94,6 +218,7 @@ export default function Dashboard() {
               <TabsTrigger value="countries" data-testid="tab-countries">🌍 Countries</TabsTrigger>
               <TabsTrigger value="isp-whitelist" data-testid="tab-isp-whitelist">✅ ISP Whitelist</TabsTrigger>
               <TabsTrigger value="isp-blacklist" data-testid="tab-isp-blacklist">❌ ISP Blacklist</TabsTrigger>
+              <TabsTrigger value="ip-whitelist" data-testid="tab-ip-whitelist">🔒 IP Whitelist</TabsTrigger>
               <TabsTrigger value="analytics" data-testid="tab-analytics">📈 Analytics</TabsTrigger>
               <TabsTrigger value="settings" data-testid="tab-settings">⚙️ Settings</TabsTrigger>
             </TabsList>
@@ -116,6 +241,167 @@ export default function Dashboard() {
 
             <TabsContent value="isp-blacklist">
               <IspBlacklist />
+            </TabsContent>
+
+            <TabsContent value="ip-whitelist">
+              <div className="space-y-6">
+                {/* Header Card with Enable/Disable Toggle */}
+                <Card className="shadow border border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-semibold text-foreground">
+                      <ShieldCheck className="text-primary mr-2 inline h-5 w-5" />
+                      Client IP Whitelist
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Control which IP addresses can access /user dashboard. Admin interface (/interface) is always accessible.
+                    </p>
+                    
+                    <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
+                      <div className="space-y-0.5">
+                        <label className="text-sm font-medium">Enable IP Whitelist</label>
+                        <p className="text-xs text-muted-foreground">
+                          Restrict access to specific IP addresses
+                        </p>
+                      </div>
+                      <Switch
+                        checked={ipWhitelistStatus?.enabled || false}
+                        onCheckedChange={(checked) => toggleIpWhitelistStatusMutation.mutate(checked)}
+                        disabled={toggleIpWhitelistStatusMutation.isPending}
+                        data-testid="switch-ip-whitelist-enabled"
+                      />
+                    </div>
+
+                    {ipWhitelistStatus?.enabled && ipWhitelistEntries.length === 0 && (
+                      <Alert variant="destructive" data-testid="alert-empty-whitelist">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          ⚠️ IP whitelist is enabled but empty. All /user access will be blocked!
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {!ipWhitelistStatus?.enabled && (
+                      <Alert data-testid="alert-whitelist-disabled">
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          ℹ️ IP whitelist is disabled. All IPs can access /user dashboard.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Add New Entry Form Card */}
+                <Card className="shadow border border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-semibold text-foreground">
+                      Add New IP Entry
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={handleAddIpWhitelist} className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-foreground">
+                            Label
+                          </label>
+                          <Input
+                            type="text"
+                            placeholder="e.g., Office Network, Home IP"
+                            value={ipLabel}
+                            onChange={(e) => setIpLabel(e.target.value)}
+                            data-testid="input-ip-label"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-foreground">
+                            CIDR/IP Address
+                          </label>
+                          <Input
+                            type="text"
+                            placeholder="192.168.1.100 or 10.0.0.0/24"
+                            value={ipCidr}
+                            onChange={(e) => setIpCidr(e.target.value)}
+                            data-testid="input-ip-cidr"
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        type="submit"
+                        className="w-full"
+                        disabled={addIpWhitelistMutation.isPending}
+                        data-testid="button-add-ip"
+                      >
+                        {addIpWhitelistMutation.isPending ? "Adding..." : "Add IP Entry"}
+                      </Button>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                {/* Entries List Card */}
+                <Card className="shadow border border-border">
+                  <CardHeader>
+                    <CardTitle className="text-lg font-semibold text-foreground">
+                      IP Whitelist Entries
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {isLoadingEntries ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        Loading entries...
+                      </div>
+                    ) : ipWhitelistEntries.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground" data-testid="empty-state">
+                        No IP whitelist entries yet. Add one above to get started.
+                      </div>
+                    ) : (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Label</TableHead>
+                            <TableHead>CIDR/IP</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {ipWhitelistEntries.map((entry) => (
+                            <TableRow key={entry.id} data-testid={`row-ip-entry-${entry.id}`}>
+                              <TableCell className="font-medium" data-testid={`label-${entry.id}`}>
+                                {entry.label}
+                              </TableCell>
+                              <TableCell className="font-mono text-sm" data-testid={`cidr-${entry.id}`}>
+                                {entry.cidr}
+                              </TableCell>
+                              <TableCell>
+                                <Switch
+                                  checked={entry.enabled}
+                                  onCheckedChange={() => toggleIpWhitelistEntryMutation.mutate({ id: entry.id, enabled: !entry.enabled })}
+                                  disabled={toggleIpWhitelistEntryMutation.isPending}
+                                  data-testid={`switch-entry-${entry.id}`}
+                                />
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => deleteIpWhitelistMutation.mutate(entry.id)}
+                                  disabled={deleteIpWhitelistMutation.isPending}
+                                  data-testid={`button-delete-${entry.id}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
 
             <TabsContent value="analytics">
