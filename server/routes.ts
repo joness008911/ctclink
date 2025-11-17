@@ -17,7 +17,7 @@ import { UAParser } from "ua-parser-js";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
-import * as ipaddr from "ipaddr.js";
+import ipaddr from "ipaddr.js";
 
 // 10-minute silent logging: Track last log time for each IP
 // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
@@ -107,7 +107,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Check if IP is whitelisted using ipaddr.js for CIDR matching
       let isWhitelisted = false;
-      const normalizedIp = ipaddr.process(clientIp);
+      const normalizedIp = ipaddr.parse(clientIp);
       
       for (const entry of whitelistCache.entries) {
         try {
@@ -120,7 +120,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             }
           } else {
             // Exact IP match
-            if (ipaddr.process(entry.cidr).toString() === normalizedIp.toString()) {
+            if (ipaddr.parse(entry.cidr).toString() === normalizedIp.toString()) {
               isWhitelisted = true;
               break;
             }

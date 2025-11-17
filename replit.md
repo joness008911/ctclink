@@ -43,7 +43,18 @@ The system is completely white-labeled with no product name or branding visible 
 
 ## Recent Changes
 
-### November 13, 2025 (Latest)
+### November 17, 2025 (Latest)
+
+- **🐛 IP WHITELIST BUG FIX**: Fixed critical bug where IP whitelist was failing-open
+  - **Root Cause**: Incorrect ESM import (`import * as ipaddr` instead of `import ipaddr`) caused middleware to crash
+  - **Impact**: When whitelist was enabled, middleware crashed and allowed ALL IPs to access /user (opposite of intended behavior)
+  - **Fix**: Corrected import to `import ipaddr from "ipaddr.js"` - now properly blocks non-whitelisted IPs
+  - **Verified Behavior**: 
+    - Whitelist OFF → Allow all ✅
+    - Whitelist ON + empty → Block all ✅
+    - Whitelist ON + entries → Allow only whitelisted IPs ✅
+
+### November 13, 2025
 
 - **🔒 IP WHITELIST FOR CLIENT DASHBOARD ACCESS**: Implemented IP-based access control for /user routes
   - **Feature**: Admin can whitelist specific IPs or CIDR ranges allowed to access client dashboard (/user)
