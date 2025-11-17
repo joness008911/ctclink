@@ -28,7 +28,7 @@ The system employs session-based authentication with Express sessions. Passwords
 
 ### System Design Choices
 
-The system utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling, with 10-minute silent logging to reduce log spam from repeat visitors. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots, SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), and cache control. Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
+The system utilizes a cascading bot detection system: Country Whitelist, ISP Blacklist, Proxy Detection, and ISP Whitelist, prioritizing early blocking of known bots. It features real-time monitoring via frontend polling, with 10-minute silent logging to reduce log spam from repeat visitors. PHP integration scripts use random ZIP filenames for security, two-pass POST architecture for accurate browser/device detection, 10-minute session caching for API calls, and client-side hash parameter conversion. Browser visits to API domains are redirected for security and privacy. Security measures include Helmet middleware for server-side security headers (CSP, HSTS, X-Frame-Options, Referrer-Policy), blocking known scrapers/preview bots (redirects them to google.com), SEO prevention (noindex/nofollow, robots.txt), client-side protection (disabled right-click, dev tools, view source, text selection), cache control, and universal path hiding (all unknown browser navigations redirect to google.com). Unknown IPs default to 'Bot' and any API classification failure also defaults to 'Bot' following a fail-secure principle.
 
 ### White-Label & Privacy Features
 
@@ -39,6 +39,7 @@ The system is completely white-labeled with no product name or branding visible 
 - localStorage keys use generic "app_remember_me" instead of branded keys
 - All taglines and marketing text removed
 - Maintains full functionality without any visible branding
+- **Universal redirect to google.com**: All unknown paths (/, /api, /random, etc.) redirect to google.com for privacy. Only /interface (admin), /user (client), and /api/classify (API endpoint) are accessible
 
 ## Recent Changes
 
