@@ -129,6 +129,24 @@ export const userRedirectUrls = pgTable("user_redirect_urls", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// Domain Pool (Domains available for client users to generate links)
+export const domainPool = pgTable("domain_pool", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  domain: text("domain").notNull().unique(), // e.g., "example.com", "mytracker.io"
+  description: text("description"), // Optional description for admin reference
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// User Domain Generations (Track which domains users have generated, for daily limits)
+export const userDomainGenerations = pgTable("user_domain_generations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => clientUsers.id, { onDelete: 'cascade' }),
+  domainId: varchar("domain_id").notNull().references(() => domainPool.id, { onDelete: 'cascade' }),
+  domain: text("domain").notNull(), // Store domain name for easy access even if pool entry is deleted
+  generatedAt: timestamp("generated_at").defaultNow().notNull(),
+});
+
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
@@ -201,6 +219,16 @@ export const insertUserRedirectUrlsSchema = createInsertSchema(userRedirectUrls)
   updatedAt: true,
 });
 
+export const insertDomainPoolSchema = createInsertSchema(domainPool).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertUserDomainGenerationSchema = createInsertSchema(userDomainGenerations).omit({
+  id: true,
+  generatedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertClassification = z.infer<typeof insertClassificationSchema>;
@@ -227,3 +255,7 @@ export type InsertClientUser = z.infer<typeof insertClientUserSchema>;
 export type ClientUser = typeof clientUsers.$inferSelect;
 export type InsertUserRedirectUrls = z.infer<typeof insertUserRedirectUrlsSchema>;
 export type UserRedirectUrls = typeof userRedirectUrls.$inferSelect;
+export type InsertDomainPool = z.infer<typeof insertDomainPoolSchema>;
+export type DomainPool = typeof domainPool.$inferSelect;
+export type InsertUserDomainGeneration = z.infer<typeof insertUserDomainGenerationSchema>;
+export type UserDomainGeneration = typeof userDomainGenerations.$inferSelect;
