@@ -2352,6 +2352,42 @@ Disallow: /*`);
     }
   });
 
+  // Test domain reachability (client user)
+  app.post("/api/user/domains/test", requireClientAuth, async (req: any, res) => {
+    try {
+      const { domain } = req.body;
+      
+      if (!domain) {
+        return res.status(400).json({ message: "domain is required" });
+      }
+
+      // Simple HEAD request to test if domain is reachable
+      const https = await import('https');
+      const http = await import('http');
+      
+      const testUrl = `https://${domain}`;
+      
+      const reachable = await new Promise<boolean>((resolve) => {
+        const timeoutId = setTimeout(() => resolve(false), 5000);
+        
+        https.get(testUrl, { timeout: 5000 }, (response) => {
+          clearTimeout(timeoutId);
+          // Any response (even redirects) means it's reachable
+          resolve(response.statusCode !== undefined && response.statusCode < 500);
+          response.destroy();
+        }).on('error', () => {
+          clearTimeout(timeoutId);
+          resolve(false);
+        });
+      });
+
+      res.json({ domain, reachable });
+    } catch (error) {
+      console.error("Test domain error:", error);
+      res.json({ domain: req.body.domain || '', reachable: false });
+    }
+  });
+
   // Generate link for a domain (client user)
   app.post("/api/user/domains/generate", requireClientAuth, async (req: any, res) => {
     try {
@@ -2383,6 +2419,13 @@ Disallow: /*`);
       const domain = await storage.getDomainFromPool(domainId);
       if (!domain || !domain.enabled) {
         return res.status(404).json({ message: "Domain not found or disabled" });
+      }
+
+      // Check if user already generated this domain
+      const existingGenerations = await storage.getUserDomainGenerations(clientUser.id);
+      const alreadyGenerated = existingGenerations.some(g => g.domain === domain.domain);
+      if (alreadyGenerated) {
+        return res.status(409).json({ message: "You have already generated this domain" });
       }
 
       // Get user's API key info

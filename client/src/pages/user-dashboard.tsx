@@ -12,15 +12,277 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, 
   Activity, Code, Download, Copy, AlertTriangle, TrendingUp, Globe, Users, Bot,
-  Play, Pause, Settings, FileText, CheckCircle2, XCircle
+  Play, Pause, Settings, FileText, CheckCircle2, XCircle, Info, Check, Zap
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import JSZip from 'jszip';
 import { format } from 'date-fns';
+
+interface AvailableDomain {
+  id: string;
+  domain: string;
+  description: string | null;
+}
+
+interface GeneratedDomain {
+  id: string;
+  domain: string;
+  generatedAt: string;
+}
+
+function DomainBrowserSection() {
+  const { toast } = useToast();
+  const [testingDomain, setTestingDomain] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ domain: string; reachable: boolean } | null>(null);
+  const [generatingDomainId, setGeneratingDomainId] = useState<string | null>(null);
+
+  const { data: availableDomains = [], isLoading: domainsLoading } = useQuery<AvailableDomain[]>({
+    queryKey: ["/api/user/domains"],
+  });
+
+  const { data: generatedDomains = [] } = useQuery<GeneratedDomain[]>({
+    queryKey: ["/api/user/domains/generated"],
+  });
+
+  const { data: remainingData } = useQuery<{ remaining: number; limit: number }>({
+    queryKey: ["/api/user/domains/remaining"],
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: async (domainId: string) => {
+      setGeneratingDomainId(domainId);
+      const response = await apiRequest("POST", "/api/user/domains/generate", { domainId });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/domains/generated"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/domains/remaining"] });
+      toast({
+        title: "Domain Generated",
+        description: `Tracking link for ${data.domain} has been created`,
+      });
+      setGeneratingDomainId(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Generation Failed",
+        description: error.message || "Failed to generate domain link",
+        variant: "destructive",
+      });
+      setGeneratingDomainId(null);
+    },
+  });
+
+  const testDomainMutation = useMutation({
+    mutationFn: async (domain: string) => {
+      setTestingDomain(domain);
+      setTestResult(null);
+      const response = await apiRequest("POST", "/api/user/domains/test", { domain });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setTestResult({ domain: data.domain, reachable: data.reachable });
+      setTestingDomain(null);
+    },
+    onError: (error: Error) => {
+      setTestResult({ domain: testingDomain || '', reachable: false });
+      setTestingDomain(null);
+    },
+  });
+
+  const copyDomain = (domain: string) => {
+    navigator.clipboard.writeText(domain);
+    toast({
+      title: "Copied",
+      description: `${domain} copied to clipboard`,
+    });
+  };
+
+  const isAlreadyGenerated = (domainId: string) => {
+    return generatedDomains.some(g => g.domain === availableDomains.find(d => d.id === domainId)?.domain);
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card className="shadow-md border-2">
+        <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/0">
+          <CardTitle className="flex items-center gap-2">
+            <Globe className="h-5 w-5 text-primary" />
+            Available Domains
+          </CardTitle>
+          <CardDescription>
+            Browse available tracking domains. You can generate up to {remainingData?.limit || 3} domains per day.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Alert data-testid="alert-domain-info">
+            <Info className="h-4 w-4" />
+            <AlertDescription>
+              You have <strong>{remainingData?.remaining ?? '...'}</strong> of <strong>{remainingData?.limit || 3}</strong> generations remaining today. 
+              Use the Test button to verify a domain is reachable before generating.
+            </AlertDescription>
+          </Alert>
+
+          {domainsLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+              <p className="mt-3 text-muted-foreground">Loading domains...</p>
+            </div>
+          ) : availableDomains.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Globe className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No domains available</p>
+              <p className="text-sm mt-1">Check back later for available tracking domains</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Domain</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {availableDomains.map((domain) => {
+                    const alreadyGenerated = isAlreadyGenerated(domain.id);
+                    return (
+                      <TableRow key={domain.id} data-testid={`domain-row-${domain.id}`}>
+                        <TableCell className="font-mono text-sm font-medium">
+                          {domain.domain}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {domain.description || '-'}
+                        </TableCell>
+                        <TableCell>
+                          {testResult?.domain === domain.domain ? (
+                            <Badge variant={testResult.reachable ? "default" : "destructive"} className="gap-1">
+                              {testResult.reachable ? (
+                                <><Check className="h-3 w-3" /> Reachable</>
+                              ) : (
+                                <><XCircle className="h-3 w-3" /> Unreachable</>
+                              )}
+                            </Badge>
+                          ) : alreadyGenerated ? (
+                            <Badge variant="secondary" className="gap-1">
+                              <Check className="h-3 w-3" /> Generated
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline">Available</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => testDomainMutation.mutate(domain.domain)}
+                              disabled={testingDomain === domain.domain}
+                              data-testid={`button-test-${domain.id}`}
+                            >
+                              {testingDomain === domain.domain ? (
+                                <span className="animate-pulse">Testing...</span>
+                              ) : (
+                                <>
+                                  <ExternalLink className="h-3 w-3 mr-1" />
+                                  Test
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => copyDomain(domain.domain)}
+                              data-testid={`button-copy-${domain.id}`}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => generateMutation.mutate(domain.id)}
+                              disabled={alreadyGenerated || generatingDomainId === domain.id || (remainingData?.remaining ?? 0) <= 0}
+                              data-testid={`button-generate-${domain.id}`}
+                            >
+                              {generatingDomainId === domain.id ? (
+                                <span className="animate-pulse">Generating...</span>
+                              ) : alreadyGenerated ? (
+                                <>
+                                  <Check className="h-3 w-3 mr-1" />
+                                  Generated
+                                </>
+                              ) : (
+                                <>
+                                  <Zap className="h-3 w-3 mr-1" />
+                                  Generate
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-primary" />
+            Your Generated Domains
+          </CardTitle>
+          <CardDescription>Domains you've generated for your tracking links</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {generatedDomains.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Zap className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p>No domains generated yet</p>
+              <p className="text-sm mt-1">Generate domains from the list above</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {generatedDomains.map((gen) => (
+                <div 
+                  key={gen.id} 
+                  className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border"
+                  data-testid={`generated-domain-${gen.id}`}
+                >
+                  <div>
+                    <p className="font-mono font-medium">{gen.domain}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Generated {format(new Date(gen.generatedAt), 'MMM d, yyyy HH:mm')}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyDomain(gen.domain)}
+                    data-testid={`button-copy-generated-${gen.id}`}
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 export default function UserDashboard() {
   const [, navigate] = useLocation();
@@ -488,10 +750,14 @@ die('Service temporarily unavailable. Please try again later.');
 
       <div className="container mx-auto px-4 py-8">
         <Tabs defaultValue="analytics" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 lg:w-auto lg:inline-grid">
+          <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 lg:w-auto lg:inline-grid">
             <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
               <BarChart3 className="h-4 w-4" />
               License & Analytics
+            </TabsTrigger>
+            <TabsTrigger value="domains" className="gap-2" data-testid="tab-domains">
+              <Globe className="h-4 w-4" />
+              Domains
             </TabsTrigger>
             <TabsTrigger value="logs" className="gap-2" data-testid="tab-logs">
               <Activity className="h-4 w-4" />
@@ -719,6 +985,10 @@ die('Service temporarily unavailable. Please try again later.');
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="domains" className="space-y-6">
+            <DomainBrowserSection />
           </TabsContent>
 
           <TabsContent value="logs" className="space-y-6">
