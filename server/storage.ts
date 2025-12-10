@@ -23,6 +23,10 @@ import {
   type InsertClientUser,
   type UserRedirectUrls,
   type InsertUserRedirectUrls,
+  type DomainPool,
+  type InsertDomainPool,
+  type UserDomainGeneration,
+  type InsertUserDomainGeneration,
   users,
   classifications,
   detectionRules,
@@ -35,7 +39,9 @@ import {
   clientIpWhitelist,
   clientUsers,
   userRedirectUrls,
-  settings
+  settings,
+  domainPool,
+  userDomainGenerations
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -179,6 +185,20 @@ export interface IStorage {
   // Settings methods
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+  
+  // Domain Pool methods (admin manages available domains)
+  getDomainPool(): Promise<DomainPool[]>;
+  addDomainToPool(domain: InsertDomainPool): Promise<DomainPool>;
+  removeDomainFromPool(id: string): Promise<boolean>;
+  toggleDomainInPool(id: string, enabled: boolean): Promise<boolean>;
+  getDomainFromPool(id: string): Promise<DomainPool | undefined>;
+  
+  // User Domain Generations (track user's generated domains for daily limits)
+  getUserDomainGenerations(userId: string): Promise<UserDomainGeneration[]>;
+  getUserDomainGenerationsToday(userId: string): Promise<UserDomainGeneration[]>;
+  createUserDomainGeneration(generation: InsertUserDomainGeneration): Promise<UserDomainGeneration>;
+  getDailyGenerationLimit(): Promise<number>;
+  setDailyGenerationLimit(limit: number): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -803,6 +823,77 @@ export class MemStorage implements IStorage {
   async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
     this.settings.set('clientWhitelistEnabled', enabled ? 'true' : 'false');
   }
+
+  // Domain Pool methods (in-memory implementation)
+  private domainPool: Map<string, DomainPool> = new Map();
+  private userDomainGenerations: Map<string, UserDomainGeneration> = new Map();
+
+  async getDomainPool(): Promise<DomainPool[]> {
+    return Array.from(this.domainPool.values());
+  }
+
+  async addDomainToPool(domain: InsertDomainPool): Promise<DomainPool> {
+    const newDomain: DomainPool = {
+      id: randomUUID(),
+      domain: domain.domain,
+      description: domain.description || null,
+      enabled: domain.enabled ?? true,
+      createdAt: new Date(),
+    };
+    this.domainPool.set(newDomain.id, newDomain);
+    return newDomain;
+  }
+
+  async removeDomainFromPool(id: string): Promise<boolean> {
+    return this.domainPool.delete(id);
+  }
+
+  async toggleDomainInPool(id: string, enabled: boolean): Promise<boolean> {
+    const domain = this.domainPool.get(id);
+    if (domain) {
+      domain.enabled = enabled;
+      this.domainPool.set(id, domain);
+      return true;
+    }
+    return false;
+  }
+
+  async getDomainFromPool(id: string): Promise<DomainPool | undefined> {
+    return this.domainPool.get(id);
+  }
+
+  async getUserDomainGenerations(userId: string): Promise<UserDomainGeneration[]> {
+    return Array.from(this.userDomainGenerations.values())
+      .filter(g => g.userId === userId);
+  }
+
+  async getUserDomainGenerationsToday(userId: string): Promise<UserDomainGeneration[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Array.from(this.userDomainGenerations.values())
+      .filter(g => g.userId === userId && g.generatedAt >= today);
+  }
+
+  async createUserDomainGeneration(generation: InsertUserDomainGeneration): Promise<UserDomainGeneration> {
+    const newGeneration: UserDomainGeneration = {
+      id: randomUUID(),
+      userId: generation.userId,
+      domainId: generation.domainId,
+      domain: generation.domain,
+      generatedAt: new Date(),
+    };
+    this.userDomainGenerations.set(newGeneration.id, newGeneration);
+    return newGeneration;
+  }
+
+  async getDailyGenerationLimit(): Promise<number> {
+    const limit = this.settings.get('dailyGenerationLimit');
+    return limit ? parseInt(limit, 10) : 3;
+  }
+
+  async setDailyGenerationLimit(limit: number): Promise<void> {
+    this.settings.set('dailyGenerationLimit', limit.toString());
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1416,6 +1507,59 @@ export class DatabaseStorage implements IStorage {
 
   async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
     await this.setSetting('clientWhitelistEnabled', enabled ? 'true' : 'false');
+  }
+
+  // Domain Pool methods (database implementation)
+  async getDomainPool(): Promise<DomainPool[]> {
+    return await db.select().from(domainPool).orderBy(desc(domainPool.createdAt));
+  }
+
+  async addDomainToPool(domain: InsertDomainPool): Promise<DomainPool> {
+    const [newDomain] = await db.insert(domainPool).values(domain).returning();
+    return newDomain;
+  }
+
+  async removeDomainFromPool(id: string): Promise<boolean> {
+    const result = await db.delete(domainPool).where(eq(domainPool.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async toggleDomainInPool(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db.update(domainPool).set({ enabled }).where(eq(domainPool.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getDomainFromPool(id: string): Promise<DomainPool | undefined> {
+    const [domain] = await db.select().from(domainPool).where(eq(domainPool.id, id));
+    return domain;
+  }
+
+  async getUserDomainGenerations(userId: string): Promise<UserDomainGeneration[]> {
+    return await db.select().from(userDomainGenerations)
+      .where(eq(userDomainGenerations.userId, userId))
+      .orderBy(desc(userDomainGenerations.generatedAt));
+  }
+
+  async getUserDomainGenerationsToday(userId: string): Promise<UserDomainGeneration[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return await db.select().from(userDomainGenerations)
+      .where(eq(userDomainGenerations.userId, userId))
+      .orderBy(desc(userDomainGenerations.generatedAt));
+  }
+
+  async createUserDomainGeneration(generation: InsertUserDomainGeneration): Promise<UserDomainGeneration> {
+    const [newGeneration] = await db.insert(userDomainGenerations).values(generation).returning();
+    return newGeneration;
+  }
+
+  async getDailyGenerationLimit(): Promise<number> {
+    const limit = await this.getSetting('dailyGenerationLimit');
+    return limit ? parseInt(limit, 10) : 3;
+  }
+
+  async setDailyGenerationLimit(limit: number): Promise<void> {
+    await this.setSetting('dailyGenerationLimit', limit.toString());
   }
 }
 
