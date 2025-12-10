@@ -43,7 +43,32 @@ The system is completely white-labeled with no product name or branding visible 
 
 ## Recent Changes
 
-### November 17, 2025 (Latest)
+### December 10, 2025 (Latest)
+
+- **🌐 DOMAIN POOL MARKETPLACE**: Implemented domain pool marketplace for admin and client users
+  - **Admin Features** (Domain Pool tab in /interface):
+    - Add domains individually with description and enabled status
+    - Bulk upload domains (up to 100 at once via textarea)
+    - Configure daily generation limit per user (default: 2)
+    - Enable/disable individual domains
+    - Delete domains from pool
+  - **Client User Features** (Domains tab in /user):
+    - Browse all enabled domains from pool
+    - Test domain reachability via server-side HEAD request
+    - Generate tracking links with user's API key embedded
+    - Daily limit prevents excessive generation (displays remaining count)
+    - Duplicate prevention: can't generate same domain twice
+  - **Database**: New `domain_pool` and `user_domain_generations` tables
+  - **API Endpoints**:
+    - Admin: GET/POST/DELETE/PATCH at `/api/domain-pool`
+    - Client: GET `/api/user/domains/available`, POST `/api/user/domains/test`, POST `/api/user/domains/generate`
+  - **Fixes Applied**:
+    - Changed from useQueryClient hook to shared queryClient import for proper cache invalidation
+    - Server-side domain reachability testing (avoids CORS issues)
+    - Server-side duplicate generation prevention (409 responses)
+    - Generate button shows loading state during generation
+
+### November 17, 2025
 
 - **🐛 IP WHITELIST BUG FIX**: Fixed critical bug where IP whitelist was failing-open
   - **Root Cause**: Incorrect ESM import (`import * as ipaddr` instead of `import ipaddr`) caused middleware to crash
