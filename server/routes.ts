@@ -2164,6 +2164,254 @@ Disallow: /*`);
     }
   });
 
+  // ==========================================
+  // DOMAIN POOL ROUTES (Admin Management)
+  // ==========================================
+
+  // Get all domains in pool (admin)
+  app.get("/api/domain-pool", requireAuth, async (req, res) => {
+    try {
+      const domains = await storage.getDomainPool();
+      res.json(domains);
+    } catch (error) {
+      console.error("Get domain pool error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Add domain to pool (admin)
+  app.post("/api/domain-pool", requireAuth, async (req, res) => {
+    try {
+      const { domain, description } = req.body;
+      
+      if (!domain) {
+        return res.status(400).json({ message: "Domain is required" });
+      }
+
+      const newDomain = await storage.addDomainToPool({ domain, description, enabled: true });
+      res.json({ success: true, domain: newDomain });
+    } catch (error: any) {
+      console.error("Add domain to pool error:", error);
+      if (error.message?.includes('duplicate') || error.code === '23505') {
+        res.status(400).json({ message: "This domain already exists in the pool" });
+      } else {
+        res.status(500).json({ message: "Internal server error" });
+      }
+    }
+  });
+
+  // Bulk add domains to pool (admin)
+  app.post("/api/domain-pool/bulk", requireAuth, async (req, res) => {
+    try {
+      const { domains } = req.body;
+      
+      if (!Array.isArray(domains) || domains.length === 0) {
+        return res.status(400).json({ message: "domains must be a non-empty array" });
+      }
+
+      if (domains.length > 1000) {
+        return res.status(400).json({ message: "Maximum 1000 domains at once" });
+      }
+
+      let added = 0;
+      let skipped = 0;
+      const errors: string[] = [];
+
+      for (const domain of domains) {
+        const trimmed = typeof domain === 'string' ? domain.trim() : '';
+        if (!trimmed) continue;
+
+        try {
+          await storage.addDomainToPool({ domain: trimmed, enabled: true });
+          added++;
+        } catch (error: any) {
+          if (error.message?.includes('duplicate') || error.code === '23505') {
+            skipped++;
+          } else {
+            errors.push(`${trimmed}: ${error.message || 'Unknown error'}`);
+          }
+        }
+      }
+
+      res.json({ success: true, added, skipped, errors });
+    } catch (error) {
+      console.error("Bulk add domains error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Remove domain from pool (admin)
+  app.delete("/api/domain-pool/:id", requireAuth, async (req, res) => {
+    try {
+      const success = await storage.removeDomainFromPool(req.params.id);
+      if (success) {
+        res.json({ success: true, message: "Domain removed from pool" });
+      } else {
+        res.status(404).json({ message: "Domain not found" });
+      }
+    } catch (error) {
+      console.error("Remove domain from pool error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Toggle domain in pool (admin)
+  app.patch("/api/domain-pool/:id/toggle", requireAuth, async (req, res) => {
+    try {
+      const { enabled } = req.body;
+      const success = await storage.toggleDomainInPool(req.params.id, enabled);
+      if (success) {
+        res.json({ success: true, message: "Domain status updated" });
+      } else {
+        res.status(404).json({ message: "Domain not found" });
+      }
+    } catch (error) {
+      console.error("Toggle domain error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get daily generation limit (admin)
+  app.get("/api/domain-pool/settings/limit", requireAuth, async (req, res) => {
+    try {
+      const limit = await storage.getDailyGenerationLimit();
+      res.json({ limit });
+    } catch (error) {
+      console.error("Get generation limit error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Set daily generation limit (admin)
+  app.put("/api/domain-pool/settings/limit", requireAuth, async (req, res) => {
+    try {
+      const { limit } = req.body;
+      if (typeof limit !== 'number' || limit < 1 || limit > 100) {
+        return res.status(400).json({ message: "Limit must be a number between 1 and 100" });
+      }
+      
+      await storage.setDailyGenerationLimit(limit);
+      res.json({ success: true, limit });
+    } catch (error) {
+      console.error("Set generation limit error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ==========================================
+  // USER DOMAIN ROUTES (Client User Access)
+  // ==========================================
+
+  // Get available domains for client user
+  app.get("/api/user/domains", requireClientAuth, async (req: any, res) => {
+    try {
+      // Get all enabled domains from pool
+      const allDomains = await storage.getDomainPool();
+      const availableDomains = allDomains.filter(d => d.enabled);
+      res.json(availableDomains);
+    } catch (error) {
+      console.error("Get user domains error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get user's generated domains (history)
+  app.get("/api/user/domains/generated", requireClientAuth, async (req: any, res) => {
+    try {
+      const clientUser = req.session.clientUser;
+      const generations = await storage.getUserDomainGenerations(clientUser.id);
+      res.json(generations);
+    } catch (error) {
+      console.error("Get user domain generations error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get user's remaining generations for today
+  app.get("/api/user/domains/remaining", requireClientAuth, async (req: any, res) => {
+    try {
+      const clientUser = req.session.clientUser;
+      const [todayGenerations, dailyLimit] = await Promise.all([
+        storage.getUserDomainGenerationsToday(clientUser.id),
+        storage.getDailyGenerationLimit()
+      ]);
+      
+      // Filter to only today's generations
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayCount = todayGenerations.filter(g => new Date(g.generatedAt) >= today).length;
+      
+      res.json({ 
+        used: todayCount, 
+        limit: dailyLimit, 
+        remaining: Math.max(0, dailyLimit - todayCount) 
+      });
+    } catch (error) {
+      console.error("Get remaining generations error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Generate link for a domain (client user)
+  app.post("/api/user/domains/generate", requireClientAuth, async (req: any, res) => {
+    try {
+      const clientUser = req.session.clientUser;
+      const { domainId } = req.body;
+
+      if (!domainId) {
+        return res.status(400).json({ message: "domainId is required" });
+      }
+
+      // Check daily limit
+      const [todayGenerations, dailyLimit] = await Promise.all([
+        storage.getUserDomainGenerationsToday(clientUser.id),
+        storage.getDailyGenerationLimit()
+      ]);
+      
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayCount = todayGenerations.filter(g => new Date(g.generatedAt) >= today).length;
+
+      if (todayCount >= dailyLimit) {
+        return res.status(429).json({ 
+          message: `Daily limit reached (${dailyLimit} domains per day). Please try again tomorrow.`,
+          remaining: 0
+        });
+      }
+
+      // Get domain from pool
+      const domain = await storage.getDomainFromPool(domainId);
+      if (!domain || !domain.enabled) {
+        return res.status(404).json({ message: "Domain not found or disabled" });
+      }
+
+      // Get user's API key info
+      const apiKey = clientUser.apiKeyId ? await storage.getApiKeyById(clientUser.apiKeyId) : null;
+
+      // Create generation record
+      const generation = await storage.createUserDomainGeneration({
+        userId: clientUser.id,
+        domainId: domain.id,
+        domain: domain.domain
+      });
+
+      // Get user's redirect URLs
+      const redirectUrls = await storage.getUserRedirectUrls(clientUser.id);
+
+      res.json({
+        success: true,
+        generation,
+        domain: domain.domain,
+        apiKey: apiKey?.keyValue || 'NO_API_KEY',
+        redirectUrls: redirectUrls || { humanUrl: 'https://example.com', botUrl: 'https://google.com' },
+        remaining: dailyLimit - todayCount - 1
+      });
+    } catch (error) {
+      console.error("Generate domain link error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
