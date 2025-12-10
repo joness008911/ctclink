@@ -16,6 +16,7 @@ import IspWhitelist from "@/components/isp-whitelist";
 import IspBlacklist from "@/components/isp-blacklist";
 import ClientUserManagement from "@/components/client-user-management";
 import WhitelabelDomainSettings from "@/components/whitelabel-domain-settings";
+import DomainPoolManagement from "@/components/domain-pool-management";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -219,6 +220,7 @@ export default function Dashboard() {
               <TabsTrigger value="isp-whitelist" data-testid="tab-isp-whitelist">✅ ISP Whitelist</TabsTrigger>
               <TabsTrigger value="isp-blacklist" data-testid="tab-isp-blacklist">❌ ISP Blacklist</TabsTrigger>
               <TabsTrigger value="ip-whitelist" data-testid="tab-ip-whitelist">🔒 IP Whitelist</TabsTrigger>
+              <TabsTrigger value="domain-pool" data-testid="tab-domain-pool">🌐 Domain Pool</TabsTrigger>
               <TabsTrigger value="analytics" data-testid="tab-analytics">📈 Analytics</TabsTrigger>
               <TabsTrigger value="settings" data-testid="tab-settings">⚙️ Settings</TabsTrigger>
             </TabsList>
@@ -402,6 +404,10 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="domain-pool">
+              <DomainPoolManagement />
             </TabsContent>
 
             <TabsContent value="analytics">
