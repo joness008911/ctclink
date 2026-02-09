@@ -1,6 +1,11 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from "@shared/schema";
+import dotenv from "dotenv";
+import path from "path";
+
+// Manually load .env file from the current working directory in production
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
