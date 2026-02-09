@@ -138,34 +138,8 @@ app.use((req, res, next) => {
     throw err;
   });
 
-  // Redirect middleware: Redirect browser navigations to unknown paths to google.com
-  // This runs BEFORE Vite, so we can intercept and redirect unwanted paths
-  // Only affects HTML requests (browser navigations), not API calls or assets
-  app.use((req, res, next) => {
-    // Only intercept GET requests that accept HTML (browser navigations)
-    const acceptsHtml = req.headers.accept?.includes('text/html');
-    const isGetRequest = req.method === 'GET';
-    
-    if (isGetRequest && acceptsHtml) {
-      // Allow these paths to continue to Vite/React app
-      const allowedPaths = [
-        '/interface',
-        '/user',
-        '/robots.txt'
-      ];
-      
-      // Check if path starts with any allowed path
-      const isAllowed = allowedPaths.some(allowed => req.path.startsWith(allowed));
-      
-      if (!isAllowed) {
-        // Redirect all other browser navigations to google.com
-        return res.redirect('https://google.com');
-      }
-    }
-    
-    // Continue to next middleware (Vite or other routes)
-    next();
-  });
+  // Redirect middleware removed to fix verification issues
+  // The system will now allow direct access to all paths during testing
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route

@@ -72,7 +72,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // IP Whitelist Middleware - Runs BEFORE session to block unauthorized /user access early
   app.use(async (req, res, next) => {
-    // Only check /user routes - exempt /interface (admin), /api, /assets, etc.
+    // IMPORTANT: Only check /user routes. 
+    // /interface (admin) and /api/classify must ALWAYS be accessible to avoid lockout.
     if (!req.path.startsWith('/user')) {
       return next();
     }
