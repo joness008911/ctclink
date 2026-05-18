@@ -4,11 +4,29 @@
  * Returns comprehensive analytics data for the modern dashboard
  */
 
+session_start();
+
 header('Content-Type: application/json');
 header('X-Robots-Tag: noindex, nofollow');
-header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET');
-header('Access-Control-Allow-Headers: Content-Type');
+
+// Authentication check - only authenticated admins may access visitor data
+if (!isset($_SESSION['admin_authenticated']) || $_SESSION['admin_authenticated'] !== true) {
+    http_response_code(401);
+    echo json_encode(['error' => 'Unauthorized']);
+    exit();
+}
+
+// Session timeout check (24 hours)
+if (isset($_SESSION['login_time'])) {
+    $sessionTimeout = 24 * 60 * 60;
+    if (time() - $_SESSION['login_time'] > $sessionTimeout) {
+        $_SESSION['admin_authenticated'] = false;
+        session_destroy();
+        http_response_code(401);
+        echo json_encode(['error' => 'Session expired']);
+        exit();
+    }
+}
 
 $BASE_DIR = dirname($_SERVER['SCRIPT_FILENAME']);
 $VISITORS_FILE = $BASE_DIR . '/visitors.json';
@@ -72,9 +90,9 @@ function calculateDashboardData($visitors) {
     // Calculate hour-over-hour changes (simplified calculation)
     $lastHourTotal = count($lastHourVisitors);
     $totalChange = $lastHourTotal > 0 ? round(($totalVisitors - $lastHourTotal) / $lastHourTotal * 100, 1) : 5.2;
-    $humanChange = $humanCount > 0 ? round(rand(1, 10) / 10, 1) : 8.7; // Simplified for demo
-    $botChange = $botCount > 0 ? round(rand(-5, -1) / 10, 1) : -2.1; // Simplified for demo
-    $accuracyChange = round(rand(1, 3) / 10, 1); // Simplified for demo
+    $humanChange = $humanCount > 0 ? round(rand(1, 10) / 10, 1) : 8.7;
+    $botChange = $botCount > 0 ? round(rand(-5, -1) / 10, 1) : -2.1;
+    $accuracyChange = round(rand(1, 3) / 10, 1);
     
     // Generate trends data (hourly data for last 24 hours)
     $trendsData = generateTrendsData($recentVisitors);
@@ -82,7 +100,7 @@ function calculateDashboardData($visitors) {
     // Calculate detection methods distribution
     $detectionMethods = calculateDetectionMethods($recentVisitors);
     
-    // Get recent classifications (latest 10)
+    // Get recent classifications (latest 10) - IP addresses omitted
     $recentClassifications = getRecentClassifications($visitors);
     
     return [
@@ -110,13 +128,12 @@ function generateTrendsData($visitors) {
     
     // Generate 12 data points (every 2 hours for 24 hours)
     for ($i = 11; $i >= 0; $i--) {
-        $hourStart = time() - ($i * 7200); // 2 hours = 7200 seconds
+        $hourStart = time() - ($i * 7200);
         $hourEnd = $hourStart + 7200;
         
         $hourLabel = date('H:i', $hourStart);
         $hours[] = $hourLabel;
         
-        // Count visitors in this time period
         $hourVisitors = array_filter($visitors, function($visitor) use ($hourStart, $hourEnd) {
             $timestamp = strtotime($visitor['timestamp'] ?? '');
             return $timestamp && $timestamp >= $hourStart && $timestamp < $hourEnd;
@@ -133,7 +150,6 @@ function generateTrendsData($visitors) {
         $botData[] = count($hourBots);
     }
     
-    // If no real data, use sample data for demonstration
     if (array_sum($humanData) === 0 && array_sum($botData) === 0) {
         return [
             'labels' => ['00:00', '02:00', '04:00', '06:00', '08:00', '10:00', '12:00', '14:00', '16:00', '18:00', '20:00', '22:00'],
@@ -172,7 +188,6 @@ function calculateDetectionMethods($visitors) {
         } elseif (strpos($method, 'rate') !== false) {
             $methods['rate_limiting']++;
         } else {
-            // Default classification
             if ($classification === 'bot') {
                 $methods['usage_type_bot']++;
             } else {
@@ -184,7 +199,6 @@ function calculateDetectionMethods($visitors) {
     $total = array_sum($methods);
     
     if ($total === 0) {
-        // Return default percentages if no data
         return [
             ['label' => 'Bot Usage Type Detection', 'value' => 80, 'color' => '#3b82f6'],
             ['label' => 'Human Usage Type Detection', 'value' => 19, 'color' => '#22c55e'],
@@ -194,26 +208,10 @@ function calculateDetectionMethods($visitors) {
     }
     
     return [
-        [
-            'label' => 'Bot Usage Type Detection', 
-            'value' => round($methods['usage_type_bot'] / $total * 100, 1), 
-            'color' => '#3b82f6'
-        ],
-        [
-            'label' => 'Human Usage Type Detection', 
-            'value' => round($methods['usage_type_human'] / $total * 100, 1), 
-            'color' => '#22c55e'
-        ],
-        [
-            'label' => 'IP/ISP Blocking', 
-            'value' => round($methods['ip_blocking'] / $total * 100, 1), 
-            'color' => '#f59e0b'
-        ],
-        [
-            'label' => 'Rate Limiting (20+ visits)', 
-            'value' => round($methods['rate_limiting'] / $total * 100, 1), 
-            'color' => '#ef4444'
-        ]
+        ['label' => 'Bot Usage Type Detection', 'value' => round($methods['usage_type_bot'] / $total * 100, 1), 'color' => '#3b82f6'],
+        ['label' => 'Human Usage Type Detection', 'value' => round($methods['usage_type_human'] / $total * 100, 1), 'color' => '#22c55e'],
+        ['label' => 'IP/ISP Blocking', 'value' => round($methods['ip_blocking'] / $total * 100, 1), 'color' => '#f59e0b'],
+        ['label' => 'Rate Limiting (20+ visits)', 'value' => round($methods['rate_limiting'] / $total * 100, 1), 'color' => '#ef4444']
     ];
 }
 
@@ -223,7 +221,6 @@ function getRecentClassifications($visitors) {
         return strtotime($b['timestamp'] ?? '') - strtotime($a['timestamp'] ?? '');
     });
     
-    // Take the most recent 10 classifications
     $recent = array_slice($visitors, 0, 10);
     
     $classifications = [];
@@ -231,7 +228,7 @@ function getRecentClassifications($visitors) {
         $timestamp = strtotime($visitor['timestamp'] ?? '');
         $classifications[] = [
             'timestamp' => $timestamp ? date('H:i:s', $timestamp) : '00:00:00',
-            'ip' => $visitor['ip'] ?? 'Unknown',
+            // IP address intentionally omitted for privacy
             'location' => ($visitor['city'] ?? 'Unknown') . ', ' . ($visitor['region'] ?? '') . ', ' . ($visitor['country'] ?? 'Unknown'),
             'browser' => $visitor['user_agent'] ?? 'Unknown',
             'device' => $visitor['device_type'] ?? 'Desktop',

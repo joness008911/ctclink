@@ -113,15 +113,19 @@ try {
         }
     }
     
-    // Update admin password
+    // Update admin password - stored as bcrypt hash
     if (isset($input['newPassword']) && !empty($input['newPassword'])) {
         $newPassword = trim($input['newPassword']);
-        if (strlen($newPassword) >= 6) {
-            if (safeWriteFile($PASSWORD_FILE, $newPassword)) {
+        if (strlen($newPassword) >= 8) {
+            $hash = password_hash($newPassword, PASSWORD_BCRYPT, ['cost' => 10]);
+            if (safeWriteFile($PASSWORD_FILE, $hash)) {
+                @chmod($PASSWORD_FILE, 0600);
                 $updated = true;
             } else {
                 $errors[] = "Cannot write password file. Check file permissions or ownership.";
             }
+        } else {
+            $errors[] = "Password must be at least 8 characters.";
         }
     }
     
