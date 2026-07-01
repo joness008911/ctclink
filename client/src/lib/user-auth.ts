@@ -43,4 +43,9 @@ export const userAuthApi = {
     const response = await apiRequest("GET", "/api/user/me");
     return response.json();
   },
+
+  acceptTos: async (): Promise<{ message: string }> => {
+    const response = await apiRequest("POST", "/api/user/accept-tos");
+    return response.json();
+  },
 };

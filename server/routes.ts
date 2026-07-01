@@ -319,14 +319,20 @@ Disallow: /*`);
         return res.status(403).json({ message: `Account is ${user.status}. Please contact support.` });
       }
       
+      // Check compliance status before allowing login
+      if (user.complianceStatus === 'suspended') {
+        return res.status(403).json({ message: "Account suspended due to compliance violation. Please contact support." });
+      }
+
       // Store user ID in session for step 2
       req.session.clientUserId = user.id;
-      
-      res.json({ 
-        message: "Login successful. Please verify your API key.", 
+
+      res.json({
+        message: "Login successful. Please verify your API key.",
         userId: user.id,
         username: user.username,
-        requiresApiKey: true
+        requiresApiKey: true,
+        requiresTos: !user.tosAccepted
       });
     } catch (error) {
       console.error("Client user login error:", error);
@@ -368,10 +374,24 @@ Disallow: /*`);
         return res.status(403).json({ message: "API key has expired" });
       }
 
+      // Check if ToS has been accepted
+      if (!user.tosAccepted) {
+        return res.status(403).json({
+          message: "Terms of service must be accepted before using this service.",
+          requiresTos: true,
+          tosText: "This service is intended for legitimate bot traffic filtering, ad fraud prevention, and website security. You may not use this service to deceive search engines, serve different content to crawlers versus human visitors on the same URL, or facilitate phishing, identity theft, or financial fraud. You are solely responsible for ensuring your use complies with applicable laws and advertising platform terms. We reserve the right to suspend accounts where redirect patterns indicate cloaking, phishing, or other deceptive practices."
+        });
+      }
+
+      // Check compliance status
+      if (user.complianceStatus === 'suspended') {
+        return res.status(403).json({ message: "Account suspended due to compliance violation. Please contact support." });
+      }
+
       // Success! Mark user as fully authenticated
       req.session.clientUserAuthenticated = true;
-      
-      res.json({ 
+
+      res.json({
         message: "API key verified successfully",
         user: {
           id: user.id,
@@ -466,14 +486,56 @@ Disallow: /*`);
         return res.status(400).json({ message: "Both humanUrl and botUrl are required" });
       }
 
-      // Basic URL validation
+      // URL format validation
+      let parsedHuman: URL, parsedBot: URL;
       try {
-        new URL(humanUrl);
-        new URL(botUrl);
+        parsedHuman = new URL(humanUrl);
+        parsedBot = new URL(botUrl);
       } catch {
         return res.status(400).json({ message: "Invalid URL format" });
       }
-      
+
+      // Reject non-HTTP(S) protocols
+      if (parsedHuman.protocol !== 'http:' && parsedHuman.protocol !== 'https:') {
+        return res.status(400).json({ message: "humanUrl must use http or https" });
+      }
+      if (parsedBot.protocol !== 'http:' && parsedBot.protocol !== 'https:') {
+        return res.status(400).json({ message: "botUrl must use http or https" });
+      }
+
+      // Block known URL shorteners commonly used in phishing
+      const blockedHosts = [
+        'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'short.link',
+        'is.gd', 'cli.gs', 'pic.gd', 'DwarfURL.com', 'yfrog.com', 'migre.me',
+        'ff.im', 'tiny.cc', 'url4.eu', 'tr.im', 'twit.ac', 'su.pr', 'twurl.nl',
+        'snipurl.com', 'short.to', 'BudURL.com', 'ping.fm', 'post.ly',
+        'Just.as', 'bkite.com', 'snipr.com', 'flic.kr', 'loopt.us',
+        'doiop.com', 'twitthis.com', 'ht.ly', 'rubyurl.com', 'om.ly',
+        'linkbee.com', 'lnk.co', 'whatsyourname.jp', 'moourl.com',
+        'ur1.ca', 'goo.gl', 'dfl8.me', 'shorl.com', 'icanhaz.com',
+        'viralurl.com', 'idek.net', 'x.co', 's.id', 'shorturl.at'
+      ];
+      const humanHost = parsedHuman.hostname.replace(/^www\./, '').toLowerCase();
+      const botHost = parsedBot.hostname.replace(/^www\./, '').toLowerCase();
+      if (blockedHosts.includes(humanHost) || blockedHosts.includes(botHost)) {
+        return res.status(400).json({ message: "URL shorteners are not allowed" });
+      }
+
+      // Block redirecting to known phishing/login targets
+      const suspiciousPaths = [
+        '/login', '/signin', '/auth', '/account', '/password', '/verify',
+        '/confirm', '/secure', '/banking', '/wallet', '/crypto'
+      ];
+      const humanPath = parsedHuman.pathname.toLowerCase();
+      const botPath = parsedBot.pathname.toLowerCase();
+      const hasSuspiciousPath = suspiciousPaths.some(p => humanPath.includes(p) || botPath.includes(p));
+      if (hasSuspiciousPath) {
+        return res.status(400).json({ message: "Redirect URLs containing login or banking paths are not permitted" });
+      }
+
+      // Log URL update for compliance audit trail
+      console.log(`[COMPLIANCE] User ${userId} updated redirect URLs: human=${parsedHuman.hostname} bot=${parsedBot.hostname}`);
+
       const updated = await storage.setUserRedirectUrls(userId, { humanUrl, botUrl });
       res.json(updated);
     } catch (error) {
@@ -574,6 +636,27 @@ Disallow: /*`);
     }
   });
 
+  // Accept Terms of Service
+  app.post("/api/user/accept-tos", requireClientAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.clientUserId;
+      const user = await storage.getClientUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      await storage.updateClientUser(userId, {
+        tosAccepted: new Date(),
+        complianceStatus: 'cleared'
+      });
+
+      res.json({ message: "Terms of service accepted successfully" });
+    } catch (error) {
+      console.error("Accept ToS error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Get client user's API key details (for license management)
   app.get("/api/user/api-key-details", requireClientAuth, async (req: any, res) => {
     try {
@@ -642,6 +725,48 @@ Disallow: /*`);
       res.json(users);
     } catch (error) {
       console.error("Get client users error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update client user compliance status (Admin only)
+  app.patch("/api/interface/client-users/:id/compliance", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { complianceStatus } = req.body;
+
+      if (!complianceStatus || !['pending', 'cleared', 'flagged', 'suspended'].includes(complianceStatus)) {
+        return res.status(400).json({ message: "Invalid compliance status. Must be: pending, cleared, flagged, suspended" });
+      }
+
+      const updated = await storage.updateClientUser(id, { complianceStatus });
+      if (!updated) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      console.log(`[COMPLIANCE] Admin updated user ${id} compliance status to ${complianceStatus}`);
+      res.json({ success: true, user: updated });
+    } catch (error) {
+      console.error("Update compliance status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Get compliance dashboard stats (Admin only)
+  app.get("/api/interface/compliance/stats", requireAuth, async (req, res) => {
+    try {
+      const users = await storage.getAllClientUsers();
+      const stats = {
+        totalUsers: users.length,
+        pending: users.filter(u => u.complianceStatus === 'pending').length,
+        cleared: users.filter(u => u.complianceStatus === 'cleared').length,
+        flagged: users.filter(u => u.complianceStatus === 'flagged').length,
+        suspended: users.filter(u => u.complianceStatus === 'suspended').length,
+        tosNotAccepted: users.filter(u => !u.tosAccepted).length
+      };
+      res.json(stats);
+    } catch (error) {
+      console.error("Get compliance stats error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });

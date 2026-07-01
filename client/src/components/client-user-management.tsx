@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { UserPlus, Trash2, Shield } from "lucide-react";
+import { UserPlus, Trash2, Shield, AlertTriangle, CheckCircle, Clock } from "lucide-react";
 
 export default function ClientUserManagement() {
   const { toast } = useToast();
@@ -26,6 +26,10 @@ export default function ClientUserManagement() {
 
   const { data: apiKeys = [], isLoading: isLoadingApiKeys } = useQuery<any[]>({
     queryKey: ["/api/api-keys"],
+  });
+
+  const { data: complianceStats } = useQuery({
+    queryKey: ["/api/interface/compliance/stats"],
   });
 
   const createUserMutation = useMutation({
@@ -51,6 +55,21 @@ export default function ClientUserManagement() {
         description: error.message || "Failed to create user",
         variant: "destructive",
       });
+    },
+  });
+
+  const updateComplianceMutation = useMutation({
+    mutationFn: async ({ userId, status }: { userId: string; status: string }) => {
+      const response = await apiRequest("PATCH", `/api/interface/client-users/${userId}/compliance`, { complianceStatus: status });
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Compliance Updated", description: "User compliance status has been updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/interface/client-users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/interface/compliance/stats"] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Update Failed", description: error.message || "Failed to update compliance", variant: "destructive" });
     },
   });
 
@@ -198,6 +217,30 @@ export default function ClientUserManagement() {
         </div>
       </CardHeader>
       <CardContent>
+        {complianceStats && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div className="bg-muted/50 p-3 rounded-lg text-center">
+              <div className="text-2xl font-bold">{complianceStats.totalUsers}</div>
+              <div className="text-xs text-muted-foreground">Total Users</div>
+            </div>
+            <div className="bg-yellow-50 dark:bg-yellow-950 p-3 rounded-lg text-center">
+              <div className="text-2xl font-bold text-yellow-600">{complianceStats.pending}</div>
+              <div className="text-xs text-yellow-600">Pending</div>
+            </div>
+            <div className="bg-green-50 dark:bg-green-950 p-3 rounded-lg text-center">
+              <div className="text-2xl font-bold text-green-600">{complianceStats.cleared}</div>
+              <div className="text-xs text-green-600">Cleared</div>
+            </div>
+            <div className="bg-orange-50 dark:bg-orange-950 p-3 rounded-lg text-center">
+              <div className="text-2xl font-bold text-orange-600">{complianceStats.flagged}</div>
+              <div className="text-xs text-orange-600">Flagged</div>
+            </div>
+            <div className="bg-red-50 dark:bg-red-950 p-3 rounded-lg text-center">
+              <div className="text-2xl font-bold text-red-600">{complianceStats.suspended}</div>
+              <div className="text-xs text-red-600">Suspended</div>
+            </div>
+          </div>
+        )}
         {clientUsers.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>No client users yet</p>
@@ -210,6 +253,8 @@ export default function ClientUserManagement() {
                 <TableHead>Username</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Compliance</TableHead>
+                <TableHead>ToS</TableHead>
                 <TableHead>API Key</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead>Actions</TableHead>
@@ -218,6 +263,18 @@ export default function ClientUserManagement() {
             <TableBody>
               {clientUsers.map((user: any) => {
                 const assignedKey = apiKeys.find((k: any) => k.id === user.apiKeyId);
+                const complianceIcon = {
+                  pending: <Clock className="w-3 h-3" />,
+                  cleared: <CheckCircle className="w-3 h-3" />,
+                  flagged: <AlertTriangle className="w-3 h-3" />,
+                  suspended: <AlertTriangle className="w-3 h-3" />
+                }[user.complianceStatus || 'pending'];
+                const complianceVariant = {
+                  pending: 'secondary',
+                  cleared: 'default',
+                  flagged: 'destructive',
+                  suspended: 'destructive'
+                }[user.complianceStatus || 'pending'] as any;
                 return (
                   <TableRow key={user.id} data-testid={`row-client-user-${user.id}`}>
                     <TableCell className="font-medium">{user.username}</TableCell>
@@ -227,6 +284,19 @@ export default function ClientUserManagement() {
                         {user.status}
                       </Badge>
                     </TableCell>
+                    <TableCell>
+                      <Badge variant={complianceVariant} className="gap-1">
+                        {complianceIcon}
+                        {user.complianceStatus || 'pending'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {user.tosAccepted ? (
+                        <span className="text-xs text-green-600">Accepted</span>
+                      ) : (
+                        <span className="text-xs text-yellow-600">Not Accepted</span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm">
                       {assignedKey ? assignedKey.keyName : <span className="text-muted-foreground">No API key</span>}
                     </TableCell>
@@ -234,18 +304,34 @@ export default function ClientUserManagement() {
                       {new Date(user.createdAt).toLocaleDateString()}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        data-testid={`button-delete-user-${user.id}`}
-                        onClick={() => {
-                          if (confirm(`Delete user ${user.username}?`)) {
-                            deleteUserMutation.mutate(user.id);
-                          }
-                        }}
-                      >
-                        <Trash2 className="w-4 h-4 text-destructive" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Select
+                          value={user.complianceStatus || 'pending'}
+                          onValueChange={(status) => updateComplianceMutation.mutate({ userId: user.id, status })}
+                        >
+                          <SelectTrigger className="w-28 h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pending">Pending</SelectItem>
+                            <SelectItem value="cleared">Cleared</SelectItem>
+                            <SelectItem value="flagged">Flagged</SelectItem>
+                            <SelectItem value="suspended">Suspended</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          data-testid={`button-delete-user-${user.id}`}
+                          onClick={() => {
+                            if (confirm(`Delete user ${user.username}?`)) {
+                              deleteUserMutation.mutate(user.id);
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4 text-destructive" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
