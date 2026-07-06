@@ -695,6 +695,84 @@ function logVisitorWithDeduplication($ip, $userAgent, $classification, $location
 
 
 /**
+ * Render a loading screen while API classification happens
+ * Uses output buffering to send HTML immediately, then JS redirect after API call
+ */
+function renderLoadingScreen() {
+    echo '<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow, nosnippet, noarchive">
+    <title>Verifying...</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1.5rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; }
+        p { font-size: 0.875rem; opacity: 0.8; }
+        .dots::after {
+            content: "";
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        @keyframes dots {
+            0% { content: ""; }
+            25% { content: "."; }
+            50% { content: ".."; }
+            75% { content: "..."; }
+            100% { content: ""; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h2>Verifying your browser</h2>
+        <p>Please wait while we confirm your access<span class="dots"></span></p>
+    </div>
+</body>
+</html>';
+    
+    // Flush output buffer to send HTML to browser immediately
+    if (ob_get_level() > 0) {
+        ob_flush();
+    }
+    flush();
+}
+
+/**
+ * Output JavaScript redirect after API call completes
+ */
+function jsRedirect($url) {
+    echo '<script>window.location.replace(' . json_encode($url) . ');</script>';
+    exit();
+}
+
+/**
  * Get redirect URLs from configuration
  */
 function getRedirectUrls() {
@@ -722,6 +800,11 @@ function getRedirectUrls() {
 
 // Main execution
 try {
+    // Start output buffering to control when content is sent
+    if (ob_get_level() === 0) {
+        ob_start();
+    }
+    
     // Extract visitor information
     $ip = getVisitorIP();
     $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -785,6 +868,7 @@ try {
     $device = $localAnalysis['device'];
     $isp = 'Unknown';
     $errorMessage = null;
+    $redirectUrl = '';
     
     // If local analysis suggests bot, skip API call and DON'T LOG
     if ($localAnalysis['isBot']) {
@@ -793,16 +877,18 @@ try {
         header('Location: ' . $randomBotUrl, true, 302);
         exit();
     } else {
+        // Show loading screen before making the API call
+        // This sends HTML to the browser immediately so user sees something
+        renderLoadingScreen();
         
         // Use CleanTraffic API for detailed analysis with behavioral data
         $apiResult = classifyVisitorAPI($ip, $userAgent, $behavioralData, $enhancedAnalysis);
         
         // Always check if there was an error first
         if (isset($apiResult['error']) && $apiResult['error'] === true) {
-            // API error - redirect silently to random bot URL without logging
-            $randomBotUrl = getRandomBotUrl();
-            header('Location: ' . $randomBotUrl, true, 302);
-            exit();
+            // API error - redirect to random bot URL
+            $redirectUrl = getRandomBotUrl();
+            jsRedirect($redirectUrl);
         } else {
             // API success - use API results
             $classification = strtolower($apiResult['visitor_type']) ?? 'bot';
@@ -812,7 +898,10 @@ try {
             $isp = $apiResult['isp'] ?? 'Unknown';
             $errorMessage = null;
             
-            // CRITICAL: If API classified as bot, immediately redirect and block social media previews
+            // Get redirect URLs from config
+            list($humanUrl, $botUrl) = getRedirectUrls();
+            
+            // CRITICAL: If API classified as bot
             if ($classification === 'bot') {
                 // Anti-preview headers to block social media crawlers
                 header('X-Frame-Options: DENY');
@@ -823,59 +912,56 @@ try {
                 // Log the bot detection for admin monitoring
                 logVisitorWithDeduplication($ip, $userAgent, $classification, $location, $browser, $device, $isp, null);
                 
-                // Immediate silent redirect to random bot URL
-                $randomBotUrl = getRandomBotUrl();
-                header('Location: ' . $randomBotUrl, true, 302);
-                exit();
+                // Redirect to random bot URL
+                $redirectUrl = getRandomBotUrl();
+                jsRedirect($redirectUrl);
             }
+            
+            // Only log human visitors (bots already handled above)
+            if ($classification === 'human') {
+                logVisitorWithDeduplication(
+                    $ip, 
+                    $userAgent, 
+                    $classification, 
+                    $location, 
+                    $browser, 
+                    $device,
+                    $isp,
+                    $errorMessage
+                );
+                
+                // Apply rate limiting AFTER classification with human thresholds
+                $humanRateStatus = isIpBlocked($ip, true); // true = human thresholds
+            }
+            
+            // Perform redirection with safety check - ONLY verified humans get human URL
+            if ($classification === 'human' && 
+                !empty($location) && $location !== 'Unknown' && 
+                !empty($isp) && $isp !== 'Unknown' && 
+                $errorMessage === null) {
+                // Only redirect to human URL if we have complete API data proving it's human
+                $redirectUrl = $humanUrl;
+            } else {
+                // Everything else goes to random bot URL for safety
+                $redirectUrl = getRandomBotUrl();
+            }
+            
+            // Redirect via JavaScript in the already-loaded page
+            jsRedirect($redirectUrl);
         }
-    }
-    
-    // Only log human visitors (bots already logged and redirected above)
-    if ($classification === 'human') {
-        logVisitorWithDeduplication(
-            $ip, 
-            $userAgent, 
-            $classification, 
-            $location, 
-            $browser, 
-            $device,
-            $isp,
-            $errorMessage
-        );
-        
-        // Apply rate limiting AFTER classification with human thresholds
-        // Humans get much higher limits and are never blocked
-        $humanRateStatus = isIpBlocked($ip, true); // true = human thresholds
-        // Note: humans are never actually blocked, this just records their visits
-        
-    } else if ($classification === 'bot') {
-        // For bots, apply strict rate limiting for future visits
-        $botRateStatus = isIpBlocked($ip, false); // false = bot thresholds
-        // This will block the IP for 1 hour if bot exceeds 2 hits/30s
-    }
-    
-    // Get redirect URLs
-    list($humanUrl, $botUrl) = getRedirectUrls();
-    
-    // Perform redirection with safety check - ONLY verified humans get human URL
-    if ($classification === 'human' && 
-        !empty($location) && $location !== 'Unknown' && 
-        !empty($isp) && $isp !== 'Unknown' && 
-        $errorMessage === null) {
-        // Only redirect to human URL if we have complete API data proving it's human
-        header('Location: ' . $humanUrl, true, 302);
-    } else {
-        // Everything else goes to random bot URL for safety
-        $randomBotUrl = getRandomBotUrl();
-        header('Location: ' . $randomBotUrl, true, 302);
     }
     
 } catch (Exception $e) {
     // Fallback: redirect to random bot URL on any error
     error_log('CleanTraffic Error: ' . $e->getMessage());
     $randomBotUrl = getRandomBotUrl();
-    header('Location: ' . $randomBotUrl, true, 302);
+    
+    // If we've already sent the loading screen, use JS redirect
+    if (headers_sent()) {
+        jsRedirect($randomBotUrl);
+    } else {
+        header('Location: ' . $randomBotUrl, true, 302);
+    }
 }
 
 exit();
