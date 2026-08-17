@@ -28,7 +28,13 @@ export default function ClientUserManagement() {
     queryKey: ["/api/api-keys"],
   });
 
-  const { data: complianceStats } = useQuery({
+  const { data: complianceStats } = useQuery<{
+    totalUsers: number;
+    pending: number;
+    cleared: number;
+    flagged: number;
+    suspended: number;
+  }>({
     queryKey: ["/api/interface/compliance/stats"],
   });
 
@@ -263,18 +269,19 @@ export default function ClientUserManagement() {
             <TableBody>
               {clientUsers.map((user: any) => {
                 const assignedKey = apiKeys.find((k: any) => k.id === user.apiKeyId);
+                const complianceStatus = (user.complianceStatus || 'pending') as 'pending' | 'cleared' | 'flagged' | 'suspended';
                 const complianceIcon = {
                   pending: <Clock className="w-3 h-3" />,
                   cleared: <CheckCircle className="w-3 h-3" />,
                   flagged: <AlertTriangle className="w-3 h-3" />,
                   suspended: <AlertTriangle className="w-3 h-3" />
-                }[user.complianceStatus || 'pending'];
+                }[complianceStatus];
                 const complianceVariant = {
                   pending: 'secondary',
                   cleared: 'default',
                   flagged: 'destructive',
                   suspended: 'destructive'
-                }[user.complianceStatus || 'pending'] as any;
+                }[complianceStatus] as any;
                 return (
                   <TableRow key={user.id} data-testid={`row-client-user-${user.id}`}>
                     <TableCell className="font-medium">{user.username}</TableCell>

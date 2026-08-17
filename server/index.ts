@@ -119,15 +119,14 @@ app.use((req, res, next) => {
       const hashedPassword = await bcrypt.hash("Markstorey@2015", 10);
       await storage.createUser({
         username: "Mark02",
-        password: hashedPassword,
-        role: "admin"
+        password: hashedPassword
       });
       log("✅ Default admin user created (Mark02)");
     } else {
       log("✅ Default admin user already exists");
     }
   } catch (error) {
-    log("⚠️ Could not initialize default admin user:", error);
+    log("⚠️ Could not initialize default admin user:", error instanceof Error ? error.message : String(error));
   }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

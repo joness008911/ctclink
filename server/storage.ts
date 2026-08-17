@@ -201,7 +201,7 @@ export interface IStorage {
   setDailyGenerationLimit(limit: number): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
+export class MemStorage {
   private users: Map<string, User>;
   private classifications: Map<string, Classification>;
   private detectionRules: DetectionRules | undefined;
@@ -295,10 +295,13 @@ export class MemStorage implements IStorage {
       location: insertClassification.location || null,
       country: insertClassification.country || null,
       city: insertClassification.city || null,
+      countryCode: insertClassification.countryCode || null,
+      region: insertClassification.region || null,
       connectionType: insertClassification.connectionType || null,
       isp: insertClassification.isp || null,
       browser: insertClassification.browser || null,
       deviceType: insertClassification.deviceType || null,
+      apiKeyId: insertClassification.apiKeyId ?? null,
       id, 
       timestamp: new Date() 
     };
@@ -512,8 +515,7 @@ export class MemStorage implements IStorage {
       ...country,
       id,
       enabled: country.enabled ?? true,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      addedAt: new Date()
     };
     this.countryWhitelist.set(id, newCountry);
     return newCountry;
@@ -527,7 +529,6 @@ export class MemStorage implements IStorage {
     const country = this.countryWhitelist.get(id);
     if (country) {
       country.enabled = enabled;
-      country.updatedAt = new Date();
       this.countryWhitelist.set(id, country);
       return true;
     }
@@ -555,8 +556,8 @@ export class MemStorage implements IStorage {
       ...isp,
       id,
       enabled: isp.enabled ?? true,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      countryCode: isp.countryCode ?? null,
+      addedAt: new Date()
     };
     this.ispWhitelist.set(id, newIsp);
     return newIsp;
@@ -570,7 +571,6 @@ export class MemStorage implements IStorage {
     const isp = this.ispWhitelist.get(id);
     if (isp) {
       isp.enabled = enabled;
-      isp.updatedAt = new Date();
       this.ispWhitelist.set(id, isp);
       return true;
     }
@@ -595,8 +595,8 @@ export class MemStorage implements IStorage {
       ...isp,
       id,
       enabled: isp.enabled ?? true,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      category: isp.category ?? null,
+      addedAt: new Date()
     };
     this.ispBlacklist.set(id, newIsp);
     return newIsp;
@@ -647,7 +647,6 @@ export class MemStorage implements IStorage {
     const isp = this.ispBlacklist.get(id);
     if (isp) {
       isp.enabled = enabled;
-      isp.updatedAt = new Date();
       this.ispBlacklist.set(id, isp);
       return true;
     }
@@ -666,6 +665,11 @@ export class MemStorage implements IStorage {
     const newUser: ClientUser = {
       ...user,
       id,
+      status: user.status ?? "active",
+      email: user.email ?? null,
+      apiKeyId: user.apiKeyId ?? null,
+      tosAccepted: null,
+      complianceStatus: "pending",
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -714,7 +718,6 @@ export class MemStorage implements IStorage {
       userId,
       humanUrl: urls.humanUrl,
       botUrl: urls.botUrl,
-      createdAt: existing?.createdAt || new Date(),
       updatedAt: new Date()
     };
     this.redirectUrls.set(userId, redirectUrl);
@@ -896,7 +899,7 @@ export class MemStorage implements IStorage {
   }
 }
 
-export class DatabaseStorage implements IStorage {
+export class DatabaseStorage {
   constructor() {
     // Initialization removed to prevent connection pool exhaustion
     // Defaults should already exist from previous runs
