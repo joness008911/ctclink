@@ -72,9 +72,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   
   // IP Whitelist Middleware - Runs BEFORE session to block unauthorized /user access early
   app.use(async (req, res, next) => {
-    // IMPORTANT: Only check /user routes. 
+    // IMPORTANT: Only check /user and /api/user routes.
     // /interface (admin) and /api/classify must ALWAYS be accessible to avoid lockout.
-    if (!req.path.startsWith('/user')) {
+    if (!req.path.startsWith('/user') && !req.path.startsWith('/api/user')) {
       return next();
     }
     
@@ -290,8 +290,6 @@ Disallow: /*`);
     try {
       const { username, password } = req.body;
       
-      console.log("User login attempt:", { username, passwordLength: password?.length });
-      
       if (!username || !password) {
         return res.status(400).json({ message: "Username and password required" });
       }
@@ -299,15 +297,11 @@ Disallow: /*`);
       // Find client user by username
       const user = await storage.getClientUserByUsername(username);
       if (!user) {
-        console.log("User not found:", username);
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      console.log("User found:", { username: user.username, hashedPasswordPrefix: user.password.substring(0, 10) });
-
       // Use bcrypt to compare passwords
       const passwordMatch = await bcrypt.compare(password, user.password);
-      console.log("Password match result:", passwordMatch);
       
       if (!passwordMatch) {
         return res.status(401).json({ message: "Invalid credentials" });

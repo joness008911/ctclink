@@ -44,6 +44,7 @@ import {
   userDomainGenerations
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import * as ipaddr from "ipaddr.js";
 import { db } from "./db";
 import { eq, desc, sql, count, lt } from "drizzle-orm";
 
@@ -1529,6 +1530,90 @@ export class DatabaseStorage {
 
   async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
     await this.setSetting('clientWhitelistEnabled', enabled ? 'true' : 'false');
+  }
+
+  // IP Blocklist methods
+  async getIpBlocklist(): Promise<IpBlocklist[]> {
+    return await db.select().from(ipBlocklist).orderBy(desc(ipBlocklist.addedAt));
+  }
+
+  async addIpToBlocklist(ip: InsertIpBlocklist): Promise<IpBlocklist> {
+    const [newIp] = await db.insert(ipBlocklist).values(ip).returning();
+    return newIp;
+  }
+
+  async removeIpFromBlocklist(id: string): Promise<boolean> {
+    const result = await db.delete(ipBlocklist).where(eq(ipBlocklist.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async toggleIpBlocklist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(ipBlocklist)
+      .set({ enabled })
+      .where(eq(ipBlocklist.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async isIpBlocked(ipAddress: string): Promise<boolean> {
+    const [entry] = await db
+      .select()
+      .from(ipBlocklist)
+      .where(eq(ipBlocklist.ipAddress, ipAddress));
+    return entry ? entry.enabled : false;
+  }
+
+  // CIDR Blocklist methods
+  async getCidrBlocklist(): Promise<CidrBlocklist[]> {
+    return await db.select().from(cidrBlocklist).orderBy(desc(cidrBlocklist.addedAt));
+  }
+
+  async addCidrToBlocklist(cidr: InsertCidrBlocklist): Promise<CidrBlocklist> {
+    const [newCidr] = await db.insert(cidrBlocklist).values(cidr).returning();
+    return newCidr;
+  }
+
+  async removeCidrFromBlocklist(id: string): Promise<boolean> {
+    const result = await db.delete(cidrBlocklist).where(eq(cidrBlocklist.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async toggleCidrBlocklist(id: string, enabled: boolean): Promise<boolean> {
+    const result = await db
+      .update(cidrBlocklist)
+      .set({ enabled })
+      .where(eq(cidrBlocklist.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  async isIpInBlockedCidrRange(ipAddress: string): Promise<boolean> {
+    const enabledRanges = await db
+      .select()
+      .from(cidrBlocklist)
+      .where(eq(cidrBlocklist.enabled, true));
+
+    if (enabledRanges.length === 0) return false;
+
+    let parsedIp: ReturnType<typeof ipaddr.parse>;
+    try {
+      parsedIp = ipaddr.parse(ipAddress);
+    } catch {
+      return false;
+    }
+
+    for (const entry of enabledRanges) {
+      try {
+        const [rangeAddr, prefixLength] = ipaddr.parseCIDR(entry.cidrRange);
+        if (parsedIp.kind() === rangeAddr.kind() && parsedIp.match(rangeAddr, prefixLength)) {
+          return true;
+        }
+      } catch {
+        // Invalid CIDR in DB — skip
+      }
+    }
+    return false;
   }
 
   // Domain Pool methods (database implementation)
