@@ -178,10 +178,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return next(); // Let it proceed to normal API key validation and CORS handling
       }
       
-      // Redirect ALL other browser requests to Google.com (privacy/security)
-      // This prevents access to /user, /interface, /api/*, assets, etc. on api subdomain
-      // Anyone typing api.yoursite.com in browser gets redirected away
-      return res.redirect(301, 'https://www.google.com');
+      // Temporarily allow other routes on the API subdomain as well.
+      // Route-level authentication and validation still protect sensitive endpoints.
+      return next();
     }
     
     // Continue to normal routes for non-api subdomains
