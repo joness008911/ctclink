@@ -36,10 +36,7 @@ function UserRouter() {
   return (
     <Switch>
       <Route path="/">
-        {() => {
-          window.location.href = 'https://www.google.com';
-          return null;
-        }}
+        <UserLogin />
       </Route>
       <Route path="/api-verify" component={ApiVerify} />
       <Route path="/user">
