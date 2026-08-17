@@ -211,10 +211,13 @@ Disallow: /assets/
 Disallow: /*`);
   });
 
-  // Authentication middleware
+  // Authentication middleware — admin sessions only; explicitly rejects client-only sessions
   const requireAuth = (req: any, res: any, next: any) => {
     if (req.session?.userId) {
       next();
+    } else if (req.session?.clientUserId) {
+      // Client session present but not an admin session — forbidden, not just unauthorized
+      res.status(403).json({ message: "Forbidden. Admin access required." });
     } else {
       res.status(401).json({ message: "Unauthorized" });
     }
@@ -429,14 +432,27 @@ Disallow: /*`);
     }
   });
 
-  // Middleware for client user auth
+  // Middleware for client user auth — explicitly rejects admin-only sessions
   const requireClientAuth = (req: any, res: any, next: any) => {
     if (req.session?.clientUserId && req.session?.clientUserAuthenticated) {
+      // Reject requests that carry an admin session alongside a client session
+      // (defence-in-depth: admin and client namespaces must not bleed together)
+      if (req.session?.userId) {
+        return res.status(403).json({ message: "Admin sessions may not use client endpoints." });
+      }
       next();
     } else {
       res.status(401).json({ message: "Unauthorized. Please login and verify your API key." });
     }
   };
+
+  // Block client sessions from every admin-only path prefix
+  app.use(["/api/interface", "/api/api-keys"], (req: any, res: any, next: any) => {
+    if (req.session?.clientUserId) {
+      return res.status(403).json({ message: "Forbidden. Client sessions cannot access admin endpoints." });
+    }
+    next();
+  });
 
   // Get current client user info
   app.get("/api/user/me", requireClientAuth, async (req: any, res) => {
@@ -2464,8 +2480,8 @@ Disallow: /*`);
   // Get user's generated domains (history)
   app.get("/api/user/domains/generated", requireClientAuth, async (req: any, res) => {
     try {
-      const clientUser = req.session.clientUser;
-      const generations = await storage.getUserDomainGenerations(clientUser.id);
+      const userId = req.session.clientUserId;
+      const generations = await storage.getUserDomainGenerations(userId);
       res.json(generations);
     } catch (error) {
       console.error("Get user domain generations error:", error);
@@ -2476,9 +2492,9 @@ Disallow: /*`);
   // Get user's remaining generations for today
   app.get("/api/user/domains/remaining", requireClientAuth, async (req: any, res) => {
     try {
-      const clientUser = req.session.clientUser;
+      const userId = req.session.clientUserId;
       const [todayGenerations, dailyLimit] = await Promise.all([
-        storage.getUserDomainGenerationsToday(clientUser.id),
+        storage.getUserDomainGenerationsToday(userId),
         storage.getDailyGenerationLimit()
       ]);
       
@@ -2537,7 +2553,12 @@ Disallow: /*`);
   // Generate link for a domain (client user)
   app.post("/api/user/domains/generate", requireClientAuth, async (req: any, res) => {
     try {
-      const clientUser = req.session.clientUser;
+      const userId = req.session.clientUserId;
+      const clientUser = await storage.getClientUser(userId);
+      if (!clientUser) {
+        return res.status(401).json({ message: "User not found" });
+      }
+
       const { domainId } = req.body;
 
       if (!domainId) {
@@ -2546,7 +2567,7 @@ Disallow: /*`);
 
       // Check daily limit
       const [todayGenerations, dailyLimit] = await Promise.all([
-        storage.getUserDomainGenerationsToday(clientUser.id),
+        storage.getUserDomainGenerationsToday(userId),
         storage.getDailyGenerationLimit()
       ]);
       
@@ -2568,7 +2589,7 @@ Disallow: /*`);
       }
 
       // Check if user already generated this domain
-      const existingGenerations = await storage.getUserDomainGenerations(clientUser.id);
+      const existingGenerations = await storage.getUserDomainGenerations(userId);
       const alreadyGenerated = existingGenerations.some(g => g.domain === domain.domain);
       if (alreadyGenerated) {
         return res.status(409).json({ message: "You have already generated this domain" });
@@ -2579,13 +2600,13 @@ Disallow: /*`);
 
       // Create generation record
       const generation = await storage.createUserDomainGeneration({
-        userId: clientUser.id,
+        userId,
         domainId: domain.id,
         domain: domain.domain
       });
 
       // Get user's redirect URLs
-      const redirectUrls = await storage.getUserRedirectUrls(clientUser.id);
+      const redirectUrls = await storage.getUserRedirectUrls(userId);
 
       res.json({
         success: true,
