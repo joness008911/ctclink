@@ -16,7 +16,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { 
   LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, 
   Activity, Code, Download, Copy, AlertTriangle, TrendingUp, Globe, Users, Bot,
-  Play, Pause, Settings, FileText, CheckCircle2, XCircle, Info, Check, Zap
+  Play, Pause, Settings, FileText, CheckCircle2, XCircle, Info, Check, Zap,
+  CreditCard, Clock
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
@@ -33,6 +34,114 @@ interface GeneratedDomain {
   id: string;
   domain: string;
   generatedAt: string;
+}
+
+// ---- Billing Status Card ----
+function BillingStatusCard() {
+  const { toast } = useToast();
+
+  const { data: billing, isLoading } = useQuery<{
+    subscriptionStatus: string;
+    trialEndsAt: string | null;
+    trialDaysRemaining: number | null;
+    isActive: boolean;
+  }>({
+    queryKey: ["/api/user/billing"],
+    refetchInterval: 60000,
+  });
+
+  const checkoutMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/billing/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Failed to create checkout session");
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.url) window.location.href = data.url;
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Upgrade Failed",
+        description: error.message || "Could not start checkout. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  if (isLoading) return null;
+  if (!billing) return null;
+
+  const statusConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
+    trialing: {
+      label: `Trial — ${billing.trialDaysRemaining ?? 0} day${billing.trialDaysRemaining !== 1 ? "s" : ""} left`,
+      color: "text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800",
+      icon: <Clock className="h-4 w-4 text-blue-600" />,
+    },
+    active: {
+      label: "Subscribed",
+      color: "text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800",
+      icon: <CheckCircle2 className="h-4 w-4 text-green-600" />,
+    },
+    past_due: {
+      label: "Payment Past Due",
+      color: "text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-950 border-orange-200 dark:border-orange-800",
+      icon: <AlertTriangle className="h-4 w-4 text-orange-600" />,
+    },
+    cancelled: {
+      label: "Cancelled",
+      color: "text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800",
+      icon: <XCircle className="h-4 w-4 text-red-600" />,
+    },
+  };
+
+  const cfg = statusConfig[billing.subscriptionStatus] ?? statusConfig.cancelled;
+  const showUpgrade = billing.subscriptionStatus !== "active";
+  const isExpiredTrial =
+    billing.subscriptionStatus === "trialing" && (billing.trialDaysRemaining ?? 0) <= 0;
+
+  return (
+    <Card className={`border-2 shadow-md ${isExpiredTrial ? "border-red-300 dark:border-red-700" : ""}`}>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <CreditCard className="h-5 w-5 text-primary" />
+          Subscription
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className={`flex items-center justify-between p-3 rounded-lg border ${cfg.color}`}>
+          <div className="flex items-center gap-2">
+            {cfg.icon}
+            <span className="font-medium text-sm">{cfg.label}</span>
+          </div>
+          {showUpgrade && (
+            <Button
+              size="sm"
+              onClick={() => checkoutMutation.mutate()}
+              disabled={checkoutMutation.isPending}
+              data-testid="button-upgrade"
+            >
+              {checkoutMutation.isPending ? "Redirecting…" : "Upgrade"}
+            </Button>
+          )}
+        </div>
+        {isExpiredTrial && (
+          <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+            Your trial has expired. Classification calls are redirecting all traffic to your bot URL
+            until you upgrade.
+          </p>
+        )}
+        {billing.subscriptionStatus === "past_due" && (
+          <p className="text-sm text-orange-600 dark:text-orange-400 mt-2">
+            Your last payment failed. Please update your payment method to restore access.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function DomainBrowserSection() {
@@ -774,6 +883,7 @@ die('Service temporarily unavailable. Please try again later.');
           </TabsList>
 
           <TabsContent value="analytics" className="space-y-6">
+            <BillingStatusCard />
             <Card className="border-2 border-primary/20 shadow-lg">
               <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

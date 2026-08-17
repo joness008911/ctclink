@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
+import { execSync } from "child_process";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -73,7 +74,12 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({
+  // Capture raw body for Stripe webhook signature verification
+  verify: (req: any, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
@@ -107,6 +113,18 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Run pending database migrations on startup using drizzle-kit (pg driver).
+  // Fatal on failure: a schema mismatch would produce broken billing/auth behaviour
+  // that is harder to diagnose than a clean startup crash.
+  try {
+    execSync("npx drizzle-kit migrate", { stdio: "pipe" });
+    log("Database migrations applied");
+  } catch (err: any) {
+    const msg = (err.stderr?.toString() || err.stdout?.toString() || err.message || String(err)).slice(0, 500);
+    console.error("FATAL: database migration failed — cannot start server:\n" + msg);
+    process.exit(1);
+  }
+
   const server = await registerRoutes(app);
   
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

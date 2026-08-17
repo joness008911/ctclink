@@ -41,7 +41,8 @@ import {
   userRedirectUrls,
   settings,
   domainPool,
-  userDomainGenerations
+  userDomainGenerations,
+  stripeProcessedEvents
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import * as ipaddr from "ipaddr.js";
@@ -170,6 +171,14 @@ export interface IStorage {
   updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined>;
   getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined>;
   getAllClientUsers(): Promise<ClientUser[]>;
+  getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined>;
+  // Atomically claims an event lease; returns true (new claim or stale-lease reclaim) or
+  // false (true duplicate with processedAt set, or concurrent in-flight within 5 min).
+  claimStripeEvent(eventId: string): Promise<boolean>;
+  // Marks the event as permanently processed (called after successful DB mutation).
+  markStripeEventProcessed(eventId: string): Promise<void>;
+  // Deletes the claim entirely so Stripe can retry immediately after a caught error.
+  releaseStripeEvent(eventId: string): Promise<void>;
   
   // User Redirect URLs methods
   getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined>;
@@ -662,6 +671,10 @@ export class MemStorage {
       apiKeyId: user.apiKeyId ?? null,
       tosAccepted: null,
       complianceStatus: "pending",
+      subscriptionStatus: user.subscriptionStatus ?? "trialing",
+      trialEndsAt: user.trialEndsAt ?? null,
+      stripeCustomerId: user.stripeCustomerId ?? null,
+      stripeSubscriptionId: user.stripeSubscriptionId ?? null,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -696,6 +709,43 @@ export class MemStorage {
   async getAllClientUsers(): Promise<ClientUser[]> {
     return Array.from(this.clientUsers.values())
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined> {
+    return Array.from(this.clientUsers.values())
+      .find(user => user.stripeCustomerId === stripeCustomerId);
+  }
+
+  // Single-threaded Node.js: Map operations are atomic within the event loop tick.
+  private _stripeEvents = new Map<string, { claimedAt: Date; processedAt: Date | null }>();
+  private static readonly LEASE_MS = 5 * 60 * 1000; // 5-minute lease window
+
+  async claimStripeEvent(eventId: string): Promise<boolean> {
+    const existing = this._stripeEvents.get(eventId);
+    const now = new Date();
+    if (!existing) {
+      this._stripeEvents.set(eventId, { claimedAt: now, processedAt: null });
+      return true;
+    }
+    if (existing.processedAt !== null) return false; // true duplicate — already processed
+    const leaseAge = now.getTime() - existing.claimedAt.getTime();
+    if (leaseAge >= MemStorage.LEASE_MS) {
+      // Stale lease: previous holder crashed — reclaim
+      this._stripeEvents.set(eventId, { claimedAt: now, processedAt: null });
+      return true;
+    }
+    return false; // concurrent in-flight delivery
+  }
+
+  async markStripeEventProcessed(eventId: string): Promise<void> {
+    const existing = this._stripeEvents.get(eventId);
+    if (existing) {
+      this._stripeEvents.set(eventId, { ...existing, processedAt: new Date() });
+    }
+  }
+
+  async releaseStripeEvent(eventId: string): Promise<void> {
+    this._stripeEvents.delete(eventId);
   }
 
   // User Redirect URLs methods
@@ -1354,6 +1404,60 @@ export class DatabaseStorage {
   async getAllClientUsers(): Promise<ClientUser[]> {
     const allUsers = await db.select().from(clientUsers);
     return allUsers;
+  }
+
+  async getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(clientUsers)
+        .where(eq(clientUsers.stripeCustomerId, stripeCustomerId));
+      return Array.isArray(result) ? result[0] : undefined;
+    } catch (err: any) {
+      // Only swallow the specific neon-http driver bug where an empty SELECT result is
+      // surfaced as "Cannot read properties of null (reading 'map')".  All other errors
+      // (connection failures, permission errors, etc.) must propagate so the webhook
+      // processing catch can release the event claim and return 5xx for Stripe to retry.
+      const msg: string = err?.message ?? "";
+      if (msg.includes("Cannot read properties of null") && msg.includes("map")) {
+        return undefined;
+      }
+      throw err;
+    }
+  }
+
+  // Atomically claims an event for processing using a crash-recoverable lease model.
+  //
+  // Returns true  : new claim (INSERT) or stale-lease reclaim (UPDATE after >5 min)
+  // Returns false : true duplicate (processed_at IS NOT NULL) OR concurrent in-flight
+  //
+  // The atomic INSERT … ON CONFLICT DO UPDATE WHERE handles all four cases in a single
+  // round-trip. rowCount = 1 means we hold the lease; 0 means rejected.
+  async claimStripeEvent(eventId: string): Promise<boolean> {
+    const result = await db.execute(sql`
+      INSERT INTO stripe_processed_events (event_id, claimed_at, processed_at)
+      VALUES (${eventId}, now(), NULL)
+      ON CONFLICT (event_id) DO UPDATE
+        SET claimed_at = now()
+      WHERE stripe_processed_events.processed_at IS NULL
+        AND stripe_processed_events.claimed_at < now() - INTERVAL '5 minutes'
+    `);
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Marks the event as permanently processed (called after successful DB mutation).
+  // Once set, all future Stripe retries are deduplicated without reprocessing.
+  async markStripeEventProcessed(eventId: string): Promise<void> {
+    await db.execute(
+      sql`UPDATE stripe_processed_events SET processed_at = now() WHERE event_id = ${eventId}`
+    );
+  }
+
+  // Deletes the claim entirely so Stripe can retry immediately after a caught error.
+  async releaseStripeEvent(eventId: string): Promise<void> {
+    await db.execute(
+      sql`DELETE FROM stripe_processed_events WHERE event_id = ${eventId}`
+    );
   }
 
   // User Redirect URLs methods

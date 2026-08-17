@@ -118,6 +118,11 @@ export const clientUsers = pgTable("client_users", {
   status: text("status").default("active").notNull(), // active, suspended, expired
   tosAccepted: timestamp("tos_accepted"), // Terms of service acceptance timestamp
   complianceStatus: text("compliance_status").default("pending").notNull(), // pending, cleared, flagged, suspended
+  // Billing fields
+  subscriptionStatus: text("subscription_status").default("trialing").notNull(), // trialing, active, past_due, cancelled
+  trialEndsAt: timestamp("trial_ends_at"), // null = no trial configured yet
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -263,3 +268,12 @@ export type InsertDomainPool = z.infer<typeof insertDomainPoolSchema>;
 export type DomainPool = typeof domainPool.$inferSelect;
 export type InsertUserDomainGeneration = z.infer<typeof insertUserDomainGenerationSchema>;
 export type UserDomainGeneration = typeof userDomainGenerations.$inferSelect;
+
+// Tracks Stripe webhook events that have already been processed (idempotency guard)
+export const stripeProcessedEvents = pgTable("stripe_processed_events", {
+  eventId: text("event_id").primaryKey(),
+  // claimed_at: when processing began (lease timestamp). Stale leases (>5 min) are reclaimable.
+  claimedAt: timestamp("claimed_at").defaultNow().notNull(),
+  // processed_at: set only after successful DB mutation. NULL means in-flight (not yet done).
+  processedAt: timestamp("processed_at"),
+});

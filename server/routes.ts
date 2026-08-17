@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
+import Stripe from "stripe";
 
 // Extend session types
 declare module 'express-session' {
@@ -446,6 +447,33 @@ Disallow: /*`);
     }
   };
 
+  // ---- Subscription enforcement middleware ----
+  // Checks that the authenticated client user has an active trial or paid subscription.
+  // Fail-open on transient errors to avoid inadvertently locking out users.
+  const requireActiveSubscription = async (req: any, res: any, next: any) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user) return res.status(401).json({ message: "User not found" });
+      const now = new Date();
+      if (
+        user.subscriptionStatus === 'active' ||
+        // Trialing: allow if no expiry is set yet (existing accounts) or expiry is in the future
+        (user.subscriptionStatus === 'trialing' && (!user.trialEndsAt || user.trialEndsAt > now))
+      ) {
+        return next();
+      }
+      return res.status(402).json({
+        message: "Your trial has expired or your subscription is inactive. Please upgrade to continue.",
+        subscriptionStatus: user.subscriptionStatus,
+        trialEndsAt: user.trialEndsAt,
+        upgradeRequired: true,
+      });
+    } catch (error) {
+      console.error("Subscription check error:", error);
+      next(); // Fail-open on transient error
+    }
+  };
+
   // Block client sessions from every admin-only path prefix
   app.use(["/api/interface", "/api/api-keys"], (req: any, res: any, next: any) => {
     if (req.session?.clientUserId) {
@@ -465,12 +493,21 @@ Disallow: /*`);
       // Get API key info
       const apiKey = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
       
+      const now = new Date();
+      const trialDaysRemaining = user.trialEndsAt
+        ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        : null;
+
       res.json({ 
         id: user.id,
         username: user.username,
         email: user.email,
         status: user.status,
         createdAt: user.createdAt,
+        // Billing fields
+        subscriptionStatus: user.subscriptionStatus,
+        trialEndsAt: user.trialEndsAt,
+        trialDaysRemaining,
         apiKey: apiKey ? {
           name: apiKey.keyName,
           status: apiKey.status,
@@ -579,7 +616,7 @@ Disallow: /*`);
   });
 
   // Get client user's classifications (their traffic logs)
-  app.get("/api/user/classifications", requireClientAuth, async (req: any, res) => {
+  app.get("/api/user/classifications", requireClientAuth, requireActiveSubscription, async (req: any, res) => {
     try {
       const user = await storage.getClientUser(req.session.clientUserId);
       if (!user || !user.apiKeyId) {
@@ -615,7 +652,7 @@ Disallow: /*`);
   });
 
   // Get client user's statistics
-  app.get("/api/user/stats", requireClientAuth, async (req: any, res) => {
+  app.get("/api/user/stats", requireClientAuth, requireActiveSubscription, async (req: any, res) => {
     try {
       const user = await storage.getClientUser(req.session.clientUserId);
       if (!user || !user.apiKeyId) {
@@ -831,12 +868,18 @@ Disallow: /*`);
       // Hash password before storing
       const hashedPassword = await bcrypt.hash(password, 10);
 
+      // Start a 14-day trial for every new client user
+      const trialDays = 14;
+      const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
       const newUser = await storage.createClientUser({
         username,
         password: hashedPassword,
         email: email || null,
         apiKeyId: apiKeyId || null,
-        status: 'active'
+        status: 'active',
+        subscriptionStatus: 'trialing',
+        trialEndsAt,
       });
 
       res.json(newUser);
@@ -1068,6 +1111,16 @@ Disallow: /*`);
     // Store API key ID for classification tracking
     apiKeyId = validKey.id;
     
+    // Check subscription status for the API key owner — expired trials get bot fallback
+    const keyOwner = await storage.getClientUserByApiKey(apiKeyId);
+    if (keyOwner) {
+      const now = new Date();
+      const subActive =
+        keyOwner.subscriptionStatus === 'active' ||
+        (keyOwner.subscriptionStatus === 'trialing' && (!keyOwner.trialEndsAt || keyOwner.trialEndsAt > now));
+      if (!subActive) limitReached = true;
+    }
+
     // Check and increment usage count
     const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
     if (!usageAllowed) {
@@ -1104,6 +1157,16 @@ Disallow: /*`);
     
     // Store API key ID for classification tracking and redirect URL lookup
     apiKeyId = validKey.id;
+
+    // Check subscription status for the API key owner — expired trials get bot fallback
+    const postKeyOwner = await storage.getClientUserByApiKey(apiKeyId);
+    if (postKeyOwner) {
+      const now = new Date();
+      const subActive =
+        postKeyOwner.subscriptionStatus === 'active' ||
+        (postKeyOwner.subscriptionStatus === 'trialing' && (!postKeyOwner.trialEndsAt || postKeyOwner.trialEndsAt > now));
+      if (!subActive) limitReached = true;
+    }
     
     // Check and increment usage count
     const usageAllowed = await storage.incrementApiKeyUsage(apiKeyFromHeader);
@@ -1113,6 +1176,226 @@ Disallow: /*`);
     
     return handleClassification(req, res, limitReached, apiKeyId);
   });
+
+  // ========== BILLING ROUTES ==========
+
+  // Helper: initialise Stripe lazily (throws if key is missing at call time, not startup)
+  function getStripe(): Stripe {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) throw new Error("STRIPE_SECRET_KEY is not set");
+    return new Stripe(key, { apiVersion: "2026-07-29.dahlia" });
+  }
+
+  // GET billing status for the authenticated client user
+  app.get("/api/user/billing", requireClientAuth, async (req: any, res) => {
+    try {
+      const user = await storage.getClientUser(req.session.clientUserId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const now = new Date();
+      const trialDaysRemaining = user.trialEndsAt
+        ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+        : null;
+      const isActive =
+        user.subscriptionStatus === 'active' ||
+        (user.subscriptionStatus === 'trialing' && user.trialEndsAt && user.trialEndsAt > now);
+      res.json({
+        subscriptionStatus: user.subscriptionStatus,
+        trialEndsAt: user.trialEndsAt,
+        trialDaysRemaining,
+        isActive,
+      });
+    } catch (error) {
+      console.error("Get billing status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST create Stripe checkout session for subscription upgrade
+  app.post("/api/billing/create-checkout-session", requireClientAuth, async (req: any, res) => {
+    try {
+      const priceId = process.env.STRIPE_PRICE_ID;
+      if (!priceId) {
+        return res.status(503).json({ message: "Billing is not configured. Please contact support." });
+      }
+      const stripe = getStripe();
+      const userId = req.session.clientUserId;
+      const user = await storage.getClientUser(userId);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      // Create or reuse a Stripe customer
+      let customerId = user.stripeCustomerId;
+      if (!customerId) {
+        const customer = await stripe.customers.create({
+          email: user.email || undefined,
+          metadata: { userId: user.id, username: user.username },
+        });
+        customerId = customer.id;
+        await storage.updateClientUser(userId, { stripeCustomerId: customerId });
+      }
+
+      const origin = (req.headers.origin as string) || `${req.protocol}://${req.headers.host}`;
+      const session = await stripe.checkout.sessions.create({
+        customer: customerId,
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${origin}/user?billing=success`,
+        cancel_url: `${origin}/user?billing=cancelled`,
+      });
+
+      res.json({ url: session.url });
+    } catch (error) {
+      console.error("Create checkout session error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST Stripe webhook — must receive raw body; signature-verified; idempotent
+  app.post("/api/billing/webhook", async (req: any, res) => {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      console.error("STRIPE_WEBHOOK_SECRET is not set — webhook rejected");
+      return res.status(503).json({ message: "Webhook not configured" });
+    }
+
+    let stripe: Stripe;
+    try {
+      stripe = getStripe();
+    } catch {
+      return res.status(503).json({ message: "Billing not configured" });
+    }
+
+    const sig = req.headers["stripe-signature"] as string;
+    let event: Stripe.Event;
+    try {
+      // req.rawBody is populated by the express.json verify callback in server/index.ts
+      event = stripe.webhooks.constructEvent(req.rawBody || req.body, sig, webhookSecret);
+    } catch (err) {
+      console.error("Stripe webhook signature verification failed:", err);
+      return res.status(400).json({ message: "Webhook signature verification failed" });
+    }
+
+    // Atomically claim this event. Returns false if already processed (duplicate delivery).
+    // Returns 5xx if the claim itself fails so Stripe retries.
+    let claimed: boolean;
+    try {
+      claimed = await storage.claimStripeEvent(event.id);
+    } catch (err) {
+      console.error("Stripe event claim failed:", err);
+      return res.status(500).json({ message: "Event claim failed; Stripe will retry" });
+    }
+
+    if (!claimed) {
+      return res.json({ received: true, duplicate: true });
+    }
+
+    // Process the event. On any failure: release the claim and return 5xx so Stripe retries.
+    try {
+      switch (event.type) {
+        case "checkout.session.completed": {
+          const session = event.data.object as Stripe.Checkout.Session;
+          if (session.mode === "subscription" && session.customer && session.subscription) {
+            const subId = typeof session.subscription === "string"
+              ? session.subscription
+              : session.subscription.id;
+            // Retrieve live subscription status to handle out-of-order events:
+            // if deletion already arrived, the retrieved status will be 'canceled'
+            // and we must not re-activate.
+            const liveSub = await stripe.subscriptions.retrieve(subId);
+            const user = await storage.getClientUserByStripeCustomerId(session.customer as string);
+            if (user) {
+              if (liveSub.status === "active" || liveSub.status === "trialing") {
+                await storage.updateClientUser(user.id, {
+                  subscriptionStatus: liveSub.status,
+                  stripeSubscriptionId: subId,
+                });
+              } else if (liveSub.status === "canceled") {
+                await storage.updateClientUser(user.id, {
+                  subscriptionStatus: "cancelled",
+                  stripeSubscriptionId: subId,
+                });
+              }
+              // other transient statuses (incomplete, past_due) — store sub ID but don't flip status
+              else {
+                await storage.updateClientUser(user.id, { stripeSubscriptionId: subId });
+              }
+            }
+          }
+          break;
+        }
+        case "invoice.payment_succeeded": {
+          // Correlate to user's current subscription to guard against out-of-order events.
+          // In Stripe API 2026-07-29.dahlia, subscription lives on invoice.parent.subscription_details
+          const invoice = event.data.object as Stripe.Invoice;
+          const paidSubId = typeof invoice.parent?.subscription_details?.subscription === "string"
+            ? invoice.parent.subscription_details.subscription
+            : (invoice.parent?.subscription_details?.subscription as Stripe.Subscription | null)?.id ?? null;
+          if (invoice.customer && paidSubId) {
+            const user = await storage.getClientUserByStripeCustomerId(invoice.customer as string);
+            if (user && user.stripeSubscriptionId === paidSubId) {
+              await storage.updateClientUser(user.id, { subscriptionStatus: "active" });
+            }
+          }
+          break;
+        }
+        case "invoice.payment_failed": {
+          const invoice = event.data.object as Stripe.Invoice;
+          const failedSubId = typeof invoice.parent?.subscription_details?.subscription === "string"
+            ? invoice.parent.subscription_details.subscription
+            : (invoice.parent?.subscription_details?.subscription as Stripe.Subscription | null)?.id ?? null;
+          if (invoice.customer && failedSubId) {
+            const user = await storage.getClientUserByStripeCustomerId(invoice.customer as string);
+            if (user && user.stripeSubscriptionId === failedSubId) {
+              await storage.updateClientUser(user.id, { subscriptionStatus: "past_due" });
+            }
+          }
+          break;
+        }
+        case "customer.subscription.deleted": {
+          const sub = event.data.object as Stripe.Subscription;
+          if (sub.customer) {
+            const user = await storage.getClientUserByStripeCustomerId(sub.customer as string);
+            if (user) {
+              // Only cancel if this event is for the user's current subscription,
+              // OR if no subscription ID is stored yet (out-of-order: deletion arrived before checkout).
+              // Ignoring deletions for old subscriptions prevents a cancel/re-subscribe race
+              // from locking out an active customer.
+              if (!user.stripeSubscriptionId || user.stripeSubscriptionId === sub.id) {
+                await storage.updateClientUser(user.id, {
+                  subscriptionStatus: "cancelled",
+                  stripeSubscriptionId: sub.id,
+                });
+              }
+              // else: stale deletion for a previously active subscription — ignore
+            }
+          }
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("Stripe webhook processing error:", error);
+      // Release the claim so Stripe can retry this event immediately
+      try { await storage.releaseStripeEvent(event.id); } catch (e) {
+        console.error("Failed to release Stripe event claim:", e);
+      }
+      return res.status(500).json({ message: "Webhook processing failed; Stripe will retry" });
+    }
+
+    // Mark as permanently processed AFTER the DB mutation succeeded.
+    // Until this point processed_at is NULL, so a crash here is recoverable:
+    // the next Stripe retry reclaims the stale lease (after 5 min) and re-applies the event.
+    try {
+      await storage.markStripeEventProcessed(event.id);
+    } catch (e) {
+      console.error("Failed to mark Stripe event as processed:", e);
+      // Non-fatal: the mutation already succeeded. A duplicate delivery will reclaim
+      // the stale lease after 5 min and apply the same idempotent mutation again.
+    }
+
+    res.json({ received: true });
+  });
+
+  // ========== END BILLING ROUTES ==========
 
   async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
     try {
