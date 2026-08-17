@@ -912,9 +912,17 @@ export class DatabaseStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.username, username));
-    const [user] = result || [];
-    return user;
+    try {
+      const result = await db.select().from(users).where(eq(users.username, username));
+      const [user] = result || [];
+      return user;
+    } catch (error) {
+      // Neon HTTP can throw while processing an empty result set.
+      if (error instanceof TypeError && error.message.includes("reading 'map'")) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async createUser(user: InsertUser): Promise<User> {
@@ -1319,12 +1327,19 @@ export class DatabaseStorage {
   }
 
   async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
-    const result = await db
-      .select()
-      .from(clientUsers)
-      .where(eq(clientUsers.username, username));
-    const [user] = result || [];
-    return user;
+    try {
+      const result = await db
+        .select()
+        .from(clientUsers)
+        .where(eq(clientUsers.username, username));
+      const [user] = result || [];
+      return user;
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes("reading 'map'")) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
