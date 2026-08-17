@@ -906,12 +906,14 @@ export class DatabaseStorage {
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.id, id));
+    const result = await db.select().from(users).where(eq(users.id, id));
+    const [user] = result || [];
     return user;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+    const result = await db.select().from(users).where(eq(users.username, username));
+    const [user] = result || [];
     return user;
   }
 
@@ -1308,18 +1310,20 @@ export class DatabaseStorage {
   }
 
   async getClientUser(id: string): Promise<ClientUser | undefined> {
-    const [user] = await db
+    const result = await db
       .select()
       .from(clientUsers)
       .where(eq(clientUsers.id, id));
+    const [user] = result || [];
     return user;
   }
 
   async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
-    const [user] = await db
+    const result = await db
       .select()
       .from(clientUsers)
       .where(eq(clientUsers.username, username));
+    const [user] = result || [];
     return user;
   }
 
