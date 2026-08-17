@@ -36,7 +36,7 @@ function UserRouter() {
   return (
     <Switch>
       <Route path="/">
-        <UserLogin />
+        <Login />
       </Route>
       <Route path="/api-verify" component={ApiVerify} />
       <Route path="/user">
