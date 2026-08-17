@@ -227,15 +227,6 @@ export class MemStorage {
     this.redirectUrls = new Map();
     this.settings = new Map();
     
-    // Initialize default admin user
-    const adminId = randomUUID();
-    const adminUser: User = {
-      id: adminId,
-      username: "Mark02",
-      password: "Markstorey@2015" // In production, this should be hashed
-    };
-    this.users.set(adminId, adminUser);
-    
     // Initialize default detection rules
     this.detectionRules = {
       id: randomUUID(),

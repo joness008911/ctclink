@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { z } from "zod";
 
 // Extend session types
 declare module 'express-session' {
@@ -148,8 +149,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Session middleware
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error(
+      "SESSION_SECRET environment variable is not set. " +
+      "Set it to a long random string before starting the server."
+    );
+  }
+
   app.use(session({
-    secret: process.env.SESSION_SECRET || 'antibot-detection-secret-key-change-in-production',
+    name: 'ctid', // Obscure the default 'connect.sid' identifier
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -232,15 +242,30 @@ Disallow: /*`);
     });
   });
 
+  // ---- Auth request schemas ----
+  const loginSchema = z.object({
+    username: z.string().min(1).max(100).trim(),
+    password: z.string().min(1).max(256),
+  });
+
+  const apiKeySchema = z.object({
+    apiKey: z.string().min(1).max(256).trim(),
+  });
+
+  const changePasswordSchema = z.object({
+    currentPassword: z.string().min(1).max(256),
+    newPassword: z.string().min(8).max(256),
+  });
+
   // Login endpoint
   app.post("/api/login", async (req, res) => {
     try {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: "Username and password required" });
+      const parse = loginSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
       }
-      
+      const { username, password } = parse.data;
+
       const user = await storage.getUserByUsername(username);
       if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
@@ -288,12 +313,12 @@ Disallow: /*`);
   // Step 1: Client user login with username/password
   app.post("/api/user/login", async (req, res) => {
     try {
-      const { username, password } = req.body;
-      
-      if (!username || !password) {
-        return res.status(400).json({ message: "Username and password required" });
+      const parse = loginSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
       }
-      
+      const { username, password } = parse.data;
+
       // Find client user by username
       const user = await storage.getClientUserByUsername(username);
       if (!user) {
@@ -336,15 +361,15 @@ Disallow: /*`);
   // Step 2: Verify API key for client user
   app.post("/api/user/verify-api-key", async (req, res) => {
     try {
-      const { apiKey } = req.body;
+      const parse = apiKeySchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
+      }
+      const { apiKey } = parse.data;
       const clientUserId = req.session.clientUserId;
-      
+
       if (!clientUserId) {
         return res.status(401).json({ message: "Please login first" });
-      }
-
-      if (!apiKey) {
-        return res.status(400).json({ message: "API key required" });
       }
       
       // Find the API key in the system
@@ -596,16 +621,12 @@ Disallow: /*`);
   // Change client user password
   app.post("/api/user/change-password", requireClientAuth, async (req: any, res) => {
     try {
+      const parse = changePasswordSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
+      }
+      const { currentPassword, newPassword } = parse.data;
       const userId = req.session.clientUserId;
-      const { currentPassword, newPassword } = req.body;
-
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Current password and new password are required" });
-      }
-
-      if (newPassword.length < 8) {
-        return res.status(400).json({ message: "New password must be at least 8 characters" });
-      }
 
       const user = await storage.getClientUser(userId);
       if (!user) {
