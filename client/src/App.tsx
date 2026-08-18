@@ -9,6 +9,7 @@ import Dashboard from "@/pages/dashboard";
 import UserLogin from "@/pages/user-login";
 import ApiVerify from "@/pages/api-verify";
 import UserDashboard from "@/pages/user-dashboard";
+import Landing from "@/pages/landing";
 import { userAuthApi } from "@/lib/user-auth";
 
 function UserRouter() {
@@ -36,7 +37,7 @@ function UserRouter() {
   return (
     <Switch>
       <Route path="/">
-        <Login />
+        <Landing />
       </Route>
       <Route path="/api-verify" component={ApiVerify} />
       <Route path="/user">
