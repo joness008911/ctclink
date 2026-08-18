@@ -144,7 +144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         whitelistCache.enabled = enabled;
         whitelistCache.entries = entries.filter(e => e.enabled).map(e => ({ cidr: e.cidr, enabled: e.enabled }));
         whitelistCache.lastRefresh = now;
-        console.log(`♻️ IP whitelist cache refreshed: ${enabled ? 'ENABLED' : 'DISABLED'}, ${whitelistCache.entries.length} entries`);
+        console.log(`♻️ IP whitelist cache refreshed: ${enabled ? 'ENABLED' : 'DISABLED'}, ${whitelistCache.entries.length} active entries`);
       }
       
       // If whitelist disabled, allow all
