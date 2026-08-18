@@ -793,9 +793,15 @@ Disallow: /*`);
   });
 
   // Accept Terms of Service
-  app.post("/api/user/accept-tos", requireClientAuth, async (req: any, res) => {
+  app.post("/api/user/accept-tos", async (req: any, res) => {
     try {
-      const userId = req.session.clientUserId;
+      // Only requires clientUserId — the user has already passed password + API key
+      // checks but hasn't accepted ToS yet, so clientUserAuthenticated isn't set.
+      const userId = req.session?.clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "Please login first" });
+      }
+
       const user = await storage.getClientUser(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -805,6 +811,9 @@ Disallow: /*`);
         tosAccepted: new Date(),
         complianceStatus: 'cleared'
       });
+
+      // Complete the session — mark the user as fully authenticated
+      req.session.clientUserAuthenticated = true;
 
       res.json({ message: "Terms of service accepted successfully" });
     } catch (error) {
