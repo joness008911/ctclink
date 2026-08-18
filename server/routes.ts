@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { z } from "zod";
 import Stripe from "stripe";
+import { randomUUID } from "crypto";
 
 // Extend session types
 declare module 'express-session' {
@@ -20,6 +21,7 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import ipaddr from "ipaddr.js";
+import { broadcastClassification, setupWebSocketServer } from "./ws";
 
 // 10-minute silent logging: Track last log time for each IP
 // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
@@ -158,7 +160,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
   }
 
-  app.use(session({
+  // Capture session middleware reference so we can authenticate WebSocket upgrade requests
+  const sessionMw = session({
     name: 'ctid', // Obscure the default 'connect.sid' identifier
     secret: sessionSecret,
     resave: false,
@@ -169,7 +172,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       sameSite: 'lax',
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
-  }));
+  });
+  app.use(sessionMw);
   
   // Smart routing: Detect API subdomain and redirect browsers
   // IMPORTANT: This runs AFTER session/body parsing so API key validation works properly
@@ -1567,6 +1571,22 @@ Disallow: /*`);
                 apiKeyId: apiKeyId,
               });
 
+              // Broadcast to any connected dashboard clients for this API key
+              if (apiKeyId) {
+                broadcastClassification(apiKeyId, {
+                  id: classification.id ?? randomUUID(),
+                  timestamp: classification.timestamp
+                    ? new Date(classification.timestamp).toISOString()
+                    : new Date().toISOString(),
+                  ipAddress: clientIp,
+                  visitorType: 'Bot',
+                  detectionMethod: detectionMethod,
+                  country: classificationData.country_name || 'Unknown',
+                  isp: classificationData.isp || 'Unknown',
+                  action: 'Blocked',
+                });
+              }
+
               const response: any = {
                 ip: clientIp,
                 location: classification.location || 'Unknown',
@@ -1756,6 +1776,22 @@ Disallow: /*`);
           apiKeyId: apiKeyId, // Track which API key made this request
         });
         
+        // Broadcast to any connected dashboard clients for this API key
+        if (apiKeyId) {
+          broadcastClassification(apiKeyId, {
+            id: classification.id ?? randomUUID(),
+            timestamp: classification.timestamp
+              ? new Date(classification.timestamp).toISOString()
+              : new Date().toISOString(),
+            ipAddress: clientIp,
+            visitorType: visitorType as 'Human' | 'Bot',
+            detectionMethod: classificationData.detection_method || 'IP Analysis',
+            country: classificationData.country_name || 'Unknown',
+            isp: classificationData.isp || 'Unknown',
+            action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
+          });
+        }
+
         // Update the last log time for this IP
         ipLastLogTime.set(clientIp, now);
         console.log(`📝 Logged classification for ${clientIp}`);
@@ -2906,5 +2942,49 @@ Disallow: /*`);
   });
 
   const httpServer = createServer(app);
+
+  // isClientIpWhitelisted: same logic as the /api/user HTTP middleware above,
+  // threaded into the WebSocket upgrade path to avoid a circular import.
+  // Fail-open (return true) on transient errors to match HTTP middleware behaviour.
+  async function isClientIpWhitelisted(ip: string): Promise<boolean> {
+    try {
+      const now = Date.now();
+      if (now - whitelistCache.lastRefresh > WHITELIST_CACHE_TTL) {
+        const [enabled, entries] = await Promise.all([
+          storage.isClientWhitelistEnabled(),
+          storage.getClientIpWhitelist(),
+        ]);
+        whitelistCache.enabled = enabled;
+        whitelistCache.entries = entries
+          .filter((e) => e.enabled)
+          .map((e) => ({ cidr: e.cidr, enabled: e.enabled }));
+        whitelistCache.lastRefresh = now;
+      }
+      if (!whitelistCache.enabled) return true;           // disabled → allow all
+      if (whitelistCache.entries.length === 0) return false; // enabled but empty → deny
+      const normalizedIp = ipaddr.parse(ip);
+      for (const entry of whitelistCache.entries) {
+        try {
+          if (entry.cidr.includes("/")) {
+            const [rangeAddr, prefixLength] = ipaddr.parseCIDR(entry.cidr);
+            if (normalizedIp.kind() === rangeAddr.kind() &&
+                normalizedIp.match(rangeAddr, prefixLength)) {
+              return true;
+            }
+          } else {
+            if (ipaddr.parse(entry.cidr).toString() === normalizedIp.toString()) {
+              return true;
+            }
+          }
+        } catch { /* invalid entry — skip */ }
+      }
+      return false;
+    } catch {
+      return true; // fail-open
+    }
+  }
+
+  // Attach WebSocket server for real-time security event streaming
+  setupWebSocketServer(httpServer, sessionMw, isClientIpWhitelisted);
   return httpServer;
 }

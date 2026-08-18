@@ -17,12 +17,13 @@ import {
   LogOut, Save, ExternalLink, BarChart3, Shield, Link as LinkIcon, Key, Lock, User, 
   Activity, Code, Download, Copy, AlertTriangle, TrendingUp, Globe, Users, Bot,
   Play, Pause, Settings, FileText, CheckCircle2, XCircle, Info, Check, Zap,
-  CreditCard, Clock
+  CreditCard, Clock, Radio, Trash2
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import JSZip from 'jszip';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
+import { useSecurityEvents } from "@/hooks/use-security-events";
 
 interface AvailableDomain {
   id: string;
@@ -34,6 +35,140 @@ interface GeneratedDomain {
   id: string;
   domain: string;
   generatedAt: string;
+}
+
+// ---- Live Security Events Feed ----
+function LiveEventsFeed() {
+  const { events, connected, clear } = useSecurityEvents();
+
+  return (
+    <Card className="shadow-md border-2">
+      <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/0">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Radio className="h-5 w-5 text-primary" />
+              Live Security Events
+            </CardTitle>
+            <CardDescription>
+              Real-time stream of visitor classifications for your API key
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-3">
+            {/* Connection status indicator */}
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${
+                  connected
+                    ? "bg-green-500 animate-pulse"
+                    : "bg-zinc-400"
+                }`}
+                aria-label={connected ? "Connected" : "Disconnected"}
+              />
+              <span className="text-xs text-muted-foreground">
+                {connected ? "Live" : "Connecting…"}
+              </span>
+            </div>
+            {events.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clear}
+                className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                title="Clear feed"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {events.length === 0 ? (
+          <div className="text-center py-16 text-muted-foreground">
+            <Radio className="h-10 w-10 mx-auto mb-3 opacity-20" />
+            <p className="font-medium">Waiting for events…</p>
+            <p className="text-sm mt-1 max-w-xs mx-auto">
+              New visitor classifications will appear here instantly, without
+              requiring a page refresh.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-[520px] overflow-y-auto">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background z-10 border-b">
+                <TableRow>
+                  <TableHead className="w-[110px]">Time</TableHead>
+                  <TableHead className="w-[90px]">Type</TableHead>
+                  <TableHead>IP Address</TableHead>
+                  <TableHead>Detection</TableHead>
+                  <TableHead>Country</TableHead>
+                  <TableHead>ISP</TableHead>
+                  <TableHead className="w-[90px]">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {events.map((evt) => (
+                  <TableRow
+                    key={evt.id}
+                    data-testid="live-event-row"
+                    className={
+                      evt.isNew
+                        ? "bg-primary/8 transition-colors duration-700"
+                        : "transition-colors duration-700"
+                    }
+                    style={evt.isNew ? { backgroundColor: "hsl(var(--primary) / 0.08)" } : {}}
+                  >
+                    <TableCell className="font-mono text-xs tabular-nums whitespace-nowrap">
+                      {formatDistanceToNow(new Date(evt.timestamp), { addSuffix: true })}
+                    </TableCell>
+                    <TableCell>
+                      {evt.visitorType === "Human" ? (
+                        <Badge className="bg-green-600 text-white gap-1 text-xs">
+                          <Users className="h-3 w-3" />
+                          Human
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-red-600 text-white gap-1 text-xs">
+                          <Bot className="h-3 w-3" />
+                          Bot
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{evt.ipAddress}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {evt.detectionMethod}
+                    </TableCell>
+                    <TableCell className="text-xs">{evt.country}</TableCell>
+                    <TableCell className="text-xs max-w-[150px] truncate" title={evt.isp}>
+                      {evt.isp}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          evt.action === "Allowed"
+                            ? "border-green-500 text-green-700 dark:text-green-400"
+                            : "border-red-500 text-red-700 dark:text-red-400"
+                        }`}
+                      >
+                        {evt.action}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        {events.length > 0 && (
+          <div className="px-4 py-2 border-t text-xs text-muted-foreground text-right">
+            {events.length} event{events.length !== 1 ? "s" : ""} (last {events.length >= 100 ? "100" : events.length})
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ---- Billing Status Card ----
@@ -859,10 +994,14 @@ die('Service temporarily unavailable. Please try again later.');
 
       <div className="container mx-auto px-4 py-8">
         <Tabs defaultValue="analytics" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 md:grid-cols-5 lg:w-auto lg:inline-grid">
+          <TabsList className="grid w-full grid-cols-3 md:grid-cols-6 lg:w-auto lg:inline-grid">
             <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
               <BarChart3 className="h-4 w-4" />
               License & Analytics
+            </TabsTrigger>
+            <TabsTrigger value="live" className="gap-2" data-testid="tab-live">
+              <Radio className="h-4 w-4" />
+              Live Events
             </TabsTrigger>
             <TabsTrigger value="domains" className="gap-2" data-testid="tab-domains">
               <Globe className="h-4 w-4" />
@@ -1095,6 +1234,10 @@ die('Service temporarily unavailable. Please try again later.');
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="live" className="space-y-6">
+            <LiveEventsFeed />
           </TabsContent>
 
           <TabsContent value="domains" className="space-y-6">
