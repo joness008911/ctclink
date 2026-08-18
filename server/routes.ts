@@ -454,9 +454,9 @@ Disallow: /*`);
         return res.status(403).json({ message: "API key has expired" });
       }
 
-      // Check if ToS has been accepted
+      // Check if ToS has been accepted — return 200 so the frontend shows the ToS UI
       if (!user.tosAccepted) {
-        return res.status(403).json({
+        return res.status(200).json({
           message: "Terms of service must be accepted before using this service.",
           requiresTos: true,
           tosText: "This service is intended for legitimate bot traffic filtering, ad fraud prevention, and website security. You may not use this service to deceive search engines, serve different content to crawlers versus human visitors on the same URL, or facilitate phishing, identity theft, or financial fraud. You are solely responsible for ensuring your use complies with applicable laws and advertising platform terms. We reserve the right to suspend accounts where redirect patterns indicate cloaking, phishing, or other deceptive practices."
