@@ -1385,7 +1385,12 @@ export class DatabaseStorage {
   // Client User methods (for end-user customers)
   async createClientUser(user: InsertClientUser): Promise<ClientUser> {
     const [newUser] = await db.insert(clientUsers).values(user).returning();
-    return newUser;
+    if (newUser) return newUser;
+    // Neon HTTP driver can return an empty array from .returning() even on success.
+    // Fall back to fetching the just-inserted row by username.
+    const fetched = await this.getClientUserByUsername(user.username);
+    if (fetched) return fetched;
+    throw new Error(`createClientUser: insert appeared to succeed but row not found for username "${user.username}"`);
   }
 
   async getClientUser(id: string): Promise<ClientUser | undefined> {
