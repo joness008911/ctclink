@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { z } from "zod";
 import Stripe from "stripe";
 import { randomUUID } from "crypto";
+import rateLimit from "express-rate-limit";
 
 // Extend session types
 declare module 'express-session' {
@@ -14,6 +15,7 @@ declare module 'express-session' {
 import { createServer, type Server } from "http";
 import { storage, ip2geoCache } from "./storage";
 import { db } from "./db";
+import { sql as sqlTag } from "drizzle-orm";
 import session from "express-session";
 import { insertClassificationSchema } from "@shared/schema";
 import { UAParser } from "ua-parser-js";
@@ -22,6 +24,49 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import ipaddr from "ipaddr.js";
 import { broadcastClassification, setupWebSocketServer } from "./ws";
+
+// ── Rate limiters ──────────────────────────────────────────────────────────
+// Brute-force protection for authentication endpoints (admin + client login).
+// 10 attempts per IP per 15 minutes; returns 429 with Retry-After header.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,   // RateLimit-* headers (RFC 6585 draft)
+  legacyHeaders: false,
+  message: { message: "Too many login attempts. Please try again later." },
+});
+
+// Per-API-key rate limit for the classification endpoint (GET + POST).
+// Key extraction mirrors every path the two handlers accept:
+//   POST → X-API-Key header
+//   GET  → ?api_key=XXX (standard) | first query param name (legacy)
+// Each API key in any supported format gets its own independent bucket.
+// Keyless requests (redirected immediately) are bucketed by socket IP to
+// prevent them collapsing into one shared slot.
+const classifyLimiter = rateLimit({
+  windowMs: 60 * 1000,     // 1 minute window
+  max: 300,
+  keyGenerator: (req) => {
+    // POST format: X-API-Key header
+    const headerKey = (req.headers["x-api-key"] as string | undefined)?.trim();
+    if (headerKey) return headerKey;
+    // GET standard format: ?api_key=XXX
+    const stdKey = (req.query.api_key as string | undefined)?.trim();
+    if (stdKey) return stdKey;
+    // GET legacy format: first query param name is the API key
+    const legacyKey = Object.keys(req.query)[0];
+    if (legacyKey) return legacyKey;
+    // No key at all — bucket by IP, normalized to avoid IPv4-mapped IPv6
+    // duplicates.  These requests are immediately redirected in the handlers.
+    const rawIp =
+      (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+    return `nokey:${rawIp}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipFailedRequests: false,
+  message: { message: "Classification rate limit exceeded. Please slow down." },
+});
 
 // 10-minute silent logging: Track last log time for each IP
 // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
@@ -60,8 +105,11 @@ function logWhitelistDenial(ip: string) {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Trust proxy to get real client IP
-  app.set('trust proxy', true);
+  // Trust exactly one reverse-proxy hop (Replit's ingress).
+  // Using `true` would trust any X-Forwarded-For value, allowing clients to
+  // spoof their IP and bypass the auth rate limiter.  With `1`, Express uses
+  // the IP inserted by the nearest trusted proxy, which clients cannot forge.
+  app.set('trust proxy', 1);
   
   // Clean up old IP log entries every hour to prevent memory leak
   setInterval(() => {
@@ -266,7 +314,7 @@ Disallow: /*`);
   });
 
   // Login endpoint
-  app.post("/api/login", async (req, res) => {
+  app.post("/api/login", authLimiter, async (req, res) => {
     try {
       const parse = loginSchema.safeParse(req.body);
       if (!parse.success) {
@@ -285,6 +333,12 @@ Disallow: /*`);
       }
       
       req.session.userId = user.id;
+      void auditLog({
+        actorId: user.id,
+        actorType: "admin",
+        action: "admin.login",
+        ipAddress: (req.ip || "").replace("::ffff:", ""),
+      });
       res.json({ message: "Login successful", user: { id: user.id, username: user.username } });
     } catch (error) {
       console.error("Login error:", error);
@@ -319,7 +373,7 @@ Disallow: /*`);
   // ========== CLIENT USER AUTHENTICATION ROUTES ==========
   
   // Step 1: Client user login with username/password
-  app.post("/api/user/login", async (req, res) => {
+  app.post("/api/user/login", authLimiter, async (req, res) => {
     try {
       const parse = loginSchema.safeParse(req.body);
       if (!parse.success) {
@@ -438,6 +492,25 @@ Disallow: /*`);
   });
 
   // Middleware for client user auth — explicitly rejects admin-only sessions
+  // ── Audit log helper ──────────────────────────────────────────────────────
+  // Fire-and-forget: failures are surfaced to the console but never propagate
+  // to the caller, so an audit-log write error cannot break a sensitive action.
+  async function auditLog(entry: {
+    actorId?: string | null;
+    actorType: "admin" | "system";
+    action: string;
+    targetId?: string | null;
+    targetType?: string | null;
+    metadata?: Record<string, unknown> | null;
+    ipAddress?: string | null;
+  }) {
+    try {
+      await storage.createAuditLog(entry);
+    } catch (err) {
+      console.error("Audit log write failed:", err);
+    }
+  }
+
   const requireClientAuth = (req: any, res: any, next: any) => {
     if (req.session?.clientUserId && req.session?.clientUserAuthenticated) {
       // Reject requests that carry an admin session alongside a client session
@@ -477,6 +550,18 @@ Disallow: /*`);
       next(); // Fail-open on transient error
     }
   };
+
+  // ── Health check ─────────────────────────────────────────────────────────
+  // No authentication required; used by uptime monitors and load balancers.
+  // Returns 200 + { status, uptime, db } when healthy, 503 when DB is down.
+  app.get("/api/health", async (_req, res) => {
+    try {
+      await db.execute(sqlTag`SELECT 1`);
+      res.json({ status: "ok", uptime: process.uptime(), db: "reachable" });
+    } catch {
+      res.status(503).json({ status: "error", uptime: process.uptime(), db: "unreachable" });
+    }
+  });
 
   // Block client sessions from every admin-only path prefix
   app.use(["/api/interface", "/api/api-keys"], (req: any, res: any, next: any) => {
@@ -816,9 +901,29 @@ Disallow: /*`);
       }
 
       console.log(`[COMPLIANCE] Admin updated user ${id} compliance status to ${complianceStatus}`);
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "compliance.updated",
+        targetId: id,
+        targetType: "client_user",
+        metadata: { complianceStatus },
+      });
       res.json({ success: true, user: updated });
     } catch (error) {
       console.error("Update compliance status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Audit log viewer (Admin only)
+  app.get("/api/interface/audit-logs", requireAuth, async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+      const logs = await storage.getRecentAuditLogs(limit);
+      res.json(logs);
+    } catch (error) {
+      console.error("Get audit logs error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -886,6 +991,14 @@ Disallow: /*`);
         trialEndsAt,
       });
 
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "client_user.created",
+        targetId: newUser.id,
+        targetType: "client_user",
+        metadata: { username },
+      });
       res.json(newUser);
     } catch (error) {
       console.error("Create client user error:", error);
@@ -906,7 +1019,15 @@ Disallow: /*`);
 
       // For now, we don't have a delete method, so we'll suspend the user instead
       const updated = await storage.updateClientUser(id, { status: 'suspended' });
-      
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "client_user.suspended",
+        targetId: id,
+        targetType: "client_user",
+        metadata: { username: user.username },
+      });
       res.json({ message: "User suspended", user: updated });
     } catch (error) {
       console.error("Delete client user error:", error);
@@ -1006,6 +1127,14 @@ Disallow: /*`);
         callLimit: limit
       });
 
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "api_key.created",
+        targetId: apiKey.id,
+        targetType: "api_key",
+        metadata: { keyName },
+      });
       res.json(apiKey);
     } catch (error) {
       console.error("Create API key error:", error);
@@ -1022,7 +1151,14 @@ Disallow: /*`);
       if (!deleted) {
         return res.status(404).json({ message: "API key not found" });
       }
-      
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "api_key.deleted",
+        targetId: id,
+        targetType: "api_key",
+      });
       res.json({ message: "API key deleted successfully" });
     } catch (error) {
       console.error("Delete API key error:", error);
@@ -1039,7 +1175,14 @@ Disallow: /*`);
       if (!paused) {
         return res.status(404).json({ message: "API key not found" });
       }
-      
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "api_key.paused",
+        targetId: id,
+        targetType: "api_key",
+      });
       res.json({ message: "API key paused successfully" });
     } catch (error) {
       console.error("Pause API key error:", error);
@@ -1056,7 +1199,14 @@ Disallow: /*`);
       if (!resumed) {
         return res.status(404).json({ message: "API key not found" });
       }
-      
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "api_key.resumed",
+        targetId: id,
+        targetType: "api_key",
+      });
       res.json({ message: "API key resumed successfully" });
     } catch (error) {
       console.error("Resume API key error:", error);
@@ -1073,7 +1223,14 @@ Disallow: /*`);
       if (!renewed) {
         return res.status(404).json({ message: "API key not found" });
       }
-      
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "api_key.renewed",
+        targetId: id,
+        targetType: "api_key",
+      });
       res.json(renewed);
     } catch (error) {
       console.error("Renew API key error:", error);
@@ -1082,7 +1239,7 @@ Disallow: /*`);
   });
 
   // Classification endpoint (GET with API key support)
-  app.get("/api/classify", async (req, res) => {
+  app.get("/api/classify", classifyLimiter, async (req, res) => {
     // Support both formats: ?api_key=XXX or just the first query param value
     let apiKey = req.query.api_key as string;
     
@@ -1137,7 +1294,7 @@ Disallow: /*`);
   });
 
   // Public classification endpoint (POST) - with API key support for PHP scripts
-  app.post("/api/classify", async (req, res) => {
+  app.post("/api/classify", classifyLimiter, async (req, res) => {
     // Check for API key in header (X-API-Key)
     const apiKeyFromHeader = req.headers['x-api-key'] as string;
     
@@ -1917,9 +2074,15 @@ Disallow: /*`);
   });
 
   // Update detection rules
-  app.put("/api/detection-rules", requireAuth, async (req, res) => {
+  app.put("/api/detection-rules", requireAuth, async (req: any, res) => {
     try {
       const rules = await storage.updateDetectionRules(req.body);
+      void auditLog({
+        actorId: req.session?.userId,
+        actorType: "admin",
+        action: "detection_rules.updated",
+        targetType: "detection_rules",
+      });
       res.json(rules);
     } catch (error) {
       console.error("Update detection rules error:", error);

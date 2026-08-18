@@ -277,3 +277,25 @@ export const stripeProcessedEvents = pgTable("stripe_processed_events", {
   // processed_at: set only after successful DB mutation. NULL means in-flight (not yet done).
   processedAt: timestamp("processed_at"),
 });
+
+// Audit Logs — immutable record of sensitive admin actions
+// No secrets are stored here; only structural metadata.
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  actorId: text("actor_id"),           // admin user ID; null for system events
+  actorType: text("actor_type").notNull(), // 'admin' | 'system'
+  action: text("action").notNull(),    // e.g. 'admin.login', 'api_key.created'
+  targetId: text("target_id"),         // affected entity ID, if applicable
+  targetType: text("target_type"),     // 'api_key' | 'client_user' | 'detection_rules' | ...
+  metadata: jsonb("metadata"),         // extra context (no secrets)
+  ipAddress: text("ip_address"),       // client IP, primarily for auth events
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;

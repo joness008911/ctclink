@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle, Code, Copy, LogOut, Server, Shield, User, ShieldCheck, Trash2, AlertCircle, Info } from "lucide-react";
+import { CheckCircle, Code, Copy, LogOut, Server, Shield, User, ShieldCheck, Trash2, AlertCircle, Info, ScrollText } from "lucide-react";
 import ClassificationTable from "@/components/classification-table";
 import DetectionRules from "@/components/detection-rules";
 import ApiKeyManagement from "@/components/api-key-management";
@@ -33,6 +33,18 @@ interface IpWhitelistEntry {
 
 interface IpWhitelistStatus {
   enabled: boolean;
+}
+
+interface AuditLogEntry {
+  id: string;
+  actorId: string | null;
+  actorType: string;
+  action: string;
+  targetId: string | null;
+  targetType: string | null;
+  metadata: Record<string, unknown> | null;
+  ipAddress: string | null;
+  createdAt: string;
 }
 
 export default function Dashboard() {
@@ -70,6 +82,11 @@ export default function Dashboard() {
 
   const { data: ipWhitelistStatus } = useQuery<IpWhitelistStatus>({
     queryKey: ["/api/client-ip-whitelist/status"],
+  });
+
+  const { data: auditLogEntries = [] } = useQuery<AuditLogEntry[]>({
+    queryKey: ["/api/interface/audit-logs"],
+    refetchInterval: 30_000,
   });
 
   const addIpWhitelistMutation = useMutation({
@@ -223,6 +240,7 @@ export default function Dashboard() {
               <TabsTrigger value="domain-pool" data-testid="tab-domain-pool">🌐 Domain Pool</TabsTrigger>
               <TabsTrigger value="analytics" data-testid="tab-analytics">📈 Analytics</TabsTrigger>
               <TabsTrigger value="settings" data-testid="tab-settings">⚙️ Settings</TabsTrigger>
+              <TabsTrigger value="audit-log" data-testid="tab-audit-log">📋 Audit Log</TabsTrigger>
             </TabsList>
             
             <TabsContent value="overview">
@@ -499,6 +517,78 @@ export default function Dashboard() {
 
                   <WhitelabelDomainSettings />
                 </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="audit-log">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <ScrollText className="h-5 w-5 text-primary" />
+                  <h2 className="text-lg font-semibold">Audit Log</h2>
+                  <span className="text-sm text-muted-foreground">— last 100 sensitive actions</span>
+                </div>
+                {auditLogEntries.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <ScrollText className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                    <p>No audit log entries yet.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[160px]">Time</TableHead>
+                          <TableHead className="w-[200px]">Action</TableHead>
+                          <TableHead>Actor</TableHead>
+                          <TableHead>Target</TableHead>
+                          <TableHead>IP</TableHead>
+                          <TableHead>Details</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {auditLogEntries.map((entry) => (
+                          <TableRow key={entry.id} data-testid={`audit-row-${entry.id}`}>
+                            <TableCell className="font-mono text-xs whitespace-nowrap">
+                              {new Date(entry.createdAt).toLocaleString()}
+                            </TableCell>
+                            <TableCell>
+                              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-primary/10 text-primary">
+                                {entry.action}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-xs font-mono">
+                              <div>{entry.actorType}</div>
+                              {entry.actorId && (
+                                <div className="text-muted-foreground truncate max-w-[120px]" title={entry.actorId}>
+                                  {entry.actorId.slice(0, 8)}…
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {entry.targetType && (
+                                <div className="text-muted-foreground">{entry.targetType}</div>
+                              )}
+                              {entry.targetId && (
+                                <div className="font-mono truncate max-w-[120px]" title={entry.targetId}>
+                                  {entry.targetId.slice(0, 8)}…
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              {entry.ipAddress ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-[200px]">
+                              {entry.metadata
+                                ? Object.entries(entry.metadata)
+                                    .map(([k, v]) => `${k}: ${String(v)}`)
+                                    .join(", ")
+                                : "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
               </div>
             </TabsContent>
           </Tabs>

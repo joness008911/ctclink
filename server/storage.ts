@@ -27,6 +27,8 @@ import {
   type InsertDomainPool,
   type UserDomainGeneration,
   type InsertUserDomainGeneration,
+  type AuditLog,
+  type InsertAuditLog,
   users,
   classifications,
   detectionRules,
@@ -42,7 +44,8 @@ import {
   settings,
   domainPool,
   userDomainGenerations,
-  stripeProcessedEvents
+  stripeProcessedEvents,
+  auditLogs,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import * as ipaddr from "ipaddr.js";
@@ -209,6 +212,10 @@ export interface IStorage {
   createUserDomainGeneration(generation: InsertUserDomainGeneration): Promise<UserDomainGeneration>;
   getDailyGenerationLimit(): Promise<number>;
   setDailyGenerationLimit(limit: number): Promise<void>;
+
+  // Audit Log methods
+  createAuditLog(entry: InsertAuditLog): Promise<AuditLog>;
+  getRecentAuditLogs(limit?: number): Promise<AuditLog[]>;
 }
 
 export class MemStorage {
@@ -223,6 +230,7 @@ export class MemStorage {
   private clientUsers: Map<string, ClientUser>;
   private redirectUrls: Map<string, UserRedirectUrls>;
   private settings: Map<string, string>;
+  private auditLogsData: AuditLog[];
 
   constructor() {
     this.users = new Map();
@@ -235,6 +243,7 @@ export class MemStorage {
     this.clientUsers = new Map();
     this.redirectUrls = new Map();
     this.settings = new Map();
+    this.auditLogsData = [];
     
     // Initialize default detection rules
     this.detectionRules = {
@@ -938,6 +947,26 @@ export class MemStorage {
 
   async setDailyGenerationLimit(limit: number): Promise<void> {
     this.settings.set('dailyGenerationLimit', limit.toString());
+  }
+
+  async createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
+    const log: AuditLog = {
+      id: randomUUID(),
+      actorId: entry.actorId ?? null,
+      actorType: entry.actorType,
+      action: entry.action,
+      targetId: entry.targetId ?? null,
+      targetType: entry.targetType ?? null,
+      metadata: entry.metadata ?? null,
+      ipAddress: entry.ipAddress ?? null,
+      createdAt: new Date(),
+    };
+    this.auditLogsData.unshift(log);
+    return log;
+  }
+
+  async getRecentAuditLogs(limit = 100): Promise<AuditLog[]> {
+    return this.auditLogsData.slice(0, limit);
   }
 }
 
@@ -1762,6 +1791,15 @@ export class DatabaseStorage {
 
   async setDailyGenerationLimit(limit: number): Promise<void> {
     await this.setSetting('dailyGenerationLimit', limit.toString());
+  }
+
+  async createAuditLog(entry: InsertAuditLog): Promise<AuditLog> {
+    const [log] = await db.insert(auditLogs).values(entry).returning();
+    return log;
+  }
+
+  async getRecentAuditLogs(limit = 100): Promise<AuditLog[]> {
+    return db.select().from(auditLogs).orderBy(desc(auditLogs.createdAt)).limit(limit);
   }
 }
 
