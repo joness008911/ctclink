@@ -21,6 +21,7 @@ import {
   type InsertClientIpWhitelist,
   type ClientUser,
   type InsertClientUser,
+  type StatusHistoryEntry,
   type UserRedirectUrls,
   type InsertUserRedirectUrls,
   type DomainPool,
@@ -29,6 +30,8 @@ import {
   type InsertUserDomainGeneration,
   type AuditLog,
   type InsertAuditLog,
+  type InterstitialTheme,
+  type InsertInterstitialTheme,
   users,
   classifications,
   detectionRules,
@@ -46,11 +49,17 @@ import {
   userDomainGenerations,
   stripeProcessedEvents,
   auditLogs,
+  interstitialThemes,
 } from "@shared/schema";
+import { DEFAULT_INTERSTITIAL_THEMES } from "@shared/interstitialThemes";
 import { randomUUID } from "crypto";
 import * as ipaddr from "ipaddr.js";
-import { db } from "./db";
-import { eq, desc, sql, count, lt } from "drizzle-orm";
+import bcrypt from "bcrypt";
+import { db, isDatabaseConfigured } from "./db";
+import { isFirestoreAvailable } from "./firebase";
+import { FirestoreStorage } from "./firestoreStorage";
+import { eq, desc, sql, count, lt, or, inArray } from "drizzle-orm";
+import { getTierCallLimit } from "@shared/subscription";
 
 // IP2Geo Cache for performance optimization
 interface CachedIPData {
@@ -171,7 +180,10 @@ export interface IStorage {
   createClientUser(user: InsertClientUser): Promise<ClientUser>;
   getClientUser(id: string): Promise<ClientUser | undefined>;
   getClientUserByUsername(username: string): Promise<ClientUser | undefined>;
+  getClientUserByEmail(email: string): Promise<ClientUser | undefined>;
+  getClientUserByUsernameOrEmail(identifier: string): Promise<ClientUser | undefined>;
   updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined>;
+  deleteClientUser(id: string): Promise<boolean>;
   getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined>;
   getAllClientUsers(): Promise<ClientUser[]>;
   getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined>;
@@ -185,8 +197,35 @@ export interface IStorage {
   
   // User Redirect URLs methods
   getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined>;
-  setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls>;
+  deleteUserRedirectUrls(userId: string): Promise<boolean>;
+  setUserRedirectUrls(userId: string, urls: { 
+    humanUrl: string; 
+    botUrl: string; 
+    allowedCountries?: string; 
+    allowedDevices?: string;
+    desktopOsFilter?: string;
+    blockVpn?: string;
+    blockDatacenter?: string;
+    blockTor?: string;
+    fingerprintActivate?: string;
+    wildcardSubdomains?: string;
+    allowVpn?: boolean;
+    allowSearchCrawlers?: string;
+    blockAiCrawlers?: string;
+    allowSocialPreviews?: string;
+    interstitialThemeId?: string;
+    interstitialHeading?: string;
+    interstitialSubnote?: string;
+  }): Promise<UserRedirectUrls>;
   
+  // Interstitial Themes (Admin managed loading UI styles for client scripts)
+  getInterstitialThemes(includeDisabled?: boolean): Promise<InterstitialTheme[]>;
+  getInterstitialTheme(id: string): Promise<InterstitialTheme | undefined>;
+  createInterstitialTheme(theme: InsertInterstitialTheme): Promise<InterstitialTheme>;
+  updateInterstitialTheme(id: string, updates: Partial<InterstitialTheme>): Promise<InterstitialTheme | undefined>;
+  deleteInterstitialTheme(id: string): Promise<boolean>;
+  setDefaultInterstitialTheme(id: string): Promise<boolean>;
+
   // Classification methods for users
   getUserClassifications(apiKeyId: string, limit?: number): Promise<Classification[]>;
   getUserStats(apiKeyId: string): Promise<{
@@ -218,7 +257,7 @@ export interface IStorage {
   getRecentAuditLogs(limit?: number): Promise<AuditLog[]>;
 }
 
-export class MemStorage {
+export class MemStorage implements IStorage {
   private users: Map<string, User>;
   private classifications: Map<string, Classification>;
   private detectionRules: DetectionRules | undefined;
@@ -226,9 +265,12 @@ export class MemStorage {
   private countryWhitelist: Map<string, CountryWhitelist>;
   private ispWhitelist: Map<string, IspWhitelist>;
   private ispBlacklist: Map<string, IspBlacklist>;
+  private ipBlocklist: Map<string, IpBlocklist>;
+  private cidrBlocklist: Map<string, CidrBlocklist>;
   private clientIpWhitelist: Map<string, ClientIpWhitelist>;
   private clientUsers: Map<string, ClientUser>;
   private redirectUrls: Map<string, UserRedirectUrls>;
+  private interstitialThemes: Map<string, InterstitialTheme>;
   private settings: Map<string, string>;
   private auditLogsData: AuditLog[];
 
@@ -242,8 +284,16 @@ export class MemStorage {
     this.clientIpWhitelist = new Map();
     this.clientUsers = new Map();
     this.redirectUrls = new Map();
+    this.interstitialThemes = new Map();
     this.settings = new Map();
     this.auditLogsData = [];
+    this.ipBlocklist = new Map();
+    this.cidrBlocklist = new Map();
+
+    // Populate initial default interstitial themes
+    DEFAULT_INTERSTITIAL_THEMES.forEach((t) => {
+      this.interstitialThemes.set(t.id, { ...t });
+    });
     
     // Initialize default detection rules
     this.detectionRules = {
@@ -260,6 +310,78 @@ export class MemStorage {
       },
       updatedAt: new Date()
     };
+
+    // Seed default admin user (admin / admin123)
+    const adminPasswordHash = bcrypt.hashSync("admin123", 10);
+    const adminId = randomUUID();
+    this.users.set(adminId, {
+      id: adminId,
+      username: "admin",
+      password: adminPasswordHash
+    });
+
+    // Seed default demo API key
+    const demoApiKeyId = randomUUID();
+    const demoApiKey: ApiKey = {
+      id: demoApiKeyId,
+      keyName: "Demo API Key",
+      keyValue: "ctc_demo_key_2026",
+      callLimit: 100000,
+      callCount: 0,
+      status: "active",
+      enabled: true,
+      expirationPeriod: "unlimited",
+      expiresAt: null,
+      lastUsed: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.apiKeys.set(demoApiKeyId, demoApiKey);
+
+    // Also seed legacy ak_ and ct_live_ keys for backward compatibility
+    const legacyApiKeyId1 = randomUUID();
+    this.apiKeys.set(legacyApiKeyId1, {
+      ...demoApiKey,
+      id: legacyApiKeyId1,
+      keyName: "Legacy ct_live API Key",
+      keyValue: "ct_live_demo_key_2026",
+    });
+    const legacyApiKeyId2 = randomUUID();
+    this.apiKeys.set(legacyApiKeyId2, {
+      ...demoApiKey,
+      id: legacyApiKeyId2,
+      keyName: "Legacy ak_ API Key",
+      keyValue: "ak_demo_key_2026",
+    });
+
+    // Seed default client user (demo / demo123)
+    const clientUserId = randomUUID();
+    this.clientUsers.set(clientUserId, {
+      id: clientUserId,
+      username: "demo",
+      password: bcrypt.hashSync("demo123", 10),
+      fullName: "Demo User",
+      email: "demo@cleantraffic.io",
+      emailVerified: true,
+      emailVerifiedAt: new Date(),
+      status: "active",
+      apiKeyId: demoApiKeyId,
+      tosAccepted: new Date(),
+      complianceStatus: "compliant",
+      statusReason: null,
+      statusUpdatedAt: null,
+      statusUpdatedBy: null,
+      statusHistory: [],
+      deactivatedAt: null,
+      newsletter: false,
+      subscriptionStatus: "active",
+      subscriptionTier: "Pro",
+      trialEndsAt: null,
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -280,25 +402,6 @@ export class MemStorage {
   }
 
   async createClassification(insertClassification: InsertClassification): Promise<Classification> {
-    // Auto-cleanup: Delete records older than 24 hours
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    for (const [id, classification] of this.classifications.entries()) {
-      if (new Date(classification.timestamp) < twentyFourHoursAgo) {
-        this.classifications.delete(id);
-      }
-    }
-    
-    // Auto-cleanup: Keep only last 100 classifications
-    if (this.classifications.size >= 100) {
-      const sorted = Array.from(this.classifications.entries())
-        .sort((a, b) => new Date(a[1].timestamp).getTime() - new Date(b[1].timestamp).getTime());
-      
-      const toDelete = this.classifications.size - 99; // Keep 99, add 1 new = 100 total
-      for (let i = 0; i < toDelete; i++) {
-        this.classifications.delete(sorted[i][0]);
-      }
-    }
-    
     const id = randomUUID();
     const classification: Classification = { 
       ...insertClassification,
@@ -393,7 +496,7 @@ export class MemStorage {
       status: insertApiKey.status ?? 'active',
       expirationPeriod: insertApiKey.expirationPeriod ?? 'unlimited',
       expiresAt,
-      callLimit: insertApiKey.callLimit ?? 1000,
+      callLimit: insertApiKey.callLimit ?? 5000,
       callCount: 0,
       lastUsed: null,
       id,
@@ -430,24 +533,33 @@ export class MemStorage {
   async incrementApiKeyUsage(keyValue: string): Promise<boolean> {
     const apiKey = await this.getApiKey(keyValue);
     if (apiKey) {
-      // Check if key is expired
-      if (apiKey.expiresAt && new Date() > apiKey.expiresAt) {
-        await this.updateApiKey(apiKey.id, { status: 'expired' });
+      if (apiKey.status === 'paused' || apiKey.status === 'revoked' || apiKey.status === 'disabled' || apiKey.enabled === false) {
+        return false;
+      }
+
+      // Check owner status
+      const owner = await this.getClientUserByApiKey(apiKey.id);
+      const isOwnerActive = owner && (
+        (owner.subscriptionStatus || '').toLowerCase() === 'active' ||
+        ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (!owner.trialEndsAt || new Date(owner.trialEndsAt) > new Date()))
+      ) && owner.status !== 'suspended' && owner.status !== 'inactive';
+
+      // Check expiration for standalone keys or accounts without active entitlement
+      if (!isOwnerActive && apiKey.expiresAt && new Date() > apiKey.expiresAt) {
+        if (apiKey.status !== 'expired') {
+          await this.updateApiKey(apiKey.id, { status: 'expired' });
+        }
         return false;
       }
       
+      const limit = isOwnerActive ? getTierCallLimit(owner?.subscriptionTier) : (apiKey.callLimit ?? 5000);
       // Check if call limit reached
-      if (apiKey.callCount >= apiKey.callLimit) {
-        return false;
-      }
-      
-      // Check if key is paused or inactive
-      if (apiKey.status !== 'active') {
+      if (limit > 0 && (apiKey.callCount || 0) >= limit) {
         return false;
       }
       
       // Increment usage
-      apiKey.callCount += 1;
+      apiKey.callCount = (apiKey.callCount || 0) + 1;
       apiKey.lastUsed = new Date();
       apiKey.updatedAt = new Date();
       this.apiKeys.set(apiKey.id, apiKey);
@@ -675,12 +787,22 @@ export class MemStorage {
     const newUser: ClientUser = {
       ...user,
       id,
+      fullName: user.fullName ?? null,
+      newsletter: user.newsletter ?? false,
       status: user.status ?? "active",
       email: user.email ?? null,
+      emailVerified: user.emailVerified ?? false,
+      emailVerifiedAt: user.emailVerifiedAt ?? null,
       apiKeyId: user.apiKeyId ?? null,
-      tosAccepted: null,
-      complianceStatus: "pending",
+      tosAccepted: user.tosAccepted ?? null,
+      complianceStatus: user.complianceStatus ?? "pending",
+      statusReason: user.statusReason ?? null,
+      statusUpdatedAt: user.statusUpdatedAt ? new Date(user.statusUpdatedAt) : null,
+      statusUpdatedBy: user.statusUpdatedBy ?? null,
+      statusHistory: (user.statusHistory as StatusHistoryEntry[]) ?? [],
+      deactivatedAt: user.deactivatedAt ? new Date(user.deactivatedAt) : null,
       subscriptionStatus: user.subscriptionStatus ?? "trialing",
+      subscriptionTier: user.subscriptionTier ?? "Pro",
       trialEndsAt: user.trialEndsAt ?? null,
       stripeCustomerId: user.stripeCustomerId ?? null,
       stripeSubscriptionId: user.stripeSubscriptionId ?? null,
@@ -697,7 +819,21 @@ export class MemStorage {
 
   async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
     return Array.from(this.clientUsers.values())
-      .find(user => user.username === username);
+      .find(user => user.username.toLowerCase() === username.toLowerCase());
+  }
+
+  async getClientUserByEmail(email: string): Promise<ClientUser | undefined> {
+    return Array.from(this.clientUsers.values())
+      .find(user => user.email && user.email.toLowerCase() === email.toLowerCase());
+  }
+
+  async getClientUserByUsernameOrEmail(identifier: string): Promise<ClientUser | undefined> {
+    const cleanId = identifier.trim().toLowerCase();
+    return Array.from(this.clientUsers.values())
+      .find(user => 
+        user.username.toLowerCase() === cleanId || 
+        (user.email && user.email.toLowerCase() === cleanId)
+      );
   }
 
   async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
@@ -711,13 +847,24 @@ export class MemStorage {
   }
 
   async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
-    return Array.from(this.clientUsers.values())
-      .find(user => user.apiKeyId === apiKeyId);
+    const keyObj = (await this.getApiKeyById(apiKeyId)) || (await this.getApiKey(apiKeyId));
+    const candidateIds = [apiKeyId];
+    if (keyObj) {
+      if (keyObj.id) candidateIds.push(keyObj.id);
+      if (keyObj.keyValue) candidateIds.push(keyObj.keyValue);
+    }
+    const found = Array.from(this.clientUsers.values())
+      .find(user => candidateIds.includes(user.apiKeyId || ''));
+    return found;
   }
 
   async getAllClientUsers(): Promise<ClientUser[]> {
     return Array.from(this.clientUsers.values())
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async deleteClientUser(id: string): Promise<boolean> {
+    return this.clientUsers.delete(id);
   }
 
   async getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined> {
@@ -762,21 +909,130 @@ export class MemStorage {
     return this.redirectUrls.get(userId);
   }
 
-  async setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls> {
+  async deleteUserRedirectUrls(userId: string): Promise<boolean> {
+    return this.redirectUrls.delete(userId);
+  }
+
+  async setUserRedirectUrls(userId: string, urls: { 
+    humanUrl: string; 
+    botUrl: string; 
+    allowedCountries?: string; 
+    allowedDevices?: string;
+    desktopOsFilter?: string;
+    blockVpn?: string;
+    blockDatacenter?: string;
+    blockTor?: string;
+    fingerprintActivate?: string;
+    wildcardSubdomains?: string;
+    allowVpn?: boolean;
+    allowSearchCrawlers?: string;
+    blockAiCrawlers?: string;
+    allowSocialPreviews?: string;
+    interstitialThemeId?: string;
+    interstitialHeading?: string;
+    interstitialSubnote?: string;
+  }): Promise<UserRedirectUrls> {
     const existing = this.redirectUrls.get(userId);
     const redirectUrl: UserRedirectUrls = {
       id: existing?.id || randomUUID(),
       userId,
       humanUrl: urls.humanUrl,
       botUrl: urls.botUrl,
+      allowedCountries: urls.allowedCountries !== undefined ? urls.allowedCountries : (existing?.allowedCountries || "ALL"),
+      allowedDevices: urls.allowedDevices !== undefined ? urls.allowedDevices : (existing?.allowedDevices || "all"),
+      desktopOsFilter: urls.desktopOsFilter !== undefined ? urls.desktopOsFilter : (existing?.desktopOsFilter || "both"),
+      blockVpn: urls.blockVpn !== undefined ? urls.blockVpn : (existing?.blockVpn || "block"),
+      blockDatacenter: urls.blockDatacenter !== undefined ? urls.blockDatacenter : (existing?.blockDatacenter || "block"),
+      blockTor: urls.blockTor !== undefined ? urls.blockTor : (existing?.blockTor || "block"),
+      fingerprintActivate: urls.fingerprintActivate !== undefined ? urls.fingerprintActivate : (existing?.fingerprintActivate || "enabled"),
+      wildcardSubdomains: urls.wildcardSubdomains !== undefined ? urls.wildcardSubdomains : (existing?.wildcardSubdomains || "disabled"),
+      allowVpn: urls.allowVpn !== undefined ? urls.allowVpn : (urls.blockVpn === "allow" ? true : (existing?.allowVpn ?? false)),
+      allowSearchCrawlers: urls.allowSearchCrawlers !== undefined ? urls.allowSearchCrawlers : (existing?.allowSearchCrawlers || "allow"),
+      blockAiCrawlers: urls.blockAiCrawlers !== undefined ? urls.blockAiCrawlers : (existing?.blockAiCrawlers || "block"),
+      allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
+      interstitialThemeId: urls.interstitialThemeId !== undefined ? urls.interstitialThemeId : (existing?.interstitialThemeId || "clean_light"),
+      interstitialHeading: urls.interstitialHeading !== undefined ? urls.interstitialHeading : (existing?.interstitialHeading || "Verifying your connection..."),
+      interstitialSubnote: urls.interstitialSubnote !== undefined ? urls.interstitialSubnote : (existing?.interstitialSubnote || "Please wait while we secure your session."),
       updatedAt: new Date()
     };
     this.redirectUrls.set(userId, redirectUrl);
     return redirectUrl;
   }
 
+  // Interstitial Themes methods
+  async getInterstitialThemes(includeDisabled = false): Promise<InterstitialTheme[]> {
+    const list = Array.from(this.interstitialThemes.values());
+    if (includeDisabled) return list;
+    return list.filter(t => t.enabled);
+  }
+
+  async getInterstitialTheme(id: string): Promise<InterstitialTheme | undefined> {
+    return this.interstitialThemes.get(id);
+  }
+
+  async createInterstitialTheme(theme: InsertInterstitialTheme): Promise<InterstitialTheme> {
+    const id = theme.id || randomUUID();
+    const newTheme: InterstitialTheme = {
+      ...theme,
+      id,
+      category: theme.category || "Light",
+      badge: theme.badge || null,
+      isDefault: theme.isDefault ?? false,
+      enabled: theme.enabled ?? true,
+      previewBg: theme.previewBg || "#f8fafc",
+      previewAccent: theme.previewAccent || "#059669",
+      scriptJs: theme.scriptJs || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    if (newTheme.isDefault) {
+      for (const [k, t] of this.interstitialThemes.entries()) {
+        if (t.isDefault) {
+          this.interstitialThemes.set(k, { ...t, isDefault: false });
+        }
+      }
+    }
+    this.interstitialThemes.set(id, newTheme);
+    return newTheme;
+  }
+
+  async updateInterstitialTheme(id: string, updates: Partial<InterstitialTheme>): Promise<InterstitialTheme | undefined> {
+    const existing = this.interstitialThemes.get(id);
+    if (!existing) return undefined;
+    if (updates.isDefault) {
+      for (const [k, t] of this.interstitialThemes.entries()) {
+        if (t.isDefault && k !== id) {
+          this.interstitialThemes.set(k, { ...t, isDefault: false });
+        }
+      }
+    }
+    const updated: InterstitialTheme = {
+      ...existing,
+      ...updates,
+      id,
+      updatedAt: new Date(),
+    };
+    this.interstitialThemes.set(id, updated);
+    return updated;
+  }
+
+  async deleteInterstitialTheme(id: string): Promise<boolean> {
+    const existing = this.interstitialThemes.get(id);
+    if (!existing || existing.isDefault) return false;
+    return this.interstitialThemes.delete(id);
+  }
+
+  async setDefaultInterstitialTheme(id: string): Promise<boolean> {
+    const existing = this.interstitialThemes.get(id);
+    if (!existing) return false;
+    for (const [k, t] of this.interstitialThemes.entries()) {
+      this.interstitialThemes.set(k, { ...t, isDefault: k === id });
+    }
+    return true;
+  }
+
   // Classification methods for users
-  async getUserClassifications(apiKeyId: string, limit: number = 10): Promise<Classification[]> {
+  async getUserClassifications(apiKeyId: string, limit: number = 500): Promise<Classification[]> {
     return Array.from(this.classifications.values())
       .filter(c => c.apiKeyId === apiKeyId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
@@ -876,6 +1132,101 @@ export class MemStorage {
 
   async setClientWhitelistEnabled(enabled: boolean): Promise<void> {
     this.settings.set('clientWhitelistEnabled', enabled ? 'true' : 'false');
+  }
+
+  // IP Blocklist methods
+  async getIpBlocklist(): Promise<IpBlocklist[]> {
+    return Array.from(this.ipBlocklist.values())
+      .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
+  }
+
+  async addIpToBlocklist(ip: InsertIpBlocklist): Promise<IpBlocklist> {
+    const id = randomUUID();
+    const newIp: IpBlocklist = {
+      ...ip,
+      id,
+      reason: ip.reason ?? null,
+      enabled: ip.enabled ?? true,
+      addedAt: new Date(),
+    };
+    this.ipBlocklist.set(id, newIp);
+    return newIp;
+  }
+
+  async removeIpFromBlocklist(id: string): Promise<boolean> {
+    return this.ipBlocklist.delete(id);
+  }
+
+  async toggleIpBlocklist(id: string, enabled: boolean): Promise<boolean> {
+    const entry = this.ipBlocklist.get(id);
+    if (entry) {
+      entry.enabled = enabled;
+      this.ipBlocklist.set(id, entry);
+      return true;
+    }
+    return false;
+  }
+
+  async isIpBlocked(ipAddress: string): Promise<boolean> {
+    const entry = Array.from(this.ipBlocklist.values()).find(e => e.ipAddress === ipAddress);
+    return entry ? entry.enabled : false;
+  }
+
+  // CIDR Blocklist methods
+  async getCidrBlocklist(): Promise<CidrBlocklist[]> {
+    return Array.from(this.cidrBlocklist.values())
+      .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
+  }
+
+  async addCidrToBlocklist(cidr: InsertCidrBlocklist): Promise<CidrBlocklist> {
+    const id = randomUUID();
+    const newCidr: CidrBlocklist = {
+      ...cidr,
+      id,
+      reason: cidr.reason ?? null,
+      enabled: cidr.enabled ?? true,
+      addedAt: new Date(),
+    };
+    this.cidrBlocklist.set(id, newCidr);
+    return newCidr;
+  }
+
+  async removeCidrFromBlocklist(id: string): Promise<boolean> {
+    return this.cidrBlocklist.delete(id);
+  }
+
+  async toggleCidrBlocklist(id: string, enabled: boolean): Promise<boolean> {
+    const entry = this.cidrBlocklist.get(id);
+    if (entry) {
+      entry.enabled = enabled;
+      this.cidrBlocklist.set(id, entry);
+      return true;
+    }
+    return false;
+  }
+
+  async isIpInBlockedCidrRange(ipAddress: string): Promise<boolean> {
+    const enabledRanges = Array.from(this.cidrBlocklist.values()).filter(e => e.enabled);
+    if (enabledRanges.length === 0) return false;
+
+    let parsedIp: ReturnType<typeof ipaddr.parse>;
+    try {
+      parsedIp = ipaddr.parse(ipAddress);
+    } catch {
+      return false;
+    }
+
+    for (const entry of enabledRanges) {
+      try {
+        const [rangeAddr, prefixLength] = ipaddr.parseCIDR(entry.cidrRange);
+        if (parsedIp.kind() === rangeAddr.kind() && parsedIp.match(rangeAddr, prefixLength)) {
+          return true;
+        }
+      } catch {
+        // Skip invalid CIDR
+      }
+    }
+    return false;
   }
 
   // Domain Pool methods (in-memory implementation)
@@ -1002,28 +1353,6 @@ export class DatabaseStorage {
   }
 
   async createClassification(classification: InsertClassification): Promise<Classification> {
-    // Auto-cleanup: Delete records older than 24 hours
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    await db.delete(classifications).where(lt(classifications.timestamp, twentyFourHoursAgo));
-    
-    // Auto-cleanup: Keep only last 100 classifications
-    const countResult = await db.select({ count: count() }).from(classifications);
-    const total = countResult[0]?.count || 0;
-    
-    if (total >= 100) {
-      // Delete oldest entries to maintain 100 records max
-      const toDelete = total - 99; // Keep 99, add 1 new = 100 total
-      const oldestRecords = await db
-        .select({ id: classifications.id })
-        .from(classifications)
-        .orderBy(classifications.timestamp)
-        .limit(toDelete);
-      
-      for (const record of oldestRecords) {
-        await db.delete(classifications).where(eq(classifications.id, record.id));
-      }
-    }
-    
     const [newClassification] = await db.insert(classifications).values(classification).returning();
     return newClassification;
   }
@@ -1143,20 +1472,31 @@ export class DatabaseStorage {
       return false;
     }
     
-    // Check if key is expired
-    if (apiKey.expiresAt && new Date() > apiKey.expiresAt) {
-      await this.updateApiKey(apiKey.id, { status: 'expired' });
+    // Check if key is paused or disabled
+    if (apiKey.status === 'paused' || apiKey.status === 'revoked' || apiKey.status === 'disabled' || apiKey.enabled === false) {
       return false;
     }
-    
+
+    // Check owner status
+    const owner = await this.getClientUserByApiKey(apiKey.id);
+    const isOwnerActive = owner && (
+      (owner.subscriptionStatus || '').toLowerCase() === 'active' ||
+      ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (!owner.trialEndsAt || new Date(owner.trialEndsAt) > new Date()))
+    ) && owner.status !== 'suspended' && owner.status !== 'inactive';
+
+    // Check if key is expired (only for non-active/non-entitled accounts or standalone keys)
+    if (!isOwnerActive) {
+      if (apiKey.expiresAt && new Date() > apiKey.expiresAt) {
+        if (apiKey.status !== 'expired') {
+          await this.updateApiKey(apiKey.id, { status: 'expired' });
+        }
+        return false;
+      }
+    }
+
+    const limit = isOwnerActive ? getTierCallLimit(owner?.subscriptionTier) : (apiKey.callLimit ?? 5000);
     // Check if call limit reached
-    if (apiKey.callCount >= apiKey.callLimit) {
-      await this.updateApiKey(apiKey.id, { status: 'expired' });
-      return false;
-    }
-    
-    // Check if key is paused or inactive
-    if (apiKey.status !== 'active') {
+    if (limit > 0 && (apiKey.callCount || 0) >= limit) {
       return false;
     }
     
@@ -1418,6 +1758,39 @@ export class DatabaseStorage {
     }
   }
 
+  async getClientUserByEmail(email: string): Promise<ClientUser | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(clientUsers)
+        .where(eq(clientUsers.email, email));
+      const [user] = result || [];
+      return user;
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes("reading 'map'")) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  async getClientUserByUsernameOrEmail(identifier: string): Promise<ClientUser | undefined> {
+    try {
+      const cleanId = identifier.trim();
+      const result = await db
+        .select()
+        .from(clientUsers)
+        .where(or(eq(clientUsers.username, cleanId), eq(clientUsers.email, cleanId)));
+      const [user] = result || [];
+      return user;
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes("reading 'map'")) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
     const [updated] = await db
       .update(clientUsers)
@@ -1428,16 +1801,27 @@ export class DatabaseStorage {
   }
 
   async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
+    const keyObj = (await this.getApiKeyById(apiKeyId)) || (await this.getApiKey(apiKeyId));
+    const candidateIds = [apiKeyId];
+    if (keyObj) {
+      if (keyObj.id) candidateIds.push(keyObj.id);
+      if (keyObj.keyValue) candidateIds.push(keyObj.keyValue);
+    }
     const [user] = await db
       .select()
       .from(clientUsers)
-      .where(eq(clientUsers.apiKeyId, apiKeyId));
-    return user;
+      .where(inArray(clientUsers.apiKeyId, candidateIds));
+    return user || undefined;
   }
 
   async getAllClientUsers(): Promise<ClientUser[]> {
     const allUsers = await db.select().from(clientUsers);
     return allUsers;
+  }
+
+  async deleteClientUser(id: string): Promise<boolean> {
+    const result = await db.delete(clientUsers).where(eq(clientUsers.id, id)).returning();
+    return result.length > 0;
   }
 
   async getClientUserByStripeCustomerId(stripeCustomerId: string): Promise<ClientUser | undefined> {
@@ -1503,15 +1887,62 @@ export class DatabaseStorage {
     return urls;
   }
 
-  async setUserRedirectUrls(userId: string, urls: { humanUrl: string; botUrl: string }): Promise<UserRedirectUrls> {
+  async deleteUserRedirectUrls(userId: string): Promise<boolean> {
+    const result = await db.delete(userRedirectUrls).where(eq(userRedirectUrls.userId, userId)).returning();
+    return result.length > 0;
+  }
+
+  async setUserRedirectUrls(userId: string, urls: { 
+    humanUrl: string; 
+    botUrl: string; 
+    allowedCountries?: string; 
+    allowedDevices?: string;
+    desktopOsFilter?: string;
+    blockVpn?: string;
+    blockDatacenter?: string;
+    blockTor?: string;
+    fingerprintActivate?: string;
+    wildcardSubdomains?: string;
+    allowVpn?: boolean;
+    allowSearchCrawlers?: string;
+    blockAiCrawlers?: string;
+    allowSocialPreviews?: string;
+    interstitialThemeId?: string;
+    interstitialHeading?: string;
+    interstitialSubnote?: string;
+  }): Promise<UserRedirectUrls> {
     // Check if user has existing redirect URLs
     const existing = await this.getUserRedirectUrls(userId);
+    const updatePayload: any = {
+      humanUrl: urls.humanUrl,
+      botUrl: urls.botUrl,
+      updatedAt: sql`now()`,
+    };
+    if (urls.allowedCountries !== undefined) updatePayload.allowedCountries = urls.allowedCountries;
+    if (urls.allowedDevices !== undefined) updatePayload.allowedDevices = urls.allowedDevices;
+    if (urls.desktopOsFilter !== undefined) updatePayload.desktopOsFilter = urls.desktopOsFilter;
+    if (urls.blockVpn !== undefined) updatePayload.blockVpn = urls.blockVpn;
+    if (urls.blockDatacenter !== undefined) updatePayload.blockDatacenter = urls.blockDatacenter;
+    if (urls.blockTor !== undefined) updatePayload.blockTor = urls.blockTor;
+    if (urls.fingerprintActivate !== undefined) updatePayload.fingerprintActivate = urls.fingerprintActivate;
+    if (urls.wildcardSubdomains !== undefined) updatePayload.wildcardSubdomains = urls.wildcardSubdomains;
+    if (urls.allowSearchCrawlers !== undefined) updatePayload.allowSearchCrawlers = urls.allowSearchCrawlers;
+    if (urls.blockAiCrawlers !== undefined) updatePayload.blockAiCrawlers = urls.blockAiCrawlers;
+    if (urls.allowSocialPreviews !== undefined) updatePayload.allowSocialPreviews = urls.allowSocialPreviews;
+    if (urls.interstitialThemeId !== undefined) updatePayload.interstitialThemeId = urls.interstitialThemeId;
+    if (urls.interstitialHeading !== undefined) updatePayload.interstitialHeading = urls.interstitialHeading;
+    if (urls.interstitialSubnote !== undefined) updatePayload.interstitialSubnote = urls.interstitialSubnote;
+    if (urls.allowVpn !== undefined) {
+      updatePayload.allowVpn = urls.allowVpn;
+    } else if (urls.blockVpn !== undefined) {
+      updatePayload.allowVpn = urls.blockVpn === "allow";
+    }
     
     if (existing) {
       // Update existing
       const [updated] = await db
         .update(userRedirectUrls)
-        .set({ ...urls, updatedAt: sql`now()` })
+        .set(updatePayload)
         .where(eq(userRedirectUrls.userId, userId))
         .returning();
       return updated;
@@ -1519,14 +1950,100 @@ export class DatabaseStorage {
       // Create new
       const [created] = await db
         .insert(userRedirectUrls)
-        .values({ userId, ...urls })
+        .values({
+          userId,
+          humanUrl: urls.humanUrl,
+          botUrl: urls.botUrl,
+          allowedCountries: urls.allowedCountries || "ALL",
+          allowedDevices: urls.allowedDevices || "all",
+          desktopOsFilter: urls.desktopOsFilter || "both",
+          blockVpn: urls.blockVpn || "block",
+          blockDatacenter: urls.blockDatacenter || "block",
+          blockTor: urls.blockTor || "block",
+          fingerprintActivate: urls.fingerprintActivate || "enabled",
+          wildcardSubdomains: urls.wildcardSubdomains || "disabled",
+          allowVpn: urls.allowVpn !== undefined ? urls.allowVpn : (urls.blockVpn === "allow"),
+          allowSearchCrawlers: urls.allowSearchCrawlers || "allow",
+          blockAiCrawlers: urls.blockAiCrawlers || "block",
+          allowSocialPreviews: urls.allowSocialPreviews || "allow",
+          interstitialThemeId: urls.interstitialThemeId || "clean_light",
+          interstitialHeading: urls.interstitialHeading || "Verifying your connection...",
+          interstitialSubnote: urls.interstitialSubnote || "Please wait while we secure your session.",
+        })
         .returning();
       return created;
     }
   }
 
+  // Interstitial Themes methods (DatabaseStorage)
+  async getInterstitialThemes(includeDisabled = false): Promise<InterstitialTheme[]> {
+    try {
+      const q = db.select().from(interstitialThemes);
+      const list = await (includeDisabled ? q : q.where(eq(interstitialThemes.enabled, true)));
+      if (!list || list.length === 0) return DEFAULT_INTERSTITIAL_THEMES;
+      return list;
+    } catch {
+      return DEFAULT_INTERSTITIAL_THEMES;
+    }
+  }
+
+  async getInterstitialTheme(id: string): Promise<InterstitialTheme | undefined> {
+    try {
+      const [theme] = await db.select().from(interstitialThemes).where(eq(interstitialThemes.id, id));
+      if (!theme) {
+        return DEFAULT_INTERSTITIAL_THEMES.find(t => t.id === id);
+      }
+      return theme;
+    } catch {
+      return DEFAULT_INTERSTITIAL_THEMES.find(t => t.id === id);
+    }
+  }
+
+  async createInterstitialTheme(theme: InsertInterstitialTheme): Promise<InterstitialTheme> {
+    const id = theme.id || randomUUID();
+    if (theme.isDefault) {
+      await db.update(interstitialThemes).set({ isDefault: false });
+    }
+    const [newTheme] = await db.insert(interstitialThemes).values({
+      ...theme,
+      id,
+      category: theme.category || "Light",
+      badge: theme.badge || null,
+      isDefault: theme.isDefault ?? false,
+      enabled: theme.enabled ?? true,
+      previewBg: theme.previewBg || "#f8fafc",
+      previewAccent: theme.previewAccent || "#059669",
+      scriptJs: theme.scriptJs || null,
+    }).returning();
+    return newTheme;
+  }
+
+  async updateInterstitialTheme(id: string, updates: Partial<InterstitialTheme>): Promise<InterstitialTheme | undefined> {
+    if (updates.isDefault) {
+      await db.update(interstitialThemes).set({ isDefault: false });
+    }
+    const [updated] = await db.update(interstitialThemes).set({
+      ...updates,
+      updatedAt: sql`now()`
+    }).where(eq(interstitialThemes.id, id)).returning();
+    return updated;
+  }
+
+  async deleteInterstitialTheme(id: string): Promise<boolean> {
+    const theme = await this.getInterstitialTheme(id);
+    if (!theme || theme.isDefault) return false;
+    const res = await db.delete(interstitialThemes).where(eq(interstitialThemes.id, id)).returning();
+    return res.length > 0;
+  }
+
+  async setDefaultInterstitialTheme(id: string): Promise<boolean> {
+    await db.update(interstitialThemes).set({ isDefault: false });
+    const res = await db.update(interstitialThemes).set({ isDefault: true }).where(eq(interstitialThemes.id, id)).returning();
+    return res.length > 0;
+  }
+
   // Classification methods for users (filtered by API key)
-  async getUserClassifications(apiKeyId: string, limit: number = 100): Promise<Classification[]> {
+  async getUserClassifications(apiKeyId: string, limit: number = 500): Promise<Classification[]> {
     const userClassifications = await db
       .select()
       .from(classifications)
@@ -1808,5 +2325,9 @@ export class DatabaseStorage {
   }
 }
 
-// Using DatabaseStorage with permanent database
-export const storage = new DatabaseStorage();
+// Primary storage: Cloud Firestore for persistent storage, fallback to SQL database or MemStorage
+export const storage: IStorage = isFirestoreAvailable
+  ? new FirestoreStorage()
+  : (isDatabaseConfigured && db !== null)
+  ? new DatabaseStorage()
+  : new MemStorage();

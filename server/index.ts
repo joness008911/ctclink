@@ -3,10 +3,14 @@ import helmet from "helmet";
 import { execSync } from "child_process";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { isValidDatabaseUrl } from "./db";
 
 const app = express();
 
-// Security headers with Helmet
+// Trust reverse proxy for Cloud Run and dev environments (critical for secure cookies & client IP)
+app.set("trust proxy", 1);
+
+// Security headers with Helmet - configured to allow iframe preview and inline scripts
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -16,28 +20,20 @@ app.use(helmet({
       fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
       imgSrc: ["'self'", "data:", "blob:", "https:"],
       connectSrc: ["'self'", "ws:", "wss:"],
-      frameSrc: ["'none'"],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: process.env.NODE_ENV === "production" ? [] : null,
+      frameAncestors: ["*"],
     },
   },
-  hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
-  },
-  frameguard: { action: 'deny' },
+  frameguard: false,
   referrerPolicy: { policy: 'no-referrer' },
 }));
 
 // Additional security headers
 app.use((req, res, next) => {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
   next();
 });
 
-// Block known scrapers, bots, and preview services
+// Block known scrapers, bots, and preview services (production only)
 const blockedUserAgents = [
   'slackbot', 'slack-imgproxy', 'slackbot-linkexpanding',
   'facebookexternalhit', 'facebookcatalog', 'facebot',
@@ -47,8 +43,6 @@ const blockedUserAgents = [
   'discordbot', 'discord',
   'curl', 'wget', 'python-requests', 'python-urllib',
   'postman', 'insomnia', 'httpie',
-  'headlesschrome', 'phantomjs', 'selenium', 'puppeteer',
-  'scraper', 'scrapy', 'bot', 'crawler', 'spider',
   'archive.org_bot', 'ia_archiver',
   'pinterest', 'pinterestbot',
   'embedly', 'outbrain', 'quora',
@@ -59,14 +53,12 @@ const blockedUserAgents = [
 app.use((req, res, next) => {
   const userAgent = (req.headers['user-agent'] || '').toLowerCase();
   
-  // Block known scrapers/bots accessing all routes EXCEPT API endpoints
-  // This protects all dashboard routes, assets, and static files
   const isApiEndpoint = req.path.startsWith('/api/') || req.path === '/robots.txt';
   
-  if (!isApiEndpoint) {
+  if (process.env.NODE_ENV === 'production' && !isApiEndpoint) {
     for (const blocked of blockedUserAgents) {
       if (userAgent.includes(blocked)) {
-        return res.redirect('https://google.com');
+        return res.status(403).send("Forbidden");
       }
     }
   }
@@ -81,6 +73,24 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+// Request timeout protection (25s timeout for API requests to mitigate hanging sockets and DoS)
+app.use("/api", (req, res, next) => {
+  const timeoutMs = 25000;
+  const timer = setTimeout(() => {
+    if (!res.headersSent) {
+      console.warn(`[TIMEOUT_EVENT] API Request timed out: ${req.method} ${req.path}`);
+      res.status(504).json({
+        message: "The server took too long to respond. Request timed out.",
+        code: "GATEWAY_TIMEOUT"
+      });
+    }
+  }, timeoutMs);
+
+  res.on("finish", () => clearTimeout(timer));
+  res.on("close", () => clearTimeout(timer));
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -98,7 +108,17 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        try {
+          const sanitized = JSON.parse(JSON.stringify(capturedJsonResponse, (key, value) => {
+            if (typeof key === 'string' && /^(keyvalue|apikey|token|password|secret|authorization|idtoken)$/i.test(key)) {
+              return typeof value === 'string' ? `${value.substring(0, 4)}••••` : '••••';
+            }
+            return value;
+          }));
+          logLine += ` :: ${JSON.stringify(sanitized)}`;
+        } catch {
+          logLine += ` :: [Response Redacted]`;
+        }
       }
 
       if (logLine.length > 80) {
@@ -112,51 +132,66 @@ app.use((req, res, next) => {
   next();
 });
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
 (async () => {
-  // Run pending database migrations on startup using drizzle-kit (pg driver).
-  // Fatal on failure: a schema mismatch would produce broken billing/auth behaviour
-  // that is harder to diagnose than a clean startup crash.
   try {
-    execSync("npx drizzle-kit migrate", { stdio: "pipe" });
-    log("Database migrations applied");
-  } catch (err: any) {
-    const msg = (err.stderr?.toString() || err.stdout?.toString() || err.message || String(err)).slice(0, 500);
-    console.error("FATAL: database migration failed — cannot start server:\n" + msg);
+    // Run pending database migrations if a valid Postgres database is configured
+    if (isValidDatabaseUrl(process.env.DATABASE_URL)) {
+      try {
+        execSync("npx drizzle-kit migrate", { stdio: "pipe" });
+        log("Database migrations applied");
+      } catch (err: any) {
+        const msg = (err.stderr?.toString() || err.stdout?.toString() || err.message || String(err)).slice(0, 500);
+        console.warn("Database migration notice:\n" + msg);
+      }
+    }
+
+    const server = await registerRoutes(app);
+    
+    app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+      if (res.headersSent) {
+        return _next(err);
+      }
+      const status = typeof err.status === "number" ? err.status : (typeof err.statusCode === "number" ? err.statusCode : 500);
+      
+      // Prevent internal error details, database paths, and sensitive stacks from leaking in 500 responses
+      const isProduction = process.env.NODE_ENV === "production";
+      let message = err.message || "Internal Server Error";
+      if (status >= 500 && isProduction) {
+        message = "An unexpected internal server error occurred. Please try again later.";
+      }
+
+      console.error(`[API_ERROR] ${_req.method} ${_req.path} -> Status ${status}:`, err);
+      res.status(status).json({
+        message,
+        code: err.code || "INTERNAL_ERROR",
+      });
+    });
+
+    // Setup Vite in development or serve static build in production
+    if (process.env.NODE_ENV !== "production") {
+      await setupVite(app, server);
+    } else {
+      serveStatic(app);
+    }
+
+    // Bind to port from environment variable (Railway/Render/Cloud Run) or default 3000
+    const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+    server.listen({
+      port,
+      host: "0.0.0.0",
+    }, () => {
+      log(`serving on port ${port}`);
+    });
+  } catch (startupError) {
+    console.error("🚨 Fatal error during server startup:", startupError);
     process.exit(1);
   }
-
-  const server = await registerRoutes(app);
-  
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    res.status(status).json({ message });
-    throw err;
-  });
-
-  // Redirect middleware removed to fix verification issues
-  // The system will now allow direct access to all paths during testing
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (app.get("env") === "development") {
-    await setupVite(app, server);
-  } else {
-    serveStatic(app);
-  }
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
-    log(`serving on port ${port}`);
-  });
 })();

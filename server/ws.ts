@@ -35,6 +35,12 @@ export interface SecurityEventPayload {
   country: string;
   isp: string;
   action: "Allowed" | "Blocked";
+  connectionType?: string;
+  usageType?: string;
+  riskScore?: number;
+  adNetwork?: string | null;
+  adClickId?: string | null;
+  isAdTraffic?: boolean;
 }
 
 // Map: apiKeyId → set of open WebSocket connections for that key's owner(s)

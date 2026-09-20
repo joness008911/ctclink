@@ -113,7 +113,7 @@ export default function ApiKeyManagement() {
   });
 
   const generateRandomKey = () => {
-    const prefix = "ak_";
+    const prefix = "ctc_";
     const randomPart = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     setKeyValue(prefix + randomPart);
   };
@@ -168,9 +168,10 @@ export default function ApiKeyManagement() {
     }));
   };
 
-  const maskKey = (key: string) => {
-    if (key.length <= 8) return "*".repeat(key.length);
-    return key.substring(0, 4) + "*".repeat(key.length - 8) + key.substring(key.length - 4);
+  const maskKey = (key?: string | null) => {
+    if (!key) return "••••••••••••••••";
+    if (key.length <= 8) return "•".repeat(Math.max(key.length, 8));
+    return key.substring(0, 4) + "•".repeat(Math.min(key.length - 8, 16)) + key.substring(key.length - 4);
   };
 
   const getStatusBadge = (apiKey: ApiKey) => {
@@ -317,7 +318,7 @@ export default function ApiKeyManagement() {
                 <Input
                   id="keyValue"
                   type="text"
-                  placeholder="ak_example123..."
+                  placeholder="ctc_example123..."
                   value={keyValue}
                   onChange={(e) => setKeyValue(e.target.value)}
                   className="flex-1"

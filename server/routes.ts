@@ -1,8 +1,29 @@
 import type { Express } from "express";
 import { z } from "zod";
 import Stripe from "stripe";
-import { randomUUID } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
 import rateLimit from "express-rate-limit";
+import {
+  createVerificationToken,
+  validateVerificationCode,
+  invalidatePreviousTokens,
+  invalidateAllTokensForUser,
+  checkEmailCooldown,
+  recordEmailDispatch,
+  maskEmail,
+  TOKEN_EXPIRATION_MS,
+  MAX_VERIFICATION_ATTEMPTS,
+  EMAIL_COOLDOWN_MS,
+} from "./authVerificationService";
+import {
+  isAccountLocked,
+  isIpLocked,
+  recordFailedLogin,
+  recordSuccessfulLogin,
+} from "./accountLockout";
+
+// Session & idle timeout configuration
+export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
 
 // Extend session types
 declare module 'express-session' {
@@ -10,20 +31,141 @@ declare module 'express-session' {
     userId?: string; // Admin user ID
     clientUserId?: string; // Client user ID (end-user customers)
     clientUserAuthenticated?: boolean; // Whether client user has verified API key
+    lastActiveAt?: number; // Idle timeout tracking
   }
+}
+
+// In-memory token store for iframe cross-origin authentication resilience
+interface AuthTokenData {
+  type: 'admin' | 'client';
+  userId: string;
+  authenticated?: boolean;
+  expiresAt: number;
+  lastActiveAt?: number;
+}
+
+const authTokens = new Map<string, AuthTokenData>();
+
+// Helper to immediately invalidate all in-memory auth tokens for a user
+export function revokeUserSessions(userId: string): number {
+  let count = 0;
+  for (const [token, data] of authTokens.entries()) {
+    if (data.userId === userId) {
+      authTokens.delete(token);
+      count++;
+    }
+  }
+  return count;
+}
+
+// Periodic cleanup of expired and idle tokens
+const tokenCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [token, data] of authTokens.entries()) {
+    if (now > data.expiresAt || (data.lastActiveAt && now - data.lastActiveAt > IDLE_TIMEOUT_MS)) {
+      authTokens.delete(token);
+    }
+  }
+}, 15 * 60 * 1000);
+if (tokenCleanupTimer && typeof tokenCleanupTimer.unref === 'function') {
+  tokenCleanupTimer.unref();
+}
+
+export function getSessionOrToken(req: any): { type: 'admin' | 'client'; userId: string; authenticated?: boolean } | null {
+  const now = Date.now();
+
+  // 1. Check Authorization, X-Auth-Token, or X-Client-Token headers first (works across iframes)
+  const authHeader = req.headers?.authorization || req.headers?.['x-auth-token'] || req.headers?.['x-client-token'];
+  if (authHeader && typeof authHeader === 'string') {
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+    if (token && authTokens.has(token)) {
+      const data = authTokens.get(token)!;
+      // Absolute expiration check
+      if (now > data.expiresAt) {
+        authTokens.delete(token);
+        return null;
+      }
+      // Idle timeout check
+      if (data.lastActiveAt && (now - data.lastActiveAt > IDLE_TIMEOUT_MS)) {
+        authTokens.delete(token);
+        return null;
+      }
+      data.lastActiveAt = now;
+      return data;
+    }
+  }
+
+  // 2. Fall back to Cookie Session
+  if (req.session) {
+    if (req.session.lastActiveAt && (now - req.session.lastActiveAt > IDLE_TIMEOUT_MS)) {
+      delete req.session.userId;
+      delete req.session.clientUserId;
+      delete req.session.clientUserAuthenticated;
+      delete req.session.lastActiveAt;
+      return null;
+    }
+    req.session.lastActiveAt = now;
+
+    if (req.session.userId) {
+      return { type: 'admin', userId: req.session.userId, authenticated: true };
+    }
+    if (req.session.clientUserId) {
+      return { 
+        type: 'client', 
+        userId: req.session.clientUserId, 
+        authenticated: !!req.session.clientUserAuthenticated 
+      };
+    }
+  }
+
+  return null;
 }
 import { createServer, type Server } from "http";
 import { storage, ip2geoCache } from "./storage";
+import { ip2LocationHealth } from "./ip2locationHealth";
+import { evaluateSafeProxyClassification, formatUsageTypeDescription } from "./vpnClassifier";
 import { db } from "./db";
 import { sql as sqlTag } from "drizzle-orm";
 import session from "express-session";
-import { insertClassificationSchema } from "@shared/schema";
+import createMemoryStore from "memorystore";
+const MemoryStore = createMemoryStore(session);
+import { insertClassificationSchema, type ClientUser, computeEffectiveAccountStatus, normalizeTier, getTierCallLimit, type AccountStatusSummary } from "@shared/schema";
+import { authorizeApiKey, syncClientUserSubscription, getEntitlementType, type AuthorizationResult } from "./authorizationService";
 import { UAParser } from "ua-parser-js";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
 import ipaddr from "ipaddr.js";
 import { broadcastClassification, setupWebSocketServer } from "./ws";
+import {
+  getSmtpConfig,
+  saveSmtpConfig,
+  verifySmtpConnection,
+  sendEmail,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+  sendWelcomeEmail,
+  sendAccountStatusEmail,
+  sendPasswordChangedEmail,
+  getEmailTemplate,
+  saveEmailTemplate,
+  getEmailLogs,
+  renderTemplate,
+  defaultEmailTemplates,
+  type SmtpConfig,
+} from "./emailService";
+import {
+  checkCrawlerUserAgent,
+  checkDatacenterIsp,
+  checkHeaderAnomalies,
+  checkRequestVelocity,
+  evaluateClientHardwareTokens,
+} from "./crawlerDetection";
+import {
+  evaluateAdIntelligence,
+  detectAdClickTokens,
+  type AdIntelligenceResult,
+} from "./adIntelligence";
 
 // ── Rate limiters ──────────────────────────────────────────────────────────
 // Brute-force protection for authentication endpoints (admin + client login).
@@ -36,6 +178,38 @@ const authLimiter = rateLimit({
   message: { message: "Too many login attempts. Please try again later." },
 });
 
+// Dedicated registration rate limiter: Prevents automated bot account creation and registration abuse.
+// 5 registration attempts per IP per 15 minutes.
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many registration attempts from this IP address. Please wait 15 minutes before trying again." },
+});
+
+// Rate limiter for verification email dispatch (e.g. forgot-password/verification codes)
+// 5 email dispatch requests per IP per 15 minutes to prevent email spamming and quota exhaustion.
+const emailVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many verification email requests. Please wait a few minutes before requesting another code." },
+});
+
+// Verification PIN code brute-force protection: 10 verification checks per IP per 15 minutes.
+const verifyCodeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many verification code attempts. Please wait 15 minutes before trying again." },
+});
+
+// Per-email dispatch cooldown tracker (prevents rapid-fire email bombing to the same address)
+const emailDispatchCooldowns = new Map<string, number>();
+
 // Per-API-key rate limit for the classification endpoint (GET + POST).
 // Key extraction mirrors every path the two handlers accept:
 //   POST → X-API-Key header
@@ -47,17 +221,20 @@ const classifyLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute window
   max: 300,
   keyGenerator: (req) => {
-    // POST format: X-API-Key header
-    const headerKey = (req.headers["x-api-key"] as string | undefined)?.trim();
+    // Check multiple locations for API key
+    const headerKey = ((req.headers["x-api-key"] || req.headers["api-key"]) as string | undefined)?.trim();
     if (headerKey) return headerKey;
-    // GET standard format: ?api_key=XXX
-    const stdKey = (req.query.api_key as string | undefined)?.trim();
-    if (stdKey) return stdKey;
-    // GET legacy format: first query param name is the API key
+    const authHeader = req.headers["authorization"] as string | undefined;
+    if (authHeader) {
+      const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
+      if (token) return token;
+    }
+    const bodyKey = (req.body?.apiKey || req.body?.api_key) as string | undefined;
+    if (bodyKey?.trim()) return bodyKey.trim();
+    const queryKey = (req.query?.api_key || req.query?.apiKey) as string | undefined;
+    if (queryKey?.trim()) return queryKey.trim();
     const legacyKey = Object.keys(req.query)[0];
     if (legacyKey) return legacyKey;
-    // No key at all — bucket by IP, normalized to avoid IPv4-mapped IPv6
-    // duplicates.  These requests are immediately redirected in the handlers.
     const rawIp =
       (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
     return `nokey:${rawIp}`;
@@ -65,7 +242,126 @@ const classifyLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipFailedRequests: false,
-  message: { message: "Classification rate limit exceeded. Please slow down." },
+  message: {
+    status: 429,
+    code: "RATE_LIMIT_EXCEEDED",
+    message: "Too Many Requests. You have made too many requests in a short period of time. Please wait a moment and try again.",
+    error: "Too Many Requests",
+  },
+});
+
+// Dedicated API Key verification rate limiter (10 attempts per 15 min per IP)
+const apiKeyVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Too many API key verification attempts. Please wait 15 minutes before trying again.",
+  },
+});
+
+// Dedicated Traffic Simulator rate limiter (10 test evaluations per 1 minute window)
+const simulatorLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Bucket by user session or IP so one user cannot exceed 10 tests/min
+    return (req as any).session?.userId || (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+  },
+  message: {
+    status: 429,
+    code: "SIMULATOR_RATE_LIMITED",
+    message: "Simulation limit reached (10 tests per minute). Please wait a moment before running more tests.",
+    error: "Simulation rate limit reached",
+  },
+});
+
+// Sensitive account operations (password changes, terms acceptance, etc.)
+// 15 attempts per 15 min
+const sensitiveAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Too many requests for this account operation. Please wait 15 minutes before trying again.",
+  },
+});
+
+// Dedicated password change rate limiter
+// Protects against password guessing, repeated current-password attempts, and email notification abuse
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === "test" ? 100 : 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Too many password change attempts. Please wait 15 minutes before trying again.",
+  },
+});
+
+// Admin sensitive endpoints (mass broadcast emails, connection tests, bulk operations)
+// 60 attempts per 15 min
+const adminActionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Too many administrative requests. Please slow down and try again shortly.",
+  },
+});
+
+// Heavy query rate limiter (classification logs, aggregate stats, export, audit queries)
+// 60 requests per 1 minute
+const heavyQueryLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Query rate limit exceeded. Please wait a moment before loading more records.",
+  },
+});
+
+// Public utility endpoints (client-error reporting, current-location geo lookup)
+// 60 requests per 1 minute
+const publicEndpointLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Rate limit reached. Please wait a moment before trying again.",
+  },
+});
+
+// General authenticated API limiter (200 requests per 1 minute)
+const generalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    code: "RATE_LIMITED",
+    message: "Too many requests. Please slow down.",
+  },
 });
 
 // 10-minute silent logging: Track last log time for each IP
@@ -104,7 +400,216 @@ function logWhitelistDenial(ip: string) {
   }
 }
 
+function isPrivateOrLocalIp(ip: string): boolean {
+  if (!ip || ip === 'unknown') return false;
+  const clean = ip.replace(/^::ffff:/, '').trim();
+  if (clean === '127.0.0.1' || clean === '::1' || clean === 'localhost') return true;
+  if (clean.startsWith('10.') || clean.startsWith('192.168.') || clean.startsWith('169.254.')) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(clean)) return true;
+  return false;
+}
+
+export function extractFirstPublicIp(rawIpOrHeader: string | string[] | undefined): string {
+  if (!rawIpOrHeader) return 'unknown';
+  const rawStr = Array.isArray(rawIpOrHeader) ? rawIpOrHeader.join(',') : String(rawIpOrHeader);
+  const parts = rawStr.split(',').map(s => s.trim().replace(/^::ffff:/, '')).filter(Boolean);
+  for (const part of parts) {
+    if (!isPrivateOrLocalIp(part)) {
+      return part;
+    }
+  }
+  return parts[0] || 'unknown';
+}
+
+export async function getEffectiveIp2GeoKey(): Promise<string> {
+  const dbKey = await storage.getSetting('cleantraffic_api_key');
+  if (dbKey && dbKey.trim()) return dbKey.trim();
+  
+  const envKey = process.env.IP2GEOLOCATION_API_KEY || process.env.IP2LOCATION_API_KEY || process.env.IP2GEO_API_KEY;
+  if (envKey && envKey.trim()) return envKey.trim();
+
+  try {
+    const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+    if (fs.existsSync(keyFile)) {
+      const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+      if (fileKey) return fileKey;
+    }
+  } catch (e) {}
+
+  return '';
+}
+
+async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string): Promise<any> {
+  if (isPrivateOrLocalIp(ip)) {
+    return {
+      ip,
+      location: 'Localhost / Internal Network',
+      isp: 'Local Development ISP',
+      country_code: 'US',
+      country_name: 'United States',
+      city_name: 'Localhost',
+      region_name: 'Local',
+      usage_type: 'RES',
+      is_proxy: false,
+      proxy_data: null
+    };
+  }
+
+  if (!apiKey || apiKey.trim() === '') {
+    return null;
+  }
+
+  const startLookupTime = Date.now();
+
+  // 1. Try IP2Location API with ultra-fast 1200ms timeout
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1200);
+    const res = await fetch(`https://api.ip2location.io/?key=${encodeURIComponent(apiKey)}&ip=${encodeURIComponent(ip)}`, {
+      headers: { 'User-Agent': userAgent || 'CleanTraffic/1.0', 'Accept': 'application/json' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch (_) {
+      data = null;
+    }
+
+    if (res.ok && data && !data.error && (data.country_name || data.country_code)) {
+      ip2LocationHealth.recordSuccess(Date.now() - startLookupTime, 'ip2location.io');
+      const p = data.proxy || {};
+      const fraudScore = typeof data.fraud_score === 'number' 
+        ? data.fraud_score 
+        : (parseInt(data.fraud_score, 10) || 0);
+
+      const hasProxyIndicator = Boolean(
+        data.is_proxy || 
+        p.is_vpn || 
+        p.is_tor || 
+        p.is_public_proxy || 
+        p.is_web_proxy || 
+        p.is_residential_proxy || 
+        p.is_consumer_privacy_network || 
+        p.is_enterprise_private_network ||
+        p.is_web_crawler || 
+        p.is_ai_crawler || 
+        p.is_spammer || 
+        p.is_scanner || 
+        p.is_botnet || 
+        p.is_bogon
+      );
+
+      return {
+        ip,
+        location: data.city_name && data.country_name ? `${data.city_name}, ${data.country_name}` : (data.country_name || 'Unknown'),
+        isp: data.as || data.isp || 'Unknown',
+        country_code: data.country_code || '',
+        country_name: data.country_name || 'Unknown',
+        city_name: data.city_name || 'Unknown',
+        region_name: data.region_name || '',
+        usage_type: data.usage_type || '',
+        is_proxy: hasProxyIndicator,
+        fraud_score: fraudScore,
+        proxy_data: {
+          last_seen: p.last_seen ?? 0,
+          proxy_type: p.proxy_type || '-',
+          threat: p.threat || '-',
+          provider: p.provider || '-',
+          is_vpn: Boolean(p.is_vpn),
+          is_tor: Boolean(p.is_tor),
+          is_data_center: Boolean(p.is_data_center),
+          is_public_proxy: Boolean(p.is_public_proxy),
+          is_web_proxy: Boolean(p.is_web_proxy),
+          is_web_crawler: Boolean(p.is_web_crawler),
+          is_ai_crawler: Boolean(p.is_ai_crawler),
+          is_residential_proxy: Boolean(p.is_residential_proxy),
+          is_consumer_privacy_network: Boolean(p.is_consumer_privacy_network),
+          is_enterprise_private_network: Boolean(p.is_enterprise_private_network),
+          is_spammer: Boolean(p.is_spammer),
+          is_scanner: Boolean(p.is_scanner),
+          is_botnet: Boolean(p.is_botnet),
+          is_bogon: Boolean(p.is_bogon),
+        }
+      };
+    }
+
+    // Inspect errors returned by IP2Location.io
+    if (data?.error) {
+      const errCode = data.error.error_code;
+      const errMsg = (data.error.error_message || '').toString();
+      if (errCode === 10001 || errMsg.includes('INSUFFICIENT') || errMsg.includes('CREDIT') || errMsg.includes('QUOTA')) {
+        ip2LocationHealth.recordError('quota_exhausted', errCode, errMsg, 'ip2location.io');
+      } else if (errCode === 10000 || errMsg.includes('INVALID_API_KEY')) {
+        ip2LocationHealth.recordError('invalid_key', errCode, errMsg, 'ip2location.io');
+      } else if (errCode !== 10002) {
+        ip2LocationHealth.recordError('service_down', errCode, errMsg, 'ip2location.io');
+      }
+    } else if (res.status === 429) {
+      ip2LocationHealth.recordError('service_down', 429, 'Rate limit exceeded (HTTP 429)', 'ip2location.io');
+    } else if (res.status >= 500) {
+      ip2LocationHealth.recordError('service_down', res.status, `Upstream server error (HTTP ${res.status})`, 'ip2location.io');
+    }
+  } catch (e: any) {
+    const isTimeout = e?.name === 'AbortError';
+    if (isTimeout) {
+      ip2LocationHealth.recordError('timeout', 'TIMEOUT', 'IP2Location lookup timed out (>1200ms)', 'ip2location.io');
+    } else {
+      ip2LocationHealth.recordError('network', 'NETWORK_ERR', e?.message || 'Network lookup error', 'ip2location.io');
+    }
+  }
+
+  // 2. Try IP2Geolocation.io API fallback with fast 1200ms timeout
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1200);
+    const res = await fetch(`https://api.ip2geolocation.io/ipgeo?apiKey=${encodeURIComponent(apiKey)}&ip=${encodeURIComponent(ip)}&include=security`, {
+      headers: { 'User-Agent': userAgent || 'CleanTraffic/1.0', 'Accept': 'application/json' },
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.country_name || data.country_code2) {
+        ip2LocationHealth.recordSuccess(Date.now() - startLookupTime, 'ip2geolocation.io');
+        const isProxy = data.security?.is_proxy || false;
+        const isTor = data.security?.is_tor || false;
+        const isCrawler = data.security?.is_crawler || false;
+        const isVpn = data.security?.proxy_type?.toLowerCase().includes('vpn') || false;
+        const isDch = data.security?.proxy_type?.toLowerCase().includes('dch') || data.security?.proxy_type?.toLowerCase().includes('datacenter') || false;
+
+        return {
+          ip,
+          location: data.city && data.country_name ? `${data.city}, ${data.country_name}` : (data.country_name || 'Unknown'),
+          isp: data.isp || data.organization || 'Unknown',
+          country_code: data.country_code2 || '',
+          country_name: data.country_name || 'Unknown',
+          city_name: data.city || 'Unknown',
+          region_name: data.state_prov || '',
+          usage_type: isDch ? 'DCH' : (data.usage_type || 'RES'),
+          is_proxy: isProxy || isTor || isCrawler || isVpn || isDch,
+          proxy_data: {
+            is_vpn: isVpn,
+            is_tor: isTor,
+            is_data_center: isDch,
+            is_web_crawler: isCrawler
+          }
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("IP2Geolocation lookup notice:", e);
+  }
+
+  return null;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Initialize proactive IP2Location health probe and background checking
+  ip2LocationHealth.init(getEffectiveIp2GeoKey);
+
   // Trust exactly one reverse-proxy hop (Replit's ingress).
   // Using `true` would trust any X-Forwarded-For value, allowing clients to
   // spoof their IP and bypass the auth rate limiter.  With `1`, Express uses
@@ -112,7 +617,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.set('trust proxy', 1);
   
   // Clean up old IP log entries every hour to prevent memory leak
-  setInterval(() => {
+  const ipLogCleanupTimer = setInterval(() => {
     const now = Date.now();
     const entries = Array.from(ipLastLogTime.entries());
     for (const [ip, lastLogTime] of entries) {
@@ -121,6 +626,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     }
   }, 60 * 60 * 1000); // Run cleanup every hour
+  if (ipLogCleanupTimer && typeof ipLogCleanupTimer.unref === 'function') {
+    ipLogCleanupTimer.unref();
+  }
   
   // IP Whitelist Middleware - Runs BEFORE session to block unauthorized /user access early
   app.use(async (req, res, next) => {
@@ -152,10 +660,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return next();
       }
       
-      // If whitelist enabled but empty, redirect to Google
+      // If whitelist enabled but empty, deny access
       if (whitelistCache.entries.length === 0) {
         logWhitelistDenial(clientIp);
-        return res.redirect('https://google.com');
+        return res.status(403).json({ message: "Access forbidden: IP not in authorized whitelist" });
       }
       
       // Check if IP is whitelisted using ipaddr.js for CIDR matching
@@ -186,7 +694,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (!isWhitelisted) {
         logWhitelistDenial(clientIp);
-        return res.redirect('https://google.com');
+        return res.status(403).json({ message: "Access forbidden: IP not in authorized whitelist" });
       }
       
       // IP is whitelisted, continue to next middleware
@@ -200,25 +708,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Session middleware
-  const sessionSecret = process.env.SESSION_SECRET;
-  if (!sessionSecret) {
-    throw new Error(
-      "SESSION_SECRET environment variable is not set. " +
-      "Set it to a long random string before starting the server."
-    );
-  }
+  const sessionSecret = process.env.SESSION_SECRET || "cleantraffic_dev_session_secret_2026_default_secure_key";
 
   // Capture session middleware reference so we can authenticate WebSocket upgrade requests
   const sessionMw = session({
+    store: new MemoryStore({
+      checkPeriod: 86400000 // prune expired entries every 24h
+    }),
     name: 'ctid', // Obscure the default 'connect.sid' identifier
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production',
+      secure: false, // Must be false behind reverse proxies / iframe dev environment
       httpOnly: true,
       sameSite: 'lax',
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     }
   });
   app.use(sessionMw);
@@ -264,16 +769,15 @@ Disallow: /assets/
 Disallow: /*`);
   });
 
-  // Authentication middleware — admin sessions only; explicitly rejects client-only sessions
+  // Authentication middleware — admin sessions only (via token or session)
   const requireAuth = (req: any, res: any, next: any) => {
-    if (req.session?.userId) {
-      next();
-    } else if (req.session?.clientUserId) {
-      // Client session present but not an admin session — forbidden, not just unauthorized
-      res.status(403).json({ message: "Forbidden. Admin access required." });
-    } else {
-      res.status(401).json({ message: "Unauthorized" });
+    const auth = getSessionOrToken(req);
+    if (auth && auth.type === 'admin') {
+      req.session.userId = auth.userId;
+      (req as any).adminUserId = auth.userId;
+      return next();
     }
+    res.status(401).json({ message: "Unauthorized. Admin access required." });
   };
 
   // Download endpoint for PHP package (working version)
@@ -298,200 +802,6 @@ Disallow: /*`);
     });
   });
 
-  // ---- Auth request schemas ----
-  const loginSchema = z.object({
-    username: z.string().min(1).max(100).trim(),
-    password: z.string().min(1).max(256),
-  });
-
-  const apiKeySchema = z.object({
-    apiKey: z.string().min(1).max(256).trim(),
-  });
-
-  const changePasswordSchema = z.object({
-    currentPassword: z.string().min(1).max(256),
-    newPassword: z.string().min(8).max(256),
-  });
-
-  // Login endpoint
-  app.post("/api/login", authLimiter, async (req, res) => {
-    try {
-      const parse = loginSchema.safeParse(req.body);
-      if (!parse.success) {
-        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
-      }
-      const { username, password } = parse.data;
-
-      const user = await storage.getUserByUsername(username);
-      if (!user) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-
-      const passwordMatch = await bcrypt.compare(password, user.password);
-      if (!passwordMatch) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-      
-      req.session.userId = user.id;
-      void auditLog({
-        actorId: user.id,
-        actorType: "admin",
-        action: "admin.login",
-        ipAddress: (req.ip || "").replace("::ffff:", ""),
-      });
-      res.json({ message: "Login successful", user: { id: user.id, username: user.username } });
-    } catch (error) {
-      console.error("Login error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  // Logout endpoint
-  app.post("/api/logout", (req, res) => {
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ message: "Could not log out" });
-      }
-      res.json({ message: "Logout successful" });
-    });
-  });
-
-  // Get current user (Admin)
-  app.get("/api/auth/user", requireAuth, async (req: any, res) => {
-    try {
-      const user = await storage.getUser(req.session.userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      res.json({ id: user.id, username: user.username });
-    } catch (error) {
-      console.error("Get user error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  // ========== CLIENT USER AUTHENTICATION ROUTES ==========
-  
-  // Step 1: Client user login with username/password
-  app.post("/api/user/login", authLimiter, async (req, res) => {
-    try {
-      const parse = loginSchema.safeParse(req.body);
-      if (!parse.success) {
-        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
-      }
-      const { username, password } = parse.data;
-
-      // Find client user by username
-      const user = await storage.getClientUserByUsername(username);
-      if (!user) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-
-      // Use bcrypt to compare passwords
-      const passwordMatch = await bcrypt.compare(password, user.password);
-      
-      if (!passwordMatch) {
-        return res.status(401).json({ message: "Invalid credentials" });
-      }
-
-      // Check if user account is active
-      if (user.status !== 'active') {
-        return res.status(403).json({ message: `Account is ${user.status}. Please contact support.` });
-      }
-      
-      // Check compliance status before allowing login
-      if (user.complianceStatus === 'suspended') {
-        return res.status(403).json({ message: "Account suspended due to compliance violation. Please contact support." });
-      }
-
-      // Store user ID in session for step 2
-      req.session.clientUserId = user.id;
-
-      res.json({
-        message: "Login successful. Please verify your API key.",
-        userId: user.id,
-        username: user.username,
-        requiresApiKey: true,
-        requiresTos: !user.tosAccepted
-      });
-    } catch (error) {
-      console.error("Client user login error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  // Step 2: Verify API key for client user
-  app.post("/api/user/verify-api-key", async (req, res) => {
-    try {
-      const parse = apiKeySchema.safeParse(req.body);
-      if (!parse.success) {
-        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
-      }
-      const { apiKey } = parse.data;
-      const clientUserId = req.session.clientUserId;
-
-      if (!clientUserId) {
-        return res.status(401).json({ message: "Please login first" });
-      }
-      
-      // Find the API key in the system
-      const apiKeyRecord = await storage.getApiKeyByValue(apiKey);
-      if (!apiKeyRecord) {
-        return res.status(401).json({ message: "Invalid API key" });
-      }
-
-      // Verify this API key belongs to this user
-      const user = await storage.getClientUser(clientUserId);
-      if (!user || user.apiKeyId !== apiKeyRecord.id) {
-        return res.status(403).json({ message: "API key does not match your account" });
-      }
-
-      // Check API key status
-      if (apiKeyRecord.status === 'paused') {
-        return res.status(403).json({ message: "API key is paused" });
-      }
-      if (apiKeyRecord.status === 'expired') {
-        return res.status(403).json({ message: "API key has expired" });
-      }
-
-      // Check if ToS has been accepted — return 200 so the frontend shows the ToS UI
-      if (!user.tosAccepted) {
-        return res.status(200).json({
-          message: "Terms of service must be accepted before using this service.",
-          requiresTos: true,
-          tosText: "This service is intended for legitimate bot traffic filtering, ad fraud prevention, and website security. You may not use this service to deceive search engines, serve different content to crawlers versus human visitors on the same URL, or facilitate phishing, identity theft, or financial fraud. You are solely responsible for ensuring your use complies with applicable laws and advertising platform terms. We reserve the right to suspend accounts where redirect patterns indicate cloaking, phishing, or other deceptive practices."
-        });
-      }
-
-      // Check compliance status
-      if (user.complianceStatus === 'suspended') {
-        return res.status(403).json({ message: "Account suspended due to compliance violation. Please contact support." });
-      }
-
-      // Success! Mark user as fully authenticated
-      req.session.clientUserAuthenticated = true;
-
-      res.json({
-        message: "API key verified successfully",
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-          status: user.status
-        },
-        apiKey: {
-          name: apiKeyRecord.keyName,
-          status: apiKeyRecord.status,
-          expirationPeriod: apiKeyRecord.expirationPeriod
-        }
-      });
-    } catch (error) {
-      console.error("API key verification error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
-  // Middleware for client user auth — explicitly rejects admin-only sessions
   // ── Audit log helper ──────────────────────────────────────────────────────
   // Fire-and-forget: failures are surfaced to the console but never propagate
   // to the caller, so an audit-log write error cannot break a sensitive action.
@@ -511,39 +821,1476 @@ Disallow: /*`);
     }
   }
 
-  const requireClientAuth = (req: any, res: any, next: any) => {
-    if (req.session?.clientUserId && req.session?.clientUserAuthenticated) {
-      // Reject requests that carry an admin session alongside a client session
-      // (defence-in-depth: admin and client namespaces must not bleed together)
-      if (req.session?.userId) {
-        return res.status(403).json({ message: "Admin sessions may not use client endpoints." });
+  // syncClientUserSubscription is authoritatively imported from ./authorizationService
+
+  // ---- Auth request schemas ----
+  const loginSchema = z.object({
+    username: z.string().min(1).max(100).trim(),
+    password: z.string().min(1).max(256),
+  });
+
+  const apiKeySchema = z.object({
+    apiKey: z.string().min(1).max(256).trim(),
+  });
+
+  const changePasswordSchema = z
+    .object({
+      currentPassword: z
+        .string({ required_error: "Current password is required" })
+        .min(1, "Current password is required")
+        .max(256),
+      newPassword: z
+        .string({ required_error: "New password is required" })
+        .min(8, "Password must be at least 8 characters long")
+        .max(256)
+        .refine((val) => /[a-z]/.test(val), {
+          message: "Password must contain at least one lowercase letter (a-z)",
+        })
+        .refine((val) => /[A-Z]/.test(val), {
+          message: "Password must contain at least one uppercase letter (A-Z)",
+        })
+        .refine((val) => /[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val), {
+          message: "Password must contain at least one number (0-9) or special symbol",
+        }),
+      confirmPassword: z
+        .string({ required_error: "Password confirmation is required" })
+        .min(1, "Password confirmation is required")
+        .max(256),
+    })
+    .refine((data) => data.newPassword === data.confirmPassword, {
+      message: "New password and confirmation password do not match",
+      path: ["confirmPassword"],
+    })
+    .refine((data) => data.newPassword !== data.currentPassword, {
+      message: "Your new password must be different from your current password.",
+      path: ["newPassword"],
+    });
+
+  // Login endpoint (Admin)
+  app.post("/api/login", authLimiter, async (req, res) => {
+    try {
+      const parse = loginSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
       }
-      next();
-    } else {
-      res.status(401).json({ message: "Unauthorized. Please login and verify your API key." });
+      const { username, password } = parse.data;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || req.ip || "unknown";
+
+      // 1. Account and IP lockout checks
+      const accountLock = isAccountLocked(username);
+      if (accountLock.isLocked) {
+        return res.status(429).json({
+          message: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${Math.ceil(accountLock.remainingSeconds / 60)} minutes.`,
+          locked: true,
+          retryAfter: accountLock.remainingSeconds,
+          code: "ACCOUNT_LOCKED",
+        });
+      }
+      const ipLock = isIpLocked(clientIp);
+      if (ipLock.isLocked) {
+        return res.status(429).json({
+          message: "Too many failed attempts from your IP address. Please try again later.",
+          locked: true,
+          retryAfter: ipLock.remainingSeconds,
+          code: "IP_LOCKED",
+        });
+      }
+
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        // Mitigation for timing attack: compute dummy hash comparison so execution time matches real user
+        await bcrypt.compare(password, "$2b$10$wT8m9M6n8E0A7C2L9J4PbeJvX9G1Z8M2K3N5R7T9V1X3Z5B7D9F1H");
+        const lockRes = recordFailedLogin(username, clientIp);
+        if (lockRes.isLocked) {
+          return res.status(429).json({
+            message: "Too many failed login attempts. Account temporarily locked for 15 minutes.",
+            locked: true,
+            retryAfter: lockRes.remainingSeconds,
+            code: "ACCOUNT_LOCKED",
+          });
+        }
+        return res.status(401).json({
+          message: "Invalid credentials",
+          remainingAttempts: lockRes.remainingAttempts,
+        });
+      }
+
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (!passwordMatch) {
+        const lockRes = recordFailedLogin(username, clientIp);
+        if (lockRes.isLocked) {
+          return res.status(429).json({
+            message: "Too many failed login attempts. Account temporarily locked for 15 minutes.",
+            locked: true,
+            retryAfter: lockRes.remainingSeconds,
+            code: "ACCOUNT_LOCKED",
+          });
+        }
+        return res.status(401).json({
+          message: "Invalid credentials",
+          remainingAttempts: lockRes.remainingAttempts,
+        });
+      }
+
+      // Reset failed attempts on valid login
+      recordSuccessfulLogin(username, clientIp);
+      
+      // Generate Admin session token
+      const adminToken = "adm_tok_" + randomUUID().replace(/-/g, "");
+      authTokens.set(adminToken, {
+        type: 'admin',
+        userId: user.id,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        lastActiveAt: Date.now(),
+      });
+
+      // Set Admin session and clear any client session keys
+      req.session.userId = user.id;
+      req.session.lastActiveAt = Date.now();
+      delete (req.session as any).clientUserId;
+      delete (req.session as any).clientUserAuthenticated;
+      req.session.save((err) => {
+        if (err) {
+          console.error("Admin session save error:", err);
+        }
+        void auditLog({
+          actorId: user.id,
+          actorType: "admin",
+          action: "admin.login",
+          ipAddress: (req.ip || "").replace("::ffff:", ""),
+        });
+        res.json({ message: "Login successful", token: adminToken, user: { id: user.id, username: user.username } });
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Logout endpoint
+  app.post("/api/logout", generalApiLimiter, (req, res) => {
+    const authHeader = req.headers?.authorization || req.headers?.['x-auth-token'];
+    if (authHeader && typeof authHeader === 'string') {
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+      if (token) authTokens.delete(token);
+    }
+    req.session.destroy((err) => {
+      res.clearCookie('ctid');
+      res.json({ message: "Logout successful" });
+    });
+  });
+
+  // Get current user (Admin)
+  app.get("/api/auth/user", requireAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.userId;
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.json({ id: user.id, username: user.username });
+    } catch (error) {
+      console.error("Get user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ========== CLIENT USER AUTHENTICATION ROUTES ==========
+
+  const clientRegisterSchema = z.object({
+    fullName: z.string().max(100).optional(),
+    username: z.string().min(3).max(50).trim().optional(),
+    email: z.string().email("Please enter a valid email address").max(100).trim(),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters long")
+      .max(256)
+      .refine((val) => /[a-z]/.test(val), {
+        message: "Password must contain at least one lowercase letter (a-z)",
+      })
+      .refine((val) => /[A-Z]/.test(val), {
+        message: "Password must contain at least one uppercase letter (A-Z)",
+      })
+      .refine((val) => /[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val), {
+        message: "Password must contain at least one number (0-9) or special symbol",
+      }),
+    newsletter: z.boolean().optional(),
+    tosAccepted: z.boolean().refine((v) => v === true, {
+      message: "You must accept the terms of use and privacy policy.",
+    }),
+  });
+
+  const googleAuthSchema = z.object({
+    email: z.string().email().max(100).trim(),
+    name: z.string().max(100).optional(),
+    googleId: z.string().min(1).max(256),
+    idToken: z.string().optional(),
+  });
+
+  const forgotPasswordSchema = z.object({
+    email: z.string().email("Please enter a valid email address").max(100).trim(),
+  });
+
+  const verifyResetCodeSchema = z.object({
+    email: z.string().email().trim(),
+    code: z.string().trim().min(6).max(6),
+  });
+
+  const resetPasswordSchema = z.object({
+    email: z.string().email().trim(),
+    code: z.string().trim().min(6).max(6).optional(),
+    token: z.string().optional(),
+    newPassword: z
+      .string()
+      .min(8, "Password must be at least 8 characters long")
+      .max(256)
+      .refine((val) => /[a-z]/.test(val), {
+        message: "Password must contain at least one lowercase letter (a-z)",
+      })
+      .refine((val) => /[A-Z]/.test(val), {
+        message: "Password must contain at least one uppercase letter (A-Z)",
+      })
+      .refine((val) => /[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val), {
+        message: "Password must contain at least one number (0-9) or special symbol",
+      }),
+  });
+
+  // Helper to provision trial resources (API key, default redirect URLs) for a client user
+  async function provisionTrialForClientUser(userId: string, usernameOrEmail: string) {
+    const keyVal = "ctc_" + randomBytes(16).toString("hex");
+    const trialDays = 7;
+    const expiresAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
+    const apiKey = await storage.createApiKey({
+      keyName: `Trial - ${usernameOrEmail}`,
+      keyValue: keyVal,
+      callLimit: 5000,
+      expirationPeriod: "weekly",
+      status: "active",
+      expiresAt,
+    });
+
+    await storage.updateClientUser(userId, {
+      apiKeyId: apiKey.id,
+      subscriptionStatus: "trialing",
+      trialEndsAt: expiresAt,
+      complianceStatus: "cleared",
+      status: "active",
+    });
+
+    await storage.setUserRedirectUrls(userId, {
+      humanUrl: "",
+      botUrl: "",
+    });
+
+    return apiKey;
+  }
+
+  // Self-serve registration endpoint with dedicated rate limiting
+  app.post("/api/user/register", registerLimiter, async (req, res) => {
+    try {
+      const parse = clientRegisterSchema.safeParse(req.body);
+      if (!parse.success) {
+        const fieldErrors = parse.error.flatten().fieldErrors as Record<string, string[] | undefined>;
+        const firstErrorKey = Object.keys(fieldErrors)[0];
+        const firstErrorMsg = firstErrorKey && fieldErrors[firstErrorKey]?.[0]
+          ? fieldErrors[firstErrorKey]![0]
+          : "Invalid registration data";
+        return res.status(400).json({ message: firstErrorMsg, errors: fieldErrors });
+      }
+      const { fullName, email, password, newsletter, tosAccepted } = parse.data;
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check if email already exists
+      const existingEmail = await storage.getClientUserByEmail(cleanEmail);
+      if (existingEmail) {
+        return res.status(400).json({ message: "An account with this email address already exists. Please log in." });
+      }
+
+      // Generate or normalize username
+      let username = parse.data.username?.trim().toLowerCase();
+      if (!username) {
+        const prefix = cleanEmail.split("@")[0].replace(/[^a-z0-9_]/g, "_");
+        username = `${prefix}_${randomBytes(3).toString("hex")}`;
+      }
+
+      // Check if username taken
+      const existingUser = await storage.getClientUserByUsername(username);
+      if (existingUser) {
+        username = `${username}_${randomBytes(2).toString("hex")}`;
+      }
+
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const trialDays = 7;
+      const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
+      // Create client user record with emailVerified: false
+      const newUser = await storage.createClientUser({
+        username,
+        password: hashedPassword,
+        fullName: fullName || null,
+        email: cleanEmail,
+        emailVerified: false,
+        emailVerifiedAt: null,
+        status: "active",
+        subscriptionStatus: "trialing",
+        subscriptionTier: "Pro",
+        trialEndsAt,
+        tosAccepted: new Date(),
+        complianceStatus: "cleared",
+        newsletter: !!newsletter,
+      });
+
+      // Provision trial API key & redirect URLs
+      const apiKey = await provisionTrialForClientUser(newUser.id, username);
+
+      // Generate cryptographically secure 5-minute verification token (SHA-256 hashed)
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const { record: tokenRecord, code: verificationCode, token: verificationToken } = await createVerificationToken({
+        userId: newUser.id,
+        email: cleanEmail,
+        purpose: "email_verification",
+        ip,
+      });
+      recordEmailDispatch(cleanEmail);
+
+      // Send real transactional verification email via configured SMTP / Provider
+      const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+      const host = req.get('host') || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+
+      let sendRes: any = { success: false, message: "Email delivery not attempted" };
+      try {
+        sendRes = await sendVerificationEmail({
+          to: cleanEmail,
+          name: newUser.fullName || newUser.username,
+          code: verificationCode,
+          token: verificationToken,
+          baseUrl,
+        });
+        if (sendRes.success) {
+          console.log(`[AUTH_EVENT] Registration verification email dispatched to ${maskEmail(cleanEmail)} [messageId: ${sendRes.messageId || 'N/A'}]`);
+        } else {
+          console.error(`[AUTH_EVENT] Registration verification email delivery failed for ${maskEmail(cleanEmail)}: ${sendRes.message}`);
+        }
+      } catch (err: any) {
+        console.error(`[AUTH_EVENT] Registration email dispatch exception for ${maskEmail(cleanEmail)}:`, err?.message || err);
+        sendRes = { success: false, message: err?.message || "Mail delivery error" };
+      }
+
+      // Generate client token
+      const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(clientToken, {
+        type: "client",
+        userId: newUser.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      // Establish session
+      delete (req.session as any).userId;
+      req.session.clientUserId = newUser.id;
+      req.session.clientUserAuthenticated = true;
+
+      req.session.save((err) => {
+        if (err) console.error("Registration session save error:", err);
+        res.status(201).json({
+          message: sendRes.success
+            ? "Registration successful! A verification email with your 6-digit confirmation code has been dispatched to your inbox."
+            : `Registration successful! Note: Outbound verification email could not be delivered (${sendRes.message}). You can resend the code in settings.`,
+          requiresVerification: true,
+          emailDispatched: !!sendRes.success,
+          emailDeliveryError: !sendRes.success ? sendRes.message : undefined,
+          email: cleanEmail,
+          token: clientToken,
+          verificationToken,
+          expiresAt: tokenRecord.expiresAt,
+          user: {
+            id: newUser.id,
+            username: newUser.username,
+            email: newUser.email,
+            emailVerified: false,
+            fullName: newUser.fullName,
+            status: "active",
+            subscriptionStatus: "trialing",
+            trialDaysRemaining: 7,
+            trialEndsAt,
+          },
+          apiKey: {
+            name: apiKey.keyName,
+            status: apiKey.status,
+            callLimit: apiKey.callLimit,
+            expirationPeriod: apiKey.expirationPeriod,
+          },
+        });
+      });
+    } catch (error) {
+      console.error("Client registration error:", error);
+      res.status(500).json({ message: "Registration failed. Please try again." });
+    }
+  });
+
+  // Google OAuth sign-in / sign-up endpoint
+  app.post("/api/user/google-auth", authLimiter, async (req, res) => {
+    try {
+      const parse = googleAuthSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid Google authentication payload", errors: parse.error.flatten().fieldErrors });
+      }
+      const { email, name, googleId } = parse.data;
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check if user already exists
+      let user = await storage.getClientUserByEmail(cleanEmail);
+
+      if (user) {
+        // User exists: verify active status
+        if (user.status === "suspended" || user.complianceStatus === "suspended") {
+          return res.status(403).json({ 
+            message: "Your account has been suspended. Please contact us if you believe this was done in error.",
+            code: "ACCOUNT_SUSPENDED",
+            accountStatus: "suspended",
+            complianceStatus: user.complianceStatus || "suspended",
+            statusReason: user.statusReason
+          });
+        }
+        if (user.status === "deactivated" || user.status === "deleted") {
+          return res.status(403).json({ 
+            message: "Your account has been deactivated. Please contact us if you believe this was done in error.",
+            code: "ACCOUNT_DEACTIVATED",
+            accountStatus: user.status,
+            statusReason: user.statusReason
+          });
+        }
+        if (user.status !== "active") {
+          return res.status(403).json({ 
+            message: `Account is ${user.status}. Please contact support.`,
+            code: "ACCOUNT_INACTIVE",
+            accountStatus: user.status
+          });
+        }
+
+        // If user lacks an API key for any reason, auto-provision
+        let apiKey = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
+        if (!apiKey) {
+          apiKey = await provisionTrialForClientUser(user.id, user.username);
+        }
+
+        // Generate verified client token
+        const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+        authTokens.set(clientToken, {
+          type: "client",
+          userId: user.id,
+          authenticated: true,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+
+        delete (req.session as any).userId;
+        req.session.clientUserId = user.id;
+        req.session.clientUserAuthenticated = true;
+
+        const now = new Date();
+        const trialDaysRemaining = user.trialEndsAt
+          ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+          : null;
+
+        return req.session.save((err) => {
+          if (err) console.error("Google auth session save error:", err);
+          res.json({
+            message: "Google sign-in successful",
+            token: clientToken,
+            user: {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              fullName: user.fullName || name,
+              status: user.status,
+              subscriptionStatus: user.subscriptionStatus,
+              trialDaysRemaining,
+              trialEndsAt: user.trialEndsAt,
+            },
+            apiKey: apiKey ? {
+              name: apiKey.keyName,
+              status: apiKey.status,
+              callLimit: apiKey.callLimit,
+              expirationPeriod: apiKey.expirationPeriod,
+            } : null,
+          });
+        });
+      }
+
+      // New user from Google: auto-register with 7-day trial
+      const prefix = cleanEmail.split("@")[0].replace(/[^a-z0-9_]/g, "_");
+      let username = `${prefix}_${randomBytes(3).toString("hex")}`;
+      const randomPassword = randomBytes(24).toString("hex");
+      const hashedPassword = await bcrypt.hash(randomPassword, 10);
+      const trialDays = 7;
+      const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+
+      const newUser = await storage.createClientUser({
+        username,
+        password: hashedPassword,
+        fullName: name || null,
+        email: cleanEmail,
+        status: "active",
+        subscriptionStatus: "trialing",
+        subscriptionTier: "Pro",
+        trialEndsAt,
+        tosAccepted: new Date(),
+        complianceStatus: "cleared",
+        newsletter: true,
+      });
+
+      const apiKey = await provisionTrialForClientUser(newUser.id, username);
+
+      const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(clientToken, {
+        type: "client",
+        userId: newUser.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      delete (req.session as any).userId;
+      req.session.clientUserId = newUser.id;
+      req.session.clientUserAuthenticated = true;
+
+      req.session.save((err) => {
+        if (err) console.error("Google new user session save error:", err);
+        res.status(201).json({
+          message: "Welcome to CleanTraffic! Your 7-day free trial has been activated.",
+          token: clientToken,
+          user: {
+            id: newUser.id,
+            username: newUser.username,
+            email: newUser.email,
+            fullName: newUser.fullName,
+            status: "active",
+            subscriptionStatus: "trialing",
+            trialDaysRemaining: 7,
+            trialEndsAt,
+          },
+          apiKey: {
+            name: apiKey.keyName,
+            status: apiKey.status,
+            callLimit: apiKey.callLimit,
+            expirationPeriod: apiKey.expirationPeriod,
+          },
+        });
+      });
+    } catch (error) {
+      console.error("Google auth error:", error);
+      res.status(500).json({ message: "Google authentication failed. Please try again." });
+    }
+  });
+
+  // Client user login with username or email + password
+  app.post("/api/user/login", authLimiter, async (req, res) => {
+    try {
+      const parse = loginSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
+      }
+      const { username, password } = parse.data;
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress || req.ip || "unknown";
+
+      // 1. Check account lockout status
+      const accountLock = isAccountLocked(username);
+      if (accountLock.isLocked) {
+        return res.status(429).json({
+          message: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${Math.ceil(accountLock.remainingSeconds / 60)} minutes or reset your password.`,
+          locked: true,
+          retryAfter: accountLock.remainingSeconds,
+          code: "ACCOUNT_LOCKED",
+        });
+      }
+
+      // 2. Check IP lockout status
+      const ipLock = isIpLocked(clientIp);
+      if (ipLock.isLocked) {
+        return res.status(429).json({
+          message: "Too many failed attempts from your IP address. Please try again later.",
+          locked: true,
+          retryAfter: ipLock.remainingSeconds,
+          code: "IP_LOCKED",
+        });
+      }
+
+      // Find client user by username OR email
+      const user = await storage.getClientUserByUsernameOrEmail(username);
+      if (!user) {
+        // Timing attack mitigation: compare against dummy hash to match real response latency
+        await bcrypt.compare(password, "$2b$10$wT8m9M6n8E0A7C2L9J4PbeJvX9G1Z8M2K3N5R7T9V1X3Z5B7D9F1H");
+        const lockRes = recordFailedLogin(username, clientIp);
+        if (lockRes.isLocked) {
+          return res.status(429).json({
+            message: "Too many failed login attempts. Account temporarily locked for 15 minutes.",
+            locked: true,
+            retryAfter: lockRes.remainingSeconds,
+            code: "ACCOUNT_LOCKED",
+          });
+        }
+        return res.status(401).json({
+          message: "Invalid credentials",
+          remainingAttempts: lockRes.remainingAttempts,
+        });
+      }
+
+      // Use bcrypt to compare passwords
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (!passwordMatch) {
+        const lockRes = recordFailedLogin(username, clientIp);
+        if (lockRes.isLocked) {
+          return res.status(429).json({
+            message: "Too many failed login attempts. Account temporarily locked for 15 minutes.",
+            locked: true,
+            retryAfter: lockRes.remainingSeconds,
+            code: "ACCOUNT_LOCKED",
+          });
+        }
+        return res.status(401).json({
+          message: "Invalid credentials",
+          remainingAttempts: lockRes.remainingAttempts,
+        });
+      }
+
+      // Valid credentials: clear failed attempt tracker
+      recordSuccessfulLogin(username, clientIp);
+
+      // Check if user account is suspended or deactivated
+      if (user.status === "suspended" || user.complianceStatus === "suspended") {
+        return res.status(403).json({ 
+          message: "Your account has been suspended. Please contact us if you believe this was done in error.",
+          code: "ACCOUNT_SUSPENDED",
+          accountStatus: "suspended",
+          complianceStatus: user.complianceStatus || "suspended",
+          statusReason: user.statusReason,
+        });
+      }
+
+      if (user.status === "deactivated" || user.status === "deleted") {
+        return res.status(403).json({ 
+          message: "Your account has been deactivated. Please contact us if you believe this was done in error.",
+          code: "ACCOUNT_DEACTIVATED",
+          accountStatus: user.status,
+          statusReason: user.statusReason,
+        });
+      }
+
+      if (user.status !== "active") {
+        return res.status(403).json({ 
+          message: `Account is ${user.status}. Please contact support.`,
+          code: "ACCOUNT_INACTIVE",
+          accountStatus: user.status,
+        });
+      }
+
+      // If user doesn't have an API key yet, auto-provision one
+      let apiKey = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
+      if (!apiKey) {
+        apiKey = await provisionTrialForClientUser(user.id, user.username);
+      }
+
+      // Check if ToS is accepted
+      if (!user.tosAccepted) {
+        const preTosToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+        authTokens.set(preTosToken, {
+          type: "client",
+          userId: user.id,
+          authenticated: false,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+          lastActiveAt: Date.now(),
+        });
+        delete (req.session as any).userId;
+        req.session.clientUserId = user.id;
+        req.session.clientUserAuthenticated = false;
+        req.session.lastActiveAt = Date.now();
+        return res.status(200).json({
+          message: "Terms of service must be accepted before using this service.",
+          requiresTos: true,
+          token: preTosToken,
+          userId: user.id,
+        });
+      }
+
+      // Fully authenticated client session
+      const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(clientToken, {
+        type: "client",
+        userId: user.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        lastActiveAt: Date.now(),
+      });
+
+      delete (req.session as any).userId;
+      req.session.clientUserId = user.id;
+      req.session.clientUserAuthenticated = true;
+      req.session.lastActiveAt = Date.now();
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(user);
+
+      req.session.save((err) => {
+        if (err) {
+          console.error("Client session save error:", err);
+        }
+        res.json({
+          message: "Login successful",
+          token: clientToken,
+          userId: syncedUser.id,
+          username: syncedUser.username,
+          user: {
+            id: syncedUser.id,
+            username: syncedUser.username,
+            email: syncedUser.email,
+            fullName: syncedUser.fullName,
+            status: syncedUser.status,
+            complianceStatus: syncedUser.complianceStatus || statusSummary.complianceStatus || 'cleared',
+            statusReason: syncedUser.statusReason || null,
+            statusUpdatedAt: syncedUser.statusUpdatedAt || null,
+            statusUpdatedBy: syncedUser.statusUpdatedBy || null,
+            subscriptionStatus: statusSummary.status,
+            subscriptionTier: statusSummary.tier,
+            statusLabel: statusSummary.statusLabel,
+            tierLabel: statusSummary.tierLabel,
+            trialDaysRemaining: statusSummary.trialDaysRemaining,
+            trialEndsAt: statusSummary.trialEndsAt,
+            isActive: statusSummary.isActive,
+            isTrial: statusSummary.isTrial,
+            isTrialExpired: statusSummary.isTrialExpired,
+            isFlagged: statusSummary.isFlagged || syncedUser.complianceStatus === 'flagged',
+            isPending: statusSummary.isPending || syncedUser.complianceStatus === 'pending',
+            isCleared: statusSummary.isCleared || syncedUser.complianceStatus === 'cleared',
+          },
+          apiKey: apiKey ? {
+            name: apiKey.keyName,
+            status: apiKey.status,
+            expirationPeriod: apiKey.expirationPeriod,
+            callLimit: apiKey.callLimit,
+          } : null,
+          requiresApiKey: false,
+          requiresTos: false,
+        });
+      });
+    } catch (error) {
+      console.error("Client user login error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Password Recovery - Step 1: Request Password Reset Link & Verification Code
+  app.post("/api/user/forgot-password", emailVerificationLimiter, async (req, res) => {
+    try {
+      const parse = forgotPasswordSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Please provide a valid email address." });
+      }
+      const cleanEmail = parse.data.email.toLowerCase().trim();
+
+      // Per-target email cooldown check (60s) to prevent inbox flooding / email abuse
+      const cooldown = checkEmailCooldown(cleanEmail);
+      if (!cooldown.allowed) {
+        return res.status(429).json({
+          message: `A verification code was recently requested for this email. Please wait ${cooldown.remainingSec} seconds before requesting a new one.`,
+          retryAfter: cooldown.remainingSec,
+        });
+      }
+
+      // Safe uniform response to protect account privacy and prevent account enumeration
+      const genericResponse = {
+        success: true,
+        message: "If an account with this email exists in our system, you will receive a verification email with instructions to reset your password.",
+        email: cleanEmail,
+      };
+
+      // Look up user by email or username/email
+      const user = await storage.getClientUserByEmail(cleanEmail) || await storage.getClientUserByUsernameOrEmail(cleanEmail);
+      if (!user) {
+        console.log(`[AUTH_EVENT] Password reset requested for non-existent email: ${maskEmail(cleanEmail)}`);
+        return res.json(genericResponse);
+      }
+
+      if (user.status === "deleted" || user.status === "deactivated") {
+        console.log(`[AUTH_EVENT] Password reset requested for deactivated account: ${maskEmail(cleanEmail)}`);
+        return res.json(genericResponse);
+      }
+
+      // Generate cryptographically secure 5-minute reset token (SHA-256 hashed), invalidating older tokens
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const { record: tokenRecord, code, token } = await createVerificationToken({
+        userId: user.id,
+        email: cleanEmail,
+        purpose: "password_reset",
+        ip,
+      });
+      recordEmailDispatch(cleanEmail);
+
+      // Send real password recovery email via SMTP
+      sendPasswordResetEmail({
+        to: cleanEmail,
+        name: user.fullName || user.username,
+        code,
+        token,
+      })
+        .then((emailRes) => {
+          if (emailRes.success) {
+            console.log(`[AUTH_EVENT] Password reset email sent to ${maskEmail(cleanEmail)} [messageId: ${emailRes.messageId || 'N/A'}]`);
+          } else {
+            console.error(`[AUTH_EVENT] Password reset email delivery failure for ${maskEmail(cleanEmail)}: ${emailRes.message}`);
+          }
+        })
+        .catch((err) => console.error("[Password Recovery Email Dispatch Error]:", err));
+
+      console.log(`[AUTH_EVENT] Password reset initiated for ${maskEmail(cleanEmail)} (userId: ${user.id}, expires: 5m)`);
+
+      return res.json(genericResponse);
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({ message: "Failed to initiate password recovery. Please try again." });
+    }
+  });
+
+  // Password Recovery - Step 2: Verify 6-digit Recovery Code with Brute-Force Lockout
+  app.post("/api/user/verify-reset-code", verifyCodeLimiter, async (req, res) => {
+    try {
+      const parse = verifyResetCodeSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ valid: false, message: "Invalid email or 6-digit verification code format." });
+      }
+      const { email, code } = parse.data;
+      const cleanEmail = email.toLowerCase().trim();
+
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const result = await validateVerificationCode({
+        email: cleanEmail,
+        code,
+        purpose: "password_reset",
+        ip,
+      });
+
+      if (!result.valid || !result.record) {
+        const statusCode = result.status === 'invalidated' ? 429 : 400;
+        return res.status(statusCode).json({
+          valid: false,
+          message: result.message,
+          remainingAttempts: result.remainingAttempts,
+        });
+      }
+
+      return res.json({ valid: true, token: result.record.token, message: "Verification code verified successfully." });
+    } catch (error) {
+      console.error("Verify reset code error:", error);
+      res.status(500).json({ valid: false, message: "Error verifying recovery code." });
+    }
+  });
+
+  // Password Recovery - Step 3: Complete Password Reset with New Strong Password
+  app.post("/api/user/reset-password", verifyCodeLimiter, async (req, res) => {
+    try {
+      const parse = resetPasswordSchema.safeParse(req.body);
+      if (!parse.success) {
+        const fieldErrors = parse.error.flatten().fieldErrors as Record<string, string[] | undefined>;
+        const firstErrorKey = Object.keys(fieldErrors)[0];
+        const firstErrorMsg = firstErrorKey && fieldErrors[firstErrorKey]?.[0]
+          ? fieldErrors[firstErrorKey]![0]
+          : "Invalid password reset data";
+        return res.status(400).json({ message: firstErrorMsg, errors: fieldErrors });
+      }
+
+      const { email, code, token, newPassword } = parse.data;
+      const cleanEmail = email.toLowerCase().trim();
+
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const result = await validateVerificationCode({
+        email: cleanEmail,
+        code,
+        token,
+        purpose: "password_reset",
+        ip,
+      });
+
+      if (!result.valid || !result.record) {
+        const statusCode = result.status === 'invalidated' ? 429 : 400;
+        return res.status(statusCode).json({ message: result.message });
+      }
+
+      const user = await storage.getClientUser(result.record.userId);
+      if (!user) {
+        return res.status(404).json({ message: "User account not found." });
+      }
+      if (user.status === "deleted" || user.status === "deactivated") {
+        return res.status(403).json({ message: "Account has been deactivated." });
+      }
+
+      // Hash and update the user's password securely
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await storage.updateClientUser(user.id, {
+        password: hashedPassword,
+      });
+
+      // Invalidate all remaining password reset tokens for this user
+      await invalidateAllTokensForUser(user.id, "password_reset");
+
+      // Invalidate all active authenticated sessions/tokens for this user
+      for (const [authToken, tokenData] of authTokens.entries()) {
+        if (tokenData.userId === user.id) {
+          authTokens.delete(authToken);
+        }
+      }
+      if (req.session) {
+        delete (req.session as any).clientUserId;
+        delete (req.session as any).clientUserAuthenticated;
+      }
+
+      console.log(`[AUTH_EVENT] Successfully reset password for user ${user.id} (${maskEmail(cleanEmail)}). All active sessions invalidated.`);
+
+      return res.json({
+        success: true,
+        message: "Your password has been successfully updated! You can now sign in with your new credentials.",
+      });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({ message: "Failed to reset password. Please try again." });
+    }
+  });
+
+  // ── Email Verification Endpoints ──────────────────────────────────────────
+
+  const verifyEmailSchema = z.object({
+    email: z.string().email().optional(),
+    code: z.string().min(4).max(10).optional(),
+    token: z.string().optional(),
+  });
+
+  // Verify email endpoint (handles both 6-digit code and token)
+  app.post("/api/user/verify-email", verifyCodeLimiter, async (req, res) => {
+    try {
+      const parse = verifyEmailSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid verification payload", errors: parse.error.flatten().fieldErrors });
+      }
+      const { email, code, token } = parse.data;
+      const cleanEmail = email ? email.toLowerCase().trim() : undefined;
+
+      const auth = getSessionOrToken(req);
+      const sessionUserId = auth?.userId || req.session?.clientUserId;
+      let sessionUser: any = null;
+      if (sessionUserId) {
+        sessionUser = await storage.getClientUser(sessionUserId);
+      }
+
+      // If user is authenticated, ensure they cannot verify an email belonging to another account
+      if (sessionUser && sessionUser.email && cleanEmail && sessionUser.email.toLowerCase().trim() !== cleanEmail) {
+        return res.status(403).json({
+          message: "You can only verify the email address associated with your logged-in account.",
+        });
+      }
+
+      const targetEmail = cleanEmail || (sessionUser?.email ? sessionUser.email.toLowerCase().trim() : undefined);
+
+      // Check if user is already verified in authoritative storage
+      if (targetEmail) {
+        const existing = await storage.getClientUserByEmail(targetEmail);
+        if (existing && existing.emailVerified) {
+          return res.json({
+            success: true,
+            alreadyVerified: true,
+            message: "Your email address is already verified. You can access all features.",
+            user: {
+              id: existing.id,
+              email: existing.email,
+              emailVerified: true,
+            },
+          });
+        }
+      }
+
+      let targetUserId = sessionUser?.id;
+      if (!targetUserId && targetEmail) {
+        const matchingUser = await storage.getClientUserByEmail(targetEmail);
+        if (matchingUser) targetUserId = matchingUser.id;
+      }
+
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const result = await validateVerificationCode({
+        userId: targetUserId,
+        email: targetEmail,
+        code,
+        token,
+        purpose: "email_verification",
+        ip,
+      });
+
+      if (!result.valid || !result.record) {
+        const statusCode = result.status === 'invalidated' ? 429 : 400;
+        return res.status(statusCode).json({
+          message: result.message,
+          remainingAttempts: result.remainingAttempts,
+          status: result.status,
+        });
+      }
+
+      // Mark user email verified in persistent storage
+      const user = (await storage.getClientUser(result.record.userId)) || (await storage.getClientUserByEmail(result.record.email));
+      if (!user) {
+        return res.status(404).json({ message: "User account not found." });
+      }
+      if (user.status === "suspended" || user.complianceStatus === "suspended") {
+        return res.status(403).json({ message: "Account is suspended. Please contact support." });
+      }
+      if (user.status === "deleted" || user.status === "deactivated") {
+        return res.status(403).json({ message: "Account has been deactivated." });
+      }
+
+      const updatedUser = await storage.updateClientUser(user.id, {
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+      });
+
+      // Invalidate all pending verification tokens for this user
+      await invalidateAllTokensForUser(user.id, "email_verification");
+
+      // Create authenticated client token
+      const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(clientToken, {
+        type: "client",
+        userId: user.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      delete (req.session as any).userId;
+      req.session.clientUserId = user.id;
+      req.session.clientUserAuthenticated = true;
+
+      console.log(`[AUTH_EVENT] Email verified successfully for ${maskEmail(user.email || "")} (${user.id})`);
+
+      req.session.save((err) => {
+        if (err) console.error("Verify email session save error:", err);
+        res.json({
+          success: true,
+          message: "Email verified successfully! Welcome to CleanTraffic.",
+          token: clientToken,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            emailVerified: true,
+            emailVerifiedAt: updatedUser?.emailVerifiedAt || new Date(),
+            status: user.status,
+            subscriptionStatus: user.subscriptionStatus,
+          },
+        });
+      });
+    } catch (error) {
+      console.error("Email verification error:", error);
+      res.status(500).json({ message: "Failed to verify email. Please try again." });
+    }
+  });
+
+  // GET link verification (for email click-throughs)
+  app.get("/api/user/verify-email", async (req, res) => {
+    try {
+      const token = req.query.token as string | undefined;
+      if (!token) {
+        return res.redirect("/verification-required?error=missing_token");
+      }
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const result = await validateVerificationCode({
+        token,
+        purpose: "email_verification",
+        ip,
+      });
+
+      if (!result.valid || !result.record) {
+        const errorReason = result.status === 'expired' ? 'expired' : result.status === 'consumed' ? 'already_used' : 'invalid_or_expired';
+        return res.redirect(`/verification-required?error=${errorReason}`);
+      }
+
+      const user = (await storage.getClientUser(result.record.userId)) || (await storage.getClientUserByEmail(result.record.email));
+      if (user) {
+        if (user.status === "suspended" || user.status === "deleted") {
+          return res.redirect("/verification-required?error=account_unavailable");
+        }
+
+        await storage.updateClientUser(user.id, {
+          emailVerified: true,
+          emailVerifiedAt: new Date(),
+        });
+        await invalidateAllTokensForUser(user.id, "email_verification");
+
+        const clientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+        authTokens.set(clientToken, {
+          type: "client",
+          userId: user.id,
+          authenticated: true,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+        req.session.clientUserId = user.id;
+        req.session.clientUserAuthenticated = true;
+
+        return res.redirect(`/verification-required?status=success&email=${encodeURIComponent(user.email || "")}&token=${clientToken}`);
+      }
+      return res.redirect("/verification-required?error=user_not_found");
+    } catch (error) {
+      console.error("GET verify-email error:", error);
+      res.redirect("/verification-required?error=server_error");
+    }
+  });
+
+  // Resend verification email endpoint
+  const resendVerificationSchema = z.object({
+    email: z.string().email("Please provide a valid email address").max(100).trim().optional(),
+  });
+
+  app.post("/api/user/resend-verification", emailVerificationLimiter, async (req, res) => {
+    try {
+      const parse = resendVerificationSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid email address", errors: parse.error.flatten().fieldErrors });
+      }
+
+      const auth = getSessionOrToken(req);
+      const sessionUserId = auth?.userId || req.session?.clientUserId;
+      let targetUser: any = null;
+
+      if (sessionUserId) {
+        targetUser = await storage.getClientUser(sessionUserId);
+      }
+
+      let cleanEmail = parse.data?.email ? parse.data.email.toLowerCase().trim() : "";
+      if (!cleanEmail && targetUser?.email) {
+        cleanEmail = targetUser.email.toLowerCase().trim();
+      }
+
+      if (!cleanEmail) {
+        return res.status(400).json({ message: "Please provide your account email address." });
+      }
+
+      // If user is authenticated, ensure they cannot request codes for a different user's email
+      if (targetUser && targetUser.email && targetUser.email.toLowerCase().trim() !== cleanEmail) {
+        return res.status(403).json({
+          message: "You can only request verification emails for the email address registered to your account.",
+        });
+      }
+
+      // Per-email cooldown (60s) to protect mail delivery systems
+      const cooldown = checkEmailCooldown(cleanEmail);
+      if (!cooldown.allowed) {
+        return res.status(429).json({
+          message: `Please wait ${cooldown.remainingSec} seconds before requesting another verification email.`,
+          retryAfter: cooldown.remainingSec,
+        });
+      }
+
+      const user = targetUser || (await storage.getClientUserByEmail(cleanEmail)) || (await storage.getClientUserByUsernameOrEmail(cleanEmail));
+      if (!user) {
+        // Return generic message to prevent email enumeration for unauthenticated requests
+        return res.json({
+          success: true,
+          message: "If an account exists with this email, a fresh verification link and code have been sent.",
+        });
+      }
+
+      if (user.status === "suspended" || user.complianceStatus === "suspended") {
+        return res.status(403).json({ message: "Account is suspended. Please contact support." });
+      }
+      if (user.status === "deleted" || user.status === "deactivated") {
+        return res.status(403).json({ message: "Account has been deactivated." });
+      }
+
+      if (user.emailVerified) {
+        return res.json({
+          success: true,
+          alreadyVerified: true,
+          message: "Your email address is already verified. You can access your dashboard directly.",
+        });
+      }
+
+      // Generate a fresh 5-minute cryptographically secure code, automatically invalidating previous codes
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress;
+      const { record: tokenRecord, code: verificationCode, token: verificationToken } = await createVerificationToken({
+        userId: user.id,
+        email: cleanEmail,
+        purpose: "email_verification",
+        ip,
+      });
+
+      const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+      const host = req.get('host') || 'localhost:3000';
+      const baseUrl = `${protocol}://${host}`;
+
+      let sendRes: any;
+      try {
+        sendRes = await sendVerificationEmail({
+          to: cleanEmail,
+          name: user.fullName || user.username,
+          code: verificationCode,
+          token: verificationToken,
+          baseUrl,
+        });
+      } catch (sendErr: any) {
+        console.error(`[AUTH_EVENT] Resend verification email dispatch error for ${maskEmail(cleanEmail)}:`, sendErr?.message || sendErr);
+        sendRes = { success: false, message: sendErr?.message || "Internal mail service connection error" };
+      }
+
+      // CRITICAL: Strict delivery verification. Do not report success if SMTP failed!
+      if (!sendRes || !sendRes.success) {
+        console.error(`[AUTH_EVENT] Mail delivery rejected for ${maskEmail(cleanEmail)}: ${sendRes?.message}`);
+        // Invalidate token so no undelivered phantom code exists
+        await invalidateAllTokensForUser(user.id, "email_verification");
+        return res.status(502).json({
+          success: false,
+          message: sendRes?.message || "Mail delivery service could not deliver the verification email. Please verify SMTP settings or try again.",
+        });
+      }
+
+      recordEmailDispatch(cleanEmail);
+      console.log(`[AUTH_EVENT] Resend verification email successfully delivered to mail server for ${maskEmail(cleanEmail)} [messageId: ${sendRes.messageId || 'N/A'}]`);
+
+      return res.json({
+        success: true,
+        message: `A fresh 6-digit confirmation code (valid for 5 minutes) has been dispatched to ${cleanEmail}. Please check your inbox and spam folder.`,
+        expiresAt: tokenRecord.expiresAt,
+      });
+    } catch (error) {
+      console.error("Resend verification error:", error);
+      res.status(500).json({ message: "Failed to resend verification email. Please try again." });
+    }
+  });
+
+  // Check email verification status against authoritative database record
+  app.get("/api/user/verification-status", async (req, res) => {
+    try {
+      const emailParam = (req.query.email as string | undefined)?.toLowerCase().trim();
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId;
+
+      let user: any = null;
+      if (userId) {
+        user = await storage.getClientUser(userId);
+      } else if (emailParam) {
+        user = await storage.getClientUserByEmail(emailParam);
+      }
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(user);
+
+      return res.json({
+        email: syncedUser.email,
+        emailVerified: !!syncedUser.emailVerified,
+        emailVerifiedAt: syncedUser.emailVerifiedAt,
+        status: syncedUser.status,
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        isActive: statusSummary.isActive,
+        isTrial: statusSummary.isTrial,
+        isTrialExpired: statusSummary.isTrialExpired,
+        trialEndsAt: statusSummary.trialEndsAt,
+        trialDaysRemaining: statusSummary.trialDaysRemaining,
+      });
+    } catch (error) {
+      console.error("Verification status check error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Verify / Attach API key for client user (optional secondary step)
+  app.post("/api/user/verify-api-key", apiKeyVerificationLimiter, async (req, res) => {
+    try {
+      const parse = apiKeySchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
+      }
+      const { apiKey } = parse.data;
+
+      const auth = getSessionOrToken(req);
+      const clientUserId = auth?.userId || req.session?.clientUserId;
+
+      if (!clientUserId) {
+        return res.status(401).json({ message: "Authentication required. Please login with your account credentials first." });
+      }
+
+      const apiKeyRecord = await storage.getApiKeyByValue(apiKey);
+      if (!apiKeyRecord) {
+        return res.status(401).json({ message: "Invalid API key" });
+      }
+
+      const user = await storage.getClientUser(clientUserId);
+      if (!user) {
+        return res.status(403).json({ message: "User account not found" });
+      }
+
+      // If user doesn't have an apiKeyId or wants to attach this valid key
+      if (!user.apiKeyId) {
+        await storage.updateClientUser(user.id, { apiKeyId: apiKeyRecord.id });
+      } else if (user.apiKeyId !== apiKeyRecord.id) {
+        return res.status(403).json({ message: "API key does not match your account" });
+      }
+
+      // Authoritatively sync user subscription and API key status with database records
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(user);
+
+      if (apiKeyRecord.status === "paused") {
+        return res.status(403).json({ message: "API key is currently paused in the dashboard." });
+      }
+
+      if (!statusSummary.isActive) {
+        return res.status(403).json({
+          message: statusSummary.rejectionReason || "API key has expired. Please renew your subscription in the dashboard.",
+        });
+      }
+
+      if (!user.tosAccepted) {
+        const preTosToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+        authTokens.set(preTosToken, {
+          type: "client",
+          userId: user.id,
+          authenticated: false,
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+        delete (req.session as any).userId;
+        req.session.clientUserId = user.id;
+        req.session.clientUserAuthenticated = false;
+        return res.status(200).json({
+          message: "Terms of service must be accepted before using this service.",
+          requiresTos: true,
+          token: preTosToken,
+          userId: user.id,
+        });
+      }
+
+      if (user.complianceStatus === "suspended") {
+        return res.status(403).json({ message: "Account suspended due to compliance violation. Please contact support." });
+      }
+
+      const verifiedToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(verifiedToken, {
+        type: "client",
+        userId: user.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+
+      delete (req.session as any).userId;
+      req.session.clientUserAuthenticated = true;
+      req.session.clientUserId = user.id;
+
+      req.session.save((err) => {
+        if (err) console.error("Session save error:", err);
+        res.json({
+          message: "API key verified successfully",
+          token: verifiedToken,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            status: user.status,
+          },
+          apiKey: {
+            name: apiKeyRecord.keyName,
+            status: apiKeyRecord.status,
+            expirationPeriod: apiKeyRecord.expirationPeriod,
+          },
+        });
+      });
+    } catch (error) {
+      console.error("API key verification error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Middleware for client user auth — supports token header or session cookie with authoritative DB state check
+  const requireClientAuth = async (req: any, res: any, next: any) => {
+    try {
+      const auth = getSessionOrToken(req);
+      if (!auth || auth.type !== 'client' || !auth.authenticated) {
+        return res.status(401).json({ message: "Unauthorized. Please login and verify your API key." });
+      }
+
+      const user = await storage.getClientUser(auth.userId);
+      if (!user) {
+        revokeUserSessions(auth.userId);
+        if (req.session) {
+          delete req.session.clientUserId;
+          delete req.session.clientUserAuthenticated;
+        }
+        return res.status(401).json({ message: "User account not found or has been removed.", code: "ACCOUNT_NOT_FOUND" });
+      }
+
+      if (user.status === "suspended" || user.complianceStatus === "suspended") {
+        revokeUserSessions(auth.userId);
+        if (req.session) {
+          delete req.session.clientUserId;
+          delete req.session.clientUserAuthenticated;
+        }
+        return res.status(403).json({ 
+          message: "Your account has been suspended. Please contact us if you believe this was done in error.", 
+          code: "ACCOUNT_SUSPENDED",
+          accountStatus: "suspended",
+          complianceStatus: user.complianceStatus || "suspended",
+          statusReason: user.statusReason
+        });
+      }
+
+      if (user.status === "deleted" || user.status === "deactivated") {
+        revokeUserSessions(auth.userId);
+        if (req.session) {
+          delete req.session.clientUserId;
+          delete req.session.clientUserAuthenticated;
+        }
+        return res.status(403).json({ 
+          message: "Your account has been deactivated. Please contact us if you believe this was done in error.", 
+          code: "ACCOUNT_DEACTIVATED",
+          accountStatus: user.status,
+          statusReason: user.statusReason
+        });
+      }
+
+      req.session.clientUserId = auth.userId;
+      req.session.clientUserAuthenticated = true;
+      (req as any).clientUserId = auth.userId;
+      (req as any).clientUser = user;
+      return next();
+    } catch (err) {
+      console.error("requireClientAuth check error:", err);
+      return res.status(500).json({ message: "Authentication validation error." });
     }
   };
 
   // ---- Subscription enforcement middleware ----
-  // Checks that the authenticated client user has an active trial or paid subscription.
-  // Fail-open on transient errors to avoid inadvertently locking out users.
   const requireActiveSubscription = async (req: any, res: any, next: any) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
-      if (!user) return res.status(401).json({ message: "User not found" });
-      const now = new Date();
-      if (
-        user.subscriptionStatus === 'active' ||
-        // Trialing: allow if no expiry is set yet (existing accounts) or expiry is in the future
-        (user.subscriptionStatus === 'trialing' && (!user.trialEndsAt || user.trialEndsAt > now))
-      ) {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) return res.status(401).json({ message: "User not found" });
+      const rawUser = await storage.getClientUser(userId);
+      if (!rawUser) return res.status(401).json({ message: "User not found" });
+
+      const { user, statusSummary } = await syncClientUserSubscription(rawUser);
+
+      if (statusSummary.isActive) {
         return next();
       }
+
       return res.status(402).json({
-        message: "Your trial has expired or your subscription is inactive. Please upgrade to continue.",
-        subscriptionStatus: user.subscriptionStatus,
-        trialEndsAt: user.trialEndsAt,
+        message: statusSummary.isTrialExpired
+          ? "Your trial has expired. Please upgrade to continue."
+          : "Your subscription is inactive. Please upgrade to continue.",
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        trialEndsAt: statusSummary.trialEndsAt,
         upgradeRequired: true,
+        notification: statusSummary.notification,
       });
     } catch (error) {
       console.error("Subscription check error:", error);
@@ -556,47 +2303,60 @@ Disallow: /*`);
   // Returns 200 + { status, uptime, db } when healthy, 503 when DB is down.
   app.get("/api/health", async (_req, res) => {
     try {
-      await db.execute(sqlTag`SELECT 1`);
-      res.json({ status: "ok", uptime: process.uptime(), db: "reachable" });
+      if (db) {
+        await db.execute(sqlTag`SELECT 1`);
+      }
+      res.json({ status: "ok", uptime: process.uptime(), db: db ? "reachable" : "in-memory" });
     } catch {
       res.status(503).json({ status: "error", uptime: process.uptime(), db: "unreachable" });
     }
   });
 
-  // Block client sessions from every admin-only path prefix
-  app.use(["/api/interface", "/api/api-keys"], (req: any, res: any, next: any) => {
-    if (req.session?.clientUserId) {
-      return res.status(403).json({ message: "Forbidden. Client sessions cannot access admin endpoints." });
-    }
-    next();
-  });
-
   // Get current client user info
   app.get("/api/user/me", requireClientAuth, async (req: any, res) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
-      if (!user) {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      const rawUser = await storage.getClientUser(userId);
+      if (!rawUser) {
         return res.status(404).json({ message: "User not found" });
       }
       
+      const { user, statusSummary } = await syncClientUserSubscription(rawUser);
+
       // Get API key info
       const apiKey = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
-      
-      const now = new Date();
-      const trialDaysRemaining = user.trialEndsAt
-        ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-        : null;
 
       res.json({ 
         id: user.id,
         username: user.username,
         email: user.email,
+        fullName: user.fullName,
+        emailVerified: !!user.emailVerified,
+        emailVerifiedAt: user.emailVerifiedAt,
         status: user.status,
+        complianceStatus: user.complianceStatus || statusSummary.complianceStatus || 'cleared',
+        statusReason: user.statusReason || null,
+        statusUpdatedAt: user.statusUpdatedAt || null,
+        statusUpdatedBy: user.statusUpdatedBy || null,
         createdAt: user.createdAt,
-        // Billing fields
-        subscriptionStatus: user.subscriptionStatus,
-        trialEndsAt: user.trialEndsAt,
-        trialDaysRemaining,
+        // Authoritative Billing fields
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        isActive: statusSummary.isActive,
+        isTrial: statusSummary.isTrial,
+        isTrialExpired: statusSummary.isTrialExpired,
+        isExpiringSoon: statusSummary.isExpiringSoon,
+        isFlagged: statusSummary.isFlagged || user.complianceStatus === 'flagged',
+        isPending: statusSummary.isPending || user.complianceStatus === 'pending',
+        isCleared: statusSummary.isCleared || user.complianceStatus === 'cleared',
+        isSuspended: user.status === 'suspended' || user.complianceStatus === 'suspended',
+        isDeactivated: user.status === 'deactivated',
+        trialEndsAt: statusSummary.trialEndsAt,
+        trialDaysRemaining: statusSummary.trialDaysRemaining,
+        notification: statusSummary.notification,
         apiKey: apiKey ? {
           name: apiKey.keyName,
           status: apiKey.status,
@@ -612,10 +2372,13 @@ Disallow: /*`);
 
   // Client user logout
   app.post("/api/user/logout", (req, res) => {
+    const authHeader = req.headers?.authorization || req.headers?.['x-auth-token'] || req.headers?.['x-client-token'];
+    if (authHeader && typeof authHeader === 'string') {
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+      if (token) authTokens.delete(token);
+    }
     req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ message: "Could not log out" });
-      }
+      res.clearCookie('ctid');
       res.json({ message: "Logout successful" });
     });
   });
@@ -627,8 +2390,16 @@ Disallow: /*`);
       const redirectUrls = await storage.getUserRedirectUrls(userId);
       
       res.json(redirectUrls || { 
-        humanUrl: "https://example.com/human", 
-        botUrl: "https://google.com" 
+        humanUrl: "", 
+        botUrl: "",
+        allowedCountries: "ALL",
+        allowedDevices: "all",
+        blockVpn: "block",
+        blockDatacenter: "block",
+        blockTor: "block",
+        fingerprintActivate: "enabled",
+        wildcardSubdomains: "disabled",
+        allowVpn: false
       });
     } catch (error) {
       console.error("Get user redirect URLs error:", error);
@@ -636,34 +2407,124 @@ Disallow: /*`);
     }
   });
 
-  // Update client user's redirect URLs
+  // Client user's auto-detected location
+  app.get("/api/client/current-location", async (req: any, res) => {
+    try {
+      let clientIp = req.headers['cf-connecting-ip'] ||
+                     req.headers['x-forwarded-for'] ||
+                     req.headers['x-real-ip'] ||
+                     req.ip || 'unknown';
+      if (typeof clientIp === 'string' && clientIp.includes(',')) {
+        clientIp = clientIp.split(',')[0].trim();
+      }
+      const cleanTrafficApiKey = await getEffectiveIp2GeoKey();
+      let geoData: any = null;
+      if (cleanTrafficApiKey && !isPrivateOrLocalIp(clientIp)) {
+        geoData = await fetchIpGeolocation(cleanTrafficApiKey, clientIp, req.headers['user-agent'] || '');
+      }
+      return res.json({
+        ip: clientIp,
+        countryCode: geoData?.country_code || 'AU',
+        countryName: geoData?.country_name || 'Australia',
+        city: geoData?.city_name || ''
+      });
+    } catch (e) {
+      return res.json({
+        ip: '127.0.0.1',
+        countryCode: 'AU',
+        countryName: 'Australia',
+      });
+    }
+  });
+
+  // Update client user's redirect URLs and routing rules
   app.put("/api/user/redirect-urls", requireClientAuth, async (req: any, res) => {
     try {
-      const userId = req.session.clientUserId;
-      const { humanUrl, botUrl } = req.body;
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+
+      const rawUser = await storage.getClientUser(userId);
+      if (rawUser) {
+        const { statusSummary } = await syncClientUserSubscription(rawUser);
+        if (!statusSummary.isActive) {
+          return res.status(403).json({
+            message: statusSummary.isTrialExpired
+              ? "Your trial has expired and your dashboard is in read-only mode. Upgrade your subscription to modify routing rules."
+              : "Your subscription is inactive and your dashboard is in read-only mode. Upgrade your subscription to modify routing rules.",
+            readOnly: true,
+          });
+        }
+
+        if (rawUser.complianceStatus === "flagged") {
+          return res.status(403).json({
+            message: rawUser.statusReason 
+              ? `Your account is currently under compliance review (${rawUser.statusReason}). Modifying traffic routing rules is temporarily unavailable.`
+              : "Your account is currently under compliance review and this action is temporarily unavailable.",
+            code: "ACCOUNT_FLAGGED",
+            complianceStatus: "flagged",
+            statusReason: rawUser.statusReason,
+            isFlagged: true,
+          });
+        }
+
+        if (rawUser.complianceStatus === "pending") {
+          return res.status(403).json({
+            message: rawUser.statusReason
+              ? `Your account is pending verification and review (${rawUser.statusReason}). Modifying traffic routing rules is unavailable until your account is cleared.`
+              : "Your account is pending verification and review. Modifying traffic routing rules is unavailable until your account is cleared.",
+            code: "ACCOUNT_PENDING",
+            complianceStatus: "pending",
+            statusReason: rawUser.statusReason,
+            isPending: true,
+          });
+        }
+      }
+
+      const { 
+        humanUrl, 
+        botUrl, 
+        allowedCountries, 
+        allowedDevices,
+        desktopOsFilter,
+        blockVpn,
+        blockDatacenter,
+        blockTor,
+        fingerprintActivate,
+        wildcardSubdomains,
+        allowVpn,
+        allowSearchCrawlers,
+        blockAiCrawlers,
+        allowSocialPreviews,
+        interstitialThemeId,
+        interstitialHeading,
+        interstitialSubnote
+      } = req.body;
       
       if (!humanUrl || !botUrl) {
         return res.status(400).json({ message: "Both humanUrl and botUrl are required" });
       }
 
-      // URL format validation
-      let parsedHuman: URL, parsedBot: URL;
+      // Human URL format validation
+      let parsedHuman: URL;
       try {
-        parsedHuman = new URL(humanUrl);
-        parsedBot = new URL(botUrl);
+        parsedHuman = new URL(humanUrl.trim());
       } catch {
-        return res.status(400).json({ message: "Invalid URL format" });
+        return res.status(400).json({ message: "Invalid Target Offer (Human URL) format" });
       }
 
-      // Reject non-HTTP(S) protocols
+      // Reject non-HTTP(S) protocols for human URL
       if (parsedHuman.protocol !== 'http:' && parsedHuman.protocol !== 'https:') {
         return res.status(400).json({ message: "humanUrl must use http or https" });
       }
-      if (parsedBot.protocol !== 'http:' && parsedBot.protocol !== 'https:') {
-        return res.status(400).json({ message: "botUrl must use http or https" });
-      }
 
-      // Block known URL shorteners commonly used in phishing
+      // Bot action validation: Can be "404", "403" or a valid HTTP/HTTPS URL
+      const trimmedBot = botUrl.trim();
+      const isHttpErrorCode = trimmedBot === "404" || trimmedBot === "403" || trimmedBot.startsWith("404") || trimmedBot.startsWith("403");
+      let normalizedBotUrl = trimmedBot;
+
       const blockedHosts = [
         'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly', 'short.link',
         'is.gd', 'cli.gs', 'pic.gd', 'DwarfURL.com', 'yfrog.com', 'migre.me',
@@ -675,28 +2536,100 @@ Disallow: /*`);
         'ur1.ca', 'goo.gl', 'dfl8.me', 'shorl.com', 'icanhaz.com',
         'viralurl.com', 'idek.net', 'x.co', 's.id', 'shorturl.at'
       ];
-      const humanHost = parsedHuman.hostname.replace(/^www\./, '').toLowerCase();
-      const botHost = parsedBot.hostname.replace(/^www\./, '').toLowerCase();
-      if (blockedHosts.includes(humanHost) || blockedHosts.includes(botHost)) {
-        return res.status(400).json({ message: "URL shorteners are not allowed" });
-      }
-
-      // Block redirecting to known phishing/login targets
       const suspiciousPaths = [
         '/login', '/signin', '/auth', '/account', '/password', '/verify',
         '/confirm', '/secure', '/banking', '/wallet', '/crypto'
       ];
+
+      if (isHttpErrorCode) {
+        normalizedBotUrl = trimmedBot.includes("403") ? "403" : "404";
+      } else {
+        let parsedBot: URL;
+        try {
+          parsedBot = new URL(trimmedBot);
+        } catch {
+          return res.status(400).json({ message: "Bot Action must be 404, 403, or a valid full URL (https://...)" });
+        }
+
+        if (parsedBot.protocol !== 'http:' && parsedBot.protocol !== 'https:') {
+          return res.status(400).json({ message: "botUrl must use http or https, or be 404/403" });
+        }
+
+        const botHost = parsedBot.hostname.replace(/^www\./, '').toLowerCase();
+        if (blockedHosts.includes(botHost)) {
+          return res.status(400).json({ message: "URL shorteners are not allowed" });
+        }
+
+        const botPath = parsedBot.pathname.toLowerCase();
+        if (suspiciousPaths.some(p => botPath.includes(p))) {
+          return res.status(400).json({ message: "Redirect URLs containing login or banking paths are not permitted" });
+        }
+      }
+
+      // Block known URL shorteners commonly used in phishing for human URL
+      const humanHost = parsedHuman.hostname.replace(/^www\./, '').toLowerCase();
+      if (blockedHosts.includes(humanHost)) {
+        return res.status(400).json({ message: "URL shorteners are not allowed" });
+      }
+
+      // Block redirecting to known phishing/login targets for human URL
       const humanPath = parsedHuman.pathname.toLowerCase();
-      const botPath = parsedBot.pathname.toLowerCase();
-      const hasSuspiciousPath = suspiciousPaths.some(p => humanPath.includes(p) || botPath.includes(p));
-      if (hasSuspiciousPath) {
+      if (suspiciousPaths.some(p => humanPath.includes(p))) {
         return res.status(400).json({ message: "Redirect URLs containing login or banking paths are not permitted" });
       }
 
-      // Log URL update for compliance audit trail
-      console.log(`[COMPLIANCE] User ${userId} updated redirect URLs: human=${parsedHuman.hostname} bot=${parsedBot.hostname}`);
+      // Format allowedCountries as a clean uppercase comma-separated string
+      let formattedAllowedCountries = "ALL";
+      if (typeof allowedCountries === 'string') {
+        const trimmed = allowedCountries.trim();
+        if (trimmed && trimmed.toUpperCase() !== "ALL") {
+          formattedAllowedCountries = trimmed.split(',').map(c => c.trim().toUpperCase()).filter(Boolean).join(',');
+        } else if (trimmed.toUpperCase() === "ALL") {
+          formattedAllowedCountries = "ALL";
+        }
+      } else if (Array.isArray(allowedCountries)) {
+        if (allowedCountries.length > 0 && !allowedCountries.includes("ALL")) {
+          formattedAllowedCountries = allowedCountries.map((c: string) => String(c).trim().toUpperCase()).filter(Boolean).join(',');
+        } else {
+          formattedAllowedCountries = "ALL";
+        }
+      }
 
-      const updated = await storage.setUserRedirectUrls(userId, { humanUrl, botUrl });
+      const validDevices = ["all", "desktop", "mobile", "mobile_tablet"];
+      const formattedAllowedDevices = validDevices.includes(allowedDevices) ? allowedDevices : "all";
+
+      const validOs = ["both", "windows", "mac"];
+      const formattedDesktopOsFilter = validOs.includes(desktopOsFilter) ? desktopOsFilter : "both";
+
+      const effectiveBlockVpn = blockVpn === "allow" ? "allow" : (blockVpn === "block" ? "block" : (allowVpn ? "allow" : "block"));
+      const effectiveAllowVpn = effectiveBlockVpn === "allow";
+
+      const formattedAllowSearchCrawlers = allowSearchCrawlers === "block" ? "block" : "allow";
+      const formattedBlockAiCrawlers = blockAiCrawlers === "allow" ? "allow" : "block";
+      const formattedAllowSocialPreviews = allowSocialPreviews === "block" ? "block" : "allow";
+
+      // Log URL update for compliance audit trail
+      console.log(`[COMPLIANCE] User ${userId} updated routing rules: human=${parsedHuman.hostname} bot=${normalizedBotUrl} allowedCountries=${formattedAllowedCountries} allowedDevices=${formattedAllowedDevices} desktopOs=${formattedDesktopOsFilter} blockVpn=${effectiveBlockVpn} searchCrawlers=${formattedAllowSearchCrawlers} aiCrawlers=${formattedBlockAiCrawlers} socialPreviews=${formattedAllowSocialPreviews}`);
+
+      const updated = await storage.setUserRedirectUrls(userId, { 
+        humanUrl, 
+        botUrl: normalizedBotUrl,
+        allowedCountries: formattedAllowedCountries,
+        allowedDevices: formattedAllowedDevices,
+        desktopOsFilter: formattedDesktopOsFilter,
+        blockVpn: effectiveBlockVpn,
+        blockDatacenter: blockDatacenter || "block",
+        blockTor: blockTor || "block",
+        fingerprintActivate: fingerprintActivate || "enabled",
+        wildcardSubdomains: wildcardSubdomains || "disabled",
+        allowVpn: effectiveAllowVpn,
+        allowSearchCrawlers: formattedAllowSearchCrawlers,
+        blockAiCrawlers: formattedBlockAiCrawlers,
+        allowSocialPreviews: formattedAllowSocialPreviews,
+        interstitialThemeId: typeof interstitialThemeId === "string" ? interstitialThemeId.trim() : undefined,
+        interstitialHeading: typeof interstitialHeading === "string" ? interstitialHeading.trim() : undefined,
+        interstitialSubnote: typeof interstitialSubnote === "string" ? interstitialSubnote.trim() : undefined,
+      });
       res.json(updated);
     } catch (error) {
       console.error("Update user redirect URLs error:", error);
@@ -705,19 +2638,27 @@ Disallow: /*`);
   });
 
   // Get client user's classifications (their traffic logs)
-  app.get("/api/user/classifications", requireClientAuth, requireActiveSubscription, async (req: any, res) => {
+  // Preserved and accessible even after trial expires (read-only history)
+  app.get("/api/user/classifications", requireClientAuth, async (req: any, res) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      const user = await storage.getClientUser(userId);
       if (!user || !user.apiKeyId) {
         return res.json([]);
       }
 
-      const limit = parseInt(req.query.limit as string) || 100;
+      const limit = parseInt(req.query.limit as string) || 500;
       const classifications = await storage.getUserClassifications(user.apiKeyId, limit);
       
-      // Filter out sensitive data (IP addresses) from client user view for privacy
-      const filteredClassifications = classifications.map(c => ({
+      // Return user classifications including individual visitor IP addresses and telemetry
+      const formattedClassifications = classifications.map(c => ({
         id: c.id,
+        ipAddress: c.ipAddress,
+        ip: c.ipAddress,
         location: c.location,
         country: c.country,
         countryCode: c.countryCode,
@@ -730,10 +2671,9 @@ Disallow: /*`);
         browser: c.browser,
         deviceType: c.deviceType,
         timestamp: c.timestamp,
-        // ipAddress excluded for privacy
       }));
       
-      res.json(filteredClassifications);
+      res.json(formattedClassifications);
     } catch (error) {
       console.error("Get user classifications error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -741,9 +2681,15 @@ Disallow: /*`);
   });
 
   // Get client user's statistics
-  app.get("/api/user/stats", requireClientAuth, requireActiveSubscription, async (req: any, res) => {
+  // Preserved and accessible even after trial expires (read-only history)
+  app.get("/api/user/stats", requireClientAuth, async (req: any, res) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      const user = await storage.getClientUser(userId);
       if (!user || !user.apiKeyId) {
         return res.json({
           totalClassifications: 0,
@@ -761,14 +2707,27 @@ Disallow: /*`);
   });
 
   // Change client user password
-  app.post("/api/user/change-password", requireClientAuth, async (req: any, res) => {
+  app.post("/api/user/change-password", changePasswordLimiter, requireClientAuth, async (req: any, res) => {
     try {
       const parse = changePasswordSchema.safeParse(req.body);
       if (!parse.success) {
-        return res.status(400).json({ message: "Invalid request", errors: parse.error.flatten().fieldErrors });
+        return res.status(400).json({
+          message: parse.error.issues[0]?.message || "Invalid request",
+          errors: parse.error.flatten().fieldErrors,
+        });
       }
       const { currentPassword, newPassword } = parse.data;
-      const userId = req.session.clientUserId;
+
+      // Defense-in-depth string check
+      if (currentPassword === newPassword) {
+        return res.status(400).json({
+          message: "Your new password must be different from your current password.",
+          errors: { newPassword: ["Your new password must be different from your current password."] },
+        });
+      }
+
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId;
 
       const user = await storage.getClientUser(userId);
       if (!user) {
@@ -778,28 +2737,91 @@ Disallow: /*`);
       // Verify current password using bcrypt
       const passwordMatch = await bcrypt.compare(currentPassword, user.password);
       if (!passwordMatch) {
-        return res.status(401).json({ message: "Current password is incorrect" });
+        return res.status(401).json({
+          message: "Current password is incorrect",
+          errors: { currentPassword: ["Current password is incorrect"] },
+        });
+      }
+
+      // Verify new password is NOT identical to existing stored hash
+      const isReused = await bcrypt.compare(newPassword, user.password);
+      if (isReused) {
+        return res.status(400).json({
+          message: "Your new password must be different from your current password.",
+          errors: { newPassword: ["Your new password must be different from your current password."] },
+        });
       }
 
       // Hash new password before storing
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       await storage.updateClientUser(userId, { password: hashedPassword });
 
-      res.json({ message: "Password changed successfully" });
+      // Invalidate all existing tokens and sessions across all devices for this user
+      revokeUserSessions(userId);
+      await invalidateAllTokensForUser(userId);
+
+      // Issue a fresh, secure session token for the current session
+      const newClientToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(newClientToken, {
+        type: "client",
+        userId: user.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        lastActiveAt: Date.now(),
+      });
+
+      if (req.session) {
+        req.session.clientUserId = user.id;
+        req.session.clientUserAuthenticated = true;
+        req.session.lastActiveAt = Date.now();
+        req.session.save?.(() => {});
+      }
+
+      const clientIp =
+        (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+        req.socket?.remoteAddress ||
+        req.ip ||
+        "unknown";
+
+      void auditLog({
+        actorId: user.id,
+        actorType: "system",
+        action: "user.password_changed",
+        ipAddress: clientIp.replace("::ffff:", ""),
+      });
+
+      // Dispatch security confirmation email to user's verified address
+      if (user.email) {
+        const userEmail = user.email;
+        void sendPasswordChangedEmail({
+          to: userEmail,
+          name: user.fullName || user.username || userEmail.split("@")[0],
+          ipAddress: clientIp.replace("::ffff:", ""),
+          timestamp: new Date().toUTCString(),
+        }).catch((err) => {
+          console.error("[Email] Failed to dispatch password change alert:", err);
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Password changed successfully",
+        token: newClientToken,
+      });
     } catch (error) {
       console.error("Change password error:", error);
-      res.status(500).json({ message: "Internal server error" });
+      return res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Accept Terms of Service
-  app.post("/api/user/accept-tos", async (req: any, res) => {
+  // Accept Terms of Service (Strict session/pre-auth validation — IDOR protected)
+  app.post("/api/user/accept-tos", sensitiveAccountLimiter, async (req: any, res) => {
     try {
-      // Only requires clientUserId — the user has already passed password + API key
-      // checks but hasn't accepted ToS yet, so clientUserAuthenticated isn't set.
-      const userId = req.session?.clientUserId;
+      const auth = getSessionOrToken(req);
+      // Strictly require verified pre-auth session or token; NEVER trust req.body.userId
+      const userId = auth?.userId || req.session?.clientUserId;
       if (!userId) {
-        return res.status(401).json({ message: "Please login first" });
+        return res.status(401).json({ message: "Unauthorized. Please login first." });
       }
 
       const user = await storage.getClientUser(userId);
@@ -812,10 +2834,47 @@ Disallow: /*`);
         complianceStatus: 'cleared'
       });
 
-      // Complete the session — mark the user as fully authenticated
-      req.session.clientUserAuthenticated = true;
+      // Complete authentication token
+      const verifiedToken = "ct_cli_" + randomUUID().replace(/-/g, "");
+      authTokens.set(verifiedToken, {
+        type: 'client',
+        userId: user.id,
+        authenticated: true,
+        expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        lastActiveAt: Date.now(),
+      });
 
-      res.json({ message: "Terms of service accepted successfully" });
+      // Complete session
+      delete (req.session as any).userId;
+      req.session.clientUserId = user.id;
+      req.session.clientUserAuthenticated = true;
+      req.session.lastActiveAt = Date.now();
+      req.session.save?.(() => {});
+
+      void auditLog({
+        actorId: user.id,
+        actorType: "system",
+        action: "user.tos_accepted",
+        ipAddress: (req.ip || "").replace("::ffff:", ""),
+      });
+
+      const apiKeyRecord = user.apiKeyId ? await storage.getApiKeyById(user.apiKeyId) : null;
+
+      res.json({ 
+        message: "Terms of service accepted successfully",
+        token: verifiedToken,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          status: user.status
+        },
+        apiKey: apiKeyRecord ? {
+          name: apiKeyRecord.keyName,
+          status: apiKeyRecord.status,
+          expirationPeriod: apiKeyRecord.expirationPeriod
+        } : null
+      });
     } catch (error) {
       console.error("Accept ToS error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -861,14 +2920,42 @@ Disallow: /*`);
   // Get client user's full API key value (for PHP script generation)
   app.get("/api/user/api-key-value", requireClientAuth, async (req: any, res) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
-      if (!user || !user.apiKeyId) {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
         return res.json({ keyValue: null });
       }
 
-      const apiKey = await storage.getApiKeyById(user.apiKeyId);
-      if (!apiKey) {
+      let user = await storage.getClientUser(userId);
+      if (!user) {
         return res.json({ keyValue: null });
+      }
+
+      let apiKey = user.apiKeyId
+        ? ((await storage.getApiKeyById(user.apiKeyId)) || (await storage.getApiKey(user.apiKeyId)))
+        : null;
+
+      // Auto-provision if missing
+      if (!apiKey) {
+        const { user: syncedUser, statusSummary } = await syncClientUserSubscription(user);
+        user = syncedUser;
+        apiKey = user.apiKeyId
+          ? ((await storage.getApiKeyById(user.apiKeyId)) || (await storage.getApiKey(user.apiKeyId)))
+          : null;
+
+        if (!apiKey) {
+          const keyVal = "ctc_" + randomBytes(20).toString("hex");
+          const createdKey = await storage.createApiKey({
+            keyName: `User - ${user.username}`,
+            keyValue: keyVal,
+            callLimit: statusSummary.callLimit,
+            expirationPeriod: statusSummary.isPaidActive ? "unlimited" : "weekly",
+            status: statusSummary.isActive ? "active" : "expired",
+            expiresAt: statusSummary.isPaidActive ? null : (user.trialEndsAt ? new Date(user.trialEndsAt) : null),
+          });
+          await storage.updateClientUser(user.id, { apiKeyId: createdKey.id, updatedAt: new Date() });
+          apiKey = createdKey;
+        }
       }
 
       // Return full key value (user needs this for PHP script)
@@ -883,13 +2970,125 @@ Disallow: /*`);
 
   // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
   
-  // Get all client users (Admin only)
+  // Get all client users (Admin only) - Authoritative sync of subscription & trial status
   app.get("/api/interface/client-users", requireAuth, async (req, res) => {
     try {
-      const users = await storage.getAllClientUsers();
-      res.json(users);
+      const rawUsers = await storage.getAllClientUsers();
+      const syncedUsers = await Promise.all(
+        rawUsers.map(async (u) => {
+          const { user, statusSummary } = await syncClientUserSubscription(u);
+          const entitlementType = getEntitlementType(user, statusSummary);
+
+          // Get linked API key details
+          let apiKeyInfo: any = null;
+          if (user.apiKeyId) {
+            const k = (await storage.getApiKeyById(user.apiKeyId)) || (await storage.getApiKey(user.apiKeyId));
+            if (k) {
+              apiKeyInfo = {
+                id: k.id,
+                keyName: k.keyName,
+                keyValue: k.keyValue ? `${k.keyValue.slice(0, 8)}...${k.keyValue.slice(-4)}` : null,
+                status: k.status,
+                enabled: k.enabled,
+                callCount: k.callCount || 0,
+                callLimit: k.callLimit || 0,
+                expiresAt: k.expiresAt,
+                lastUsed: k.lastUsed,
+              };
+            }
+          }
+
+          // Authoritative authorization check for this user
+          let isAuthorized = false;
+          let authReason = "";
+          if (user.status === 'suspended' || user.complianceStatus === 'suspended') {
+            isAuthorized = false;
+            authReason = "Account or compliance suspended";
+          } else if (user.status === 'inactive' || user.status === 'deactivated') {
+            isAuthorized = false;
+            authReason = "Account deactivated";
+          } else if (!statusSummary.isActive) {
+            isAuthorized = false;
+            authReason = statusSummary.isTrialExpired ? "Trial expired" : (statusSummary.statusLabel || "Subscription inactive");
+          } else if (!apiKeyInfo) {
+            isAuthorized = false;
+            authReason = "No API key linked";
+          } else if (apiKeyInfo.status !== 'active' && apiKeyInfo.status !== 'expired') {
+            isAuthorized = false;
+            authReason = `API key ${apiKeyInfo.status}`;
+          } else {
+            isAuthorized = true;
+            authReason = `Authorized (${entitlementType === 'admin_promoted' ? 'Admin Promoted' : entitlementType === 'stripe_paid' ? 'Stripe Paid' : 'Trial'})`;
+          }
+
+          return {
+            ...user,
+            subscriptionStatus: statusSummary.status,
+            subscriptionTier: statusSummary.tier,
+            statusLabel: statusSummary.statusLabel,
+            tierLabel: statusSummary.tierLabel,
+            trialDaysRemaining: statusSummary.trialDaysRemaining,
+            isActive: statusSummary.isActive,
+            isTrial: statusSummary.isTrial,
+            isTrialExpired: statusSummary.isTrialExpired,
+            isExpiringSoon: statusSummary.isExpiringSoon,
+            entitlementType,
+            apiKey: apiKeyInfo,
+            isAuthorized,
+            authReason,
+          };
+        })
+      );
+      res.json(syncedUsers);
     } catch (error) {
       console.error("Get client users error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Provision or regenerate an API key for a client user (Admin only)
+  app.post("/api/interface/client-users/:id/api-key", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = await storage.getClientUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(user);
+      const keyVal = "ctc_" + randomBytes(20).toString("hex");
+      const createdKey = await storage.createApiKey({
+        keyName: `User - ${syncedUser.username}`,
+        keyValue: keyVal,
+        callLimit: statusSummary.callLimit,
+        expirationPeriod: statusSummary.isPaidActive ? "unlimited" : "weekly",
+        status: statusSummary.isActive ? "active" : "expired",
+        expiresAt: statusSummary.isPaidActive ? null : (syncedUser.trialEndsAt ? new Date(syncedUser.trialEndsAt) : null),
+      });
+
+      await storage.updateClientUser(syncedUser.id, { apiKeyId: createdKey.id, updatedAt: new Date() });
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "client_user.api_key_provisioned",
+        targetId: createdKey.id,
+        targetType: "api_key",
+        metadata: { userId: syncedUser.id, username: syncedUser.username },
+      });
+
+      res.json({
+        success: true,
+        message: "API key provisioned successfully",
+        apiKey: {
+          id: createdKey.id,
+          keyName: createdKey.keyName,
+          keyValue: createdKey.keyValue,
+          status: createdKey.status,
+        },
+      });
+    } catch (error) {
+      console.error("Admin provision API key error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -898,29 +3097,208 @@ Disallow: /*`);
   app.patch("/api/interface/client-users/:id/compliance", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      const { complianceStatus } = req.body;
+      const { complianceStatus, reason, notifyUser = true } = req.body;
 
       if (!complianceStatus || !['pending', 'cleared', 'flagged', 'suspended'].includes(complianceStatus)) {
         return res.status(400).json({ message: "Invalid compliance status. Must be: pending, cleared, flagged, suspended" });
       }
 
-      const updated = await storage.updateClientUser(id, { complianceStatus });
-      if (!updated) {
+      const user = await storage.getClientUser(id);
+      if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      console.log(`[COMPLIANCE] Admin updated user ${id} compliance status to ${complianceStatus}`);
+      const now = new Date();
+      const adminId = (req as any).adminUserId || (req as any).session?.userId || "admin";
+      let adminUsername = "Administrator";
+      try {
+        const adminUser = await storage.getUser(adminId);
+        if (adminUser?.username) adminUsername = adminUser.username;
+      } catch {}
+
+      const cleanReason = typeof reason === 'string' && reason.trim() ? reason.trim() : null;
+      const updates: Partial<ClientUser> = {
+        complianceStatus,
+        statusUpdatedAt: now,
+        statusUpdatedBy: adminUsername,
+      };
+      if (cleanReason) {
+        updates.statusReason = cleanReason;
+      }
+
+      // Update status audit history
+      const existingHistory = Array.isArray(user.statusHistory) ? [...user.statusHistory] : [];
+      existingHistory.unshift({
+        timestamp: now.toISOString(),
+        fromStatus: user.status,
+        toStatus: user.status,
+        fromCompliance: user.complianceStatus,
+        toCompliance: complianceStatus,
+        reason: cleanReason || `Compliance status set to ${complianceStatus}`,
+        changedBy: adminUsername,
+      });
+      updates.statusHistory = existingHistory.slice(0, 50);
+
+      const updated = await storage.updateClientUser(id, updates);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update compliance status" });
+      }
+
+      // If compliance suspended: invalidate sessions and pause API key
+      if (complianceStatus === "suspended") {
+        revokeUserSessions(id);
+        if (user.apiKeyId) {
+          try {
+            await storage.updateApiKey(user.apiKeyId, { status: "suspended", enabled: false });
+          } catch (keyErr) {
+            console.error(`Failed to suspend API key for compliance user ${id}:`, keyErr);
+          }
+        }
+      } else if (complianceStatus === "cleared" && user.status === "active") {
+        if (user.apiKeyId) {
+          try {
+            const currentKey = await storage.getApiKeyById(user.apiKeyId);
+            if (currentKey && (currentKey.status === "suspended" || !currentKey.enabled)) {
+              await storage.updateApiKey(user.apiKeyId, { status: "active", enabled: true });
+            }
+          } catch (keyErr) {
+            console.error(`Failed to reactivate API key for cleared user ${id}:`, keyErr);
+          }
+        }
+      }
+
+      console.log(`[COMPLIANCE] Admin ${adminUsername} updated user ${user.username} (${id}) compliance status to ${complianceStatus}`);
       void auditLog({
-        actorId: (req as any).session?.userId,
+        actorId: adminId,
         actorType: "admin",
         action: "compliance.updated",
         targetId: id,
         targetType: "client_user",
-        metadata: { complianceStatus },
+        metadata: {
+          previousCompliance: user.complianceStatus,
+          newCompliance: complianceStatus,
+          reason: cleanReason,
+          changedBy: adminUsername,
+        },
       });
-      res.json({ success: true, user: updated });
+
+      // Send transactional status notification email if requested
+      let emailResult: any = null;
+      if (notifyUser && user.email) {
+        try {
+          emailResult = await sendAccountStatusEmail({
+            to: user.email,
+            name: user.fullName || user.username,
+            username: user.username,
+            newStatus: complianceStatus,
+            previousStatus: user.complianceStatus || "cleared",
+            reason: cleanReason || undefined,
+            changedBy: adminUsername,
+          });
+        } catch (emailErr) {
+          console.error(`Failed to dispatch compliance status email to ${user.email}:`, emailErr);
+        }
+      }
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(updated);
+
+      res.json({
+        success: true,
+        user: {
+          ...syncedUser,
+          subscriptionStatus: statusSummary.status,
+          subscriptionTier: statusSummary.tier,
+          statusLabel: statusSummary.statusLabel,
+          tierLabel: statusSummary.tierLabel,
+          isActive: statusSummary.isActive,
+          complianceStatus: statusSummary.complianceStatus,
+          isFlagged: statusSummary.isFlagged,
+          isPending: statusSummary.isPending,
+          isCleared: statusSummary.isCleared,
+          isRestricted: statusSummary.isRestricted,
+        },
+        emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+      });
     } catch (error) {
       console.error("Update compliance status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update client user subscription & tier (Admin only)
+  app.patch("/api/interface/client-users/:id/subscription", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { subscriptionStatus, subscriptionTier, trialDays } = req.body;
+
+      const user = await storage.getClientUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const updates: Partial<ClientUser> = {};
+
+      if (subscriptionTier) {
+        updates.subscriptionTier = normalizeTier(subscriptionTier);
+      }
+
+      if (subscriptionStatus) {
+        const cleanStatus = subscriptionStatus.toLowerCase().trim();
+        if (!['trialing', 'trial_expired', 'active', 'past_due', 'cancelled'].includes(cleanStatus)) {
+          return res.status(400).json({ message: "Invalid status. Must be: trialing, trial_expired, active, past_due, cancelled" });
+        }
+        updates.subscriptionStatus = cleanStatus;
+
+        if (cleanStatus === 'active') {
+          // Upgrading to active subscription clears trial end date
+          updates.trialEndsAt = null;
+        } else if (cleanStatus === 'trial_expired') {
+          // Set trial end date to now
+          updates.trialEndsAt = new Date();
+        } else if (cleanStatus === 'trialing') {
+          const days = typeof trialDays === 'number' && trialDays > 0 ? trialDays : 14;
+          updates.trialEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+        }
+      } else if (typeof trialDays === 'number' && trialDays > 0) {
+        updates.subscriptionStatus = 'trialing';
+        updates.trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+      }
+
+      const updated = await storage.updateClientUser(id, updates);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update user subscription" });
+      }
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(updated);
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "subscription.updated",
+        targetId: id,
+        targetType: "client_user",
+        metadata: { updates, effectiveStatus: statusSummary.status, effectiveTier: statusSummary.tier },
+      });
+
+      console.log(`[ADMIN_SUBSCRIPTION_UPDATE] Admin updated user ${user.username} (${id}): status=${statusSummary.status}, tier=${statusSummary.tier}`);
+
+      res.json({
+        success: true,
+        user: {
+          ...syncedUser,
+          subscriptionStatus: statusSummary.status,
+          subscriptionTier: statusSummary.tier,
+          statusLabel: statusSummary.statusLabel,
+          tierLabel: statusSummary.tierLabel,
+          trialDaysRemaining: statusSummary.trialDaysRemaining,
+          isActive: statusSummary.isActive,
+          isTrial: statusSummary.isTrial,
+          isTrialExpired: statusSummary.isTrialExpired,
+          isExpiringSoon: statusSummary.isExpiringSoon,
+        },
+      });
+    } catch (error) {
+      console.error("Admin subscription update error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
@@ -986,9 +3364,10 @@ Disallow: /*`);
       // Hash password before storing
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Start a 14-day trial for every new client user
-      const trialDays = 14;
-      const trialEndsAt = new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
+      const subscriptionTier = normalizeTier(req.body.subscriptionTier || "Pro");
+      const initialStatus = req.body.subscriptionStatus === "active" ? "active" : "trialing";
+      const trialDays = typeof req.body.trialDays === "number" && req.body.trialDays > 0 ? req.body.trialDays : 14;
+      const trialEndsAt = initialStatus === "active" ? null : new Date(Date.now() + trialDays * 24 * 60 * 60 * 1000);
 
       const newUser = await storage.createClientUser({
         username,
@@ -996,9 +3375,12 @@ Disallow: /*`);
         email: email || null,
         apiKeyId: apiKeyId || null,
         status: 'active',
-        subscriptionStatus: 'trialing',
+        subscriptionStatus: initialStatus,
+        subscriptionTier,
         trialEndsAt,
       });
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(newUser);
 
       void auditLog({
         actorId: (req as any).session?.userId,
@@ -1006,38 +3388,413 @@ Disallow: /*`);
         action: "client_user.created",
         targetId: newUser.id,
         targetType: "client_user",
-        metadata: { username },
+        metadata: { username, tier: subscriptionTier, status: initialStatus },
       });
-      res.json(newUser);
+      res.json({
+        ...syncedUser,
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        trialDaysRemaining: statusSummary.trialDaysRemaining,
+        isActive: statusSummary.isActive,
+        isTrial: statusSummary.isTrial,
+        isTrialExpired: statusSummary.isTrialExpired,
+        isExpiringSoon: statusSummary.isExpiringSoon,
+      });
     } catch (error) {
       console.error("Create client user error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
   });
 
-  // Delete a client user (Admin only)
-  app.delete("/api/interface/client-users/:id", requireAuth, async (req, res) => {
+  // Comprehensive Account Status Update (Admin only)
+  app.patch("/api/interface/client-users/:id/status", requireAuth, async (req, res) => {
     try {
       const { id } = req.params;
-      
-      // Check if user exists
+      const { status, complianceStatus, reason, notifyUser = true } = req.body;
+
       const user = await storage.getClientUser(id);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // For now, we don't have a delete method, so we'll suspend the user instead
-      const updated = await storage.updateClientUser(id, { status: 'suspended' });
+      const updates: Partial<ClientUser> = {};
+      const now = new Date();
+      const adminId = (req as any).adminUserId || (req as any).session?.userId || "admin";
+      let adminUsername = "Administrator";
+      try {
+        const adminUser = await storage.getUser(adminId);
+        if (adminUser?.username) adminUsername = adminUser.username;
+      } catch {}
+
+      if (status !== undefined) {
+        const cleanStatus = String(status).toLowerCase().trim();
+        if (!['active', 'suspended', 'deactivated', 'inactive'].includes(cleanStatus)) {
+          return res.status(400).json({ message: "Invalid status. Must be: active, suspended, deactivated" });
+        }
+        updates.status = cleanStatus;
+        if (cleanStatus === 'deactivated') {
+          updates.deactivatedAt = now;
+        } else if (cleanStatus === 'active') {
+          updates.deactivatedAt = null;
+        }
+      }
+
+      if (complianceStatus !== undefined) {
+        const cleanCompliance = String(complianceStatus).toLowerCase().trim();
+        if (!['pending', 'cleared', 'flagged', 'suspended'].includes(cleanCompliance)) {
+          return res.status(400).json({ message: "Invalid compliance status. Must be: pending, cleared, flagged, suspended" });
+        }
+        updates.complianceStatus = cleanCompliance;
+      }
+
+      const cleanReason = typeof reason === 'string' && reason.trim() ? reason.trim() : null;
+      if (cleanReason) {
+        updates.statusReason = cleanReason;
+      }
+      updates.statusUpdatedAt = now;
+      updates.statusUpdatedBy = adminUsername;
+
+      // Update status audit history
+      const existingHistory = Array.isArray(user.statusHistory) ? [...user.statusHistory] : [];
+      existingHistory.unshift({
+        timestamp: now.toISOString(),
+        fromStatus: user.status,
+        toStatus: updates.status || user.status,
+        fromCompliance: user.complianceStatus,
+        toCompliance: updates.complianceStatus || user.complianceStatus,
+        reason: cleanReason || 'Status update via administration portal',
+        changedBy: adminUsername,
+      });
+      updates.statusHistory = existingHistory.slice(0, 50);
+
+      const updated = await storage.updateClientUser(id, updates);
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update account status" });
+      }
+
+      const effectiveStatus = updates.status || user.status;
+      const effectiveCompliance = updates.complianceStatus || user.complianceStatus;
+
+      // If suspended or deactivated: immediately revoke active sessions and pause API key
+      if (effectiveStatus === 'suspended' || effectiveStatus === 'deactivated' || effectiveCompliance === 'suspended') {
+        const revokedCount = revokeUserSessions(id);
+        console.log(`[STATUS_ENFORCEMENT] Revoked ${revokedCount} session(s) for user ${user.username} (${id})`);
+
+        if (user.apiKeyId) {
+          try {
+            await storage.updateApiKey(user.apiKeyId, { status: 'suspended', enabled: false });
+          } catch (keyErr) {
+            console.error(`Failed to pause API key for user ${id}:`, keyErr);
+          }
+        }
+      } else if (effectiveStatus === 'active' && (effectiveCompliance === 'cleared' || !effectiveCompliance)) {
+        // Re-enable API key if previously suspended
+        if (user.apiKeyId) {
+          try {
+            const currentKey = await storage.getApiKeyById(user.apiKeyId);
+            if (currentKey && (currentKey.status === 'suspended' || !currentKey.enabled)) {
+              await storage.updateApiKey(user.apiKeyId, { status: 'active', enabled: true });
+            }
+          } catch (keyErr) {
+            console.error(`Failed to reactivate API key for cleared user ${id}:`, keyErr);
+          }
+        }
+      }
 
       void auditLog({
-        actorId: (req as any).session?.userId,
+        actorId: adminId,
         actorType: "admin",
-        action: "client_user.suspended",
+        action: "client_user.status_updated",
         targetId: id,
         targetType: "client_user",
-        metadata: { username: user.username },
+        metadata: {
+          previousStatus: user.status,
+          newStatus: effectiveStatus,
+          previousCompliance: user.complianceStatus,
+          newCompliance: effectiveCompliance,
+          reason: cleanReason,
+          changedBy: adminUsername,
+        },
       });
-      res.json({ message: "User suspended", user: updated });
+
+      let emailResult: any = null;
+      if (notifyUser && user.email) {
+        try {
+          const reportStatus = (effectiveStatus === 'suspended' || effectiveCompliance === 'suspended')
+            ? 'suspended'
+            : effectiveStatus === 'deactivated'
+            ? 'deactivated'
+            : effectiveCompliance === 'flagged'
+            ? 'flagged'
+            : effectiveCompliance === 'pending'
+            ? 'pending'
+            : 'cleared';
+
+          emailResult = await sendAccountStatusEmail({
+            to: user.email,
+            name: user.fullName || user.username,
+            username: user.username,
+            newStatus: reportStatus,
+            previousStatus: user.status,
+            reason: cleanReason || undefined,
+            changedBy: adminUsername,
+          });
+        } catch (emailErr) {
+          console.error(`Failed to dispatch status update email to ${user.email}:`, emailErr);
+        }
+      }
+
+      const { user: syncedUser, statusSummary } = await syncClientUserSubscription(updated);
+
+      return res.json({
+        success: true,
+        message: `Account status successfully updated to ${effectiveStatus} (${effectiveCompliance || 'cleared'})`,
+        user: {
+          ...syncedUser,
+          subscriptionStatus: statusSummary.status,
+          subscriptionTier: statusSummary.tier,
+          statusLabel: statusSummary.statusLabel,
+          tierLabel: statusSummary.tierLabel,
+          isActive: statusSummary.isActive,
+          complianceStatus: statusSummary.complianceStatus,
+          isFlagged: statusSummary.isFlagged,
+          isPending: statusSummary.isPending,
+          isCleared: statusSummary.isCleared,
+          isRestricted: statusSummary.isRestricted,
+        },
+        emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+      });
+    } catch (error) {
+      console.error("Update account status error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Deactivate a client user (Soft-delete / Suspended with preservation of records)
+  app.post("/api/interface/client-users/:id/deactivate", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { reason, notifyUser = true } = req.body;
+
+      const user = await storage.getClientUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const now = new Date();
+      const adminId = (req as any).adminUserId || (req as any).session?.userId || "admin";
+      let adminUsername = "Administrator";
+      try {
+        const adminUser = await storage.getUser(adminId);
+        if (adminUser?.username) adminUsername = adminUser.username;
+      } catch {}
+
+      const cleanReason = typeof reason === 'string' && reason.trim() ? reason.trim() : "Account deactivated by administrator";
+
+      const existingHistory = Array.isArray(user.statusHistory) ? [...user.statusHistory] : [];
+      existingHistory.unshift({
+        timestamp: now.toISOString(),
+        fromStatus: user.status,
+        toStatus: "deactivated",
+        fromCompliance: user.complianceStatus,
+        toCompliance: user.complianceStatus,
+        reason: cleanReason,
+        changedBy: adminUsername,
+      });
+
+      const updated = await storage.updateClientUser(id, {
+        status: "deactivated",
+        deactivatedAt: now,
+        statusReason: cleanReason,
+        statusUpdatedAt: now,
+        statusUpdatedBy: adminUsername,
+        statusHistory: existingHistory.slice(0, 50),
+      });
+
+      revokeUserSessions(id);
+
+      if (user.apiKeyId) {
+        try {
+          await storage.updateApiKey(user.apiKeyId, { status: "suspended", enabled: false });
+        } catch (keyErr) {
+          console.error(`Failed to pause API key on deactivation for user ${id}:`, keyErr);
+        }
+      }
+
+      void auditLog({
+        actorId: adminId,
+        actorType: "admin",
+        action: "client_user.deactivated",
+        targetId: id,
+        targetType: "client_user",
+        metadata: { username: user.username, reason: cleanReason, changedBy: adminUsername },
+      });
+
+      let emailResult: any = null;
+      if (notifyUser && user.email) {
+        try {
+          emailResult = await sendAccountStatusEmail({
+            to: user.email,
+            name: user.fullName || user.username,
+            username: user.username,
+            newStatus: "deactivated",
+            previousStatus: user.status,
+            reason: cleanReason,
+            changedBy: adminUsername,
+          });
+        } catch (emailErr) {
+          console.error(`Failed to dispatch deactivation email to ${user.email}:`, emailErr);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: "User account deactivated successfully",
+        user: updated,
+        emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+      });
+    } catch (error) {
+      console.error("Deactivate client user error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Delete a client user (Admin only - supports permanent removal or soft-delete)
+  app.delete("/api/interface/client-users/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const isPermanent = req.query.permanent === "true" || req.query.mode === "permanent" || req.body?.permanent === true;
+      const reason = req.body?.reason || (req.query.reason as string) || "Account deleted by administrator";
+      const notifyUser = req.body?.notifyUser !== false && req.query.notifyUser !== "false";
+
+      const user = await storage.getClientUser(id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const adminId = (req as any).adminUserId || (req as any).session?.userId || "admin";
+      let adminUsername = "Administrator";
+      try {
+        const adminUser = await storage.getUser(adminId);
+        if (adminUser?.username) adminUsername = adminUser.username;
+      } catch {}
+
+      // Invalidate active sessions immediately
+      revokeUserSessions(id);
+
+      let emailResult: any = null;
+      if (notifyUser && user.email) {
+        try {
+          emailResult = await sendAccountStatusEmail({
+            to: user.email,
+            name: user.fullName || user.username,
+            username: user.username,
+            newStatus: "deleted",
+            previousStatus: user.status,
+            reason,
+            changedBy: adminUsername,
+          });
+        } catch (emailErr) {
+          console.error(`Failed to dispatch deletion email to ${user.email}:`, emailErr);
+        }
+      }
+
+      if (isPermanent) {
+        // 1. Delete user redirect URLs
+        try {
+          await storage.deleteUserRedirectUrls(id);
+        } catch (urlErr) {
+          console.error(`Failed to clean up redirect URLs for user ${id}:`, urlErr);
+        }
+
+        // 2. Delete or disable associated API key
+        if (user.apiKeyId) {
+          try {
+            await storage.deleteApiKey(user.apiKeyId);
+          } catch (keyErr) {
+            console.error(`Failed to delete API key for user ${id}:`, keyErr);
+          }
+        }
+
+        // 3. Delete client user permanently from storage
+        const deleted = await storage.deleteClientUser(id);
+        if (!deleted) {
+          return res.status(500).json({ message: "Failed to permanently remove user record" });
+        }
+
+        void auditLog({
+          actorId: adminId,
+          actorType: "admin",
+          action: "client_user.permanently_deleted",
+          targetId: id,
+          targetType: "client_user",
+          metadata: {
+            username: user.username,
+            email: user.email,
+            reason,
+            changedBy: adminUsername,
+            permanent: true,
+          },
+        });
+
+        console.log(`[USER_DELETION] Permanently deleted user ${user.username} (${id}) by ${adminUsername}`);
+        return res.json({
+          success: true,
+          message: `User ${user.username} has been permanently deleted from the system.`,
+          id,
+          permanent: true,
+          emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+        });
+      } else {
+        // Soft delete / suspend
+        const now = new Date();
+        const existingHistory = Array.isArray(user.statusHistory) ? [...user.statusHistory] : [];
+        existingHistory.unshift({
+          timestamp: now.toISOString(),
+          fromStatus: user.status,
+          toStatus: "suspended",
+          fromCompliance: user.complianceStatus,
+          toCompliance: "suspended",
+          reason,
+          changedBy: adminUsername,
+        });
+
+        const updated = await storage.updateClientUser(id, {
+          status: "suspended",
+          complianceStatus: "suspended",
+          statusReason: reason,
+          statusUpdatedAt: now,
+          statusUpdatedBy: adminUsername,
+          statusHistory: existingHistory.slice(0, 50),
+        });
+
+        if (user.apiKeyId) {
+          try {
+            await storage.updateApiKey(user.apiKeyId, { status: "suspended", enabled: false });
+          } catch (keyErr) {
+            console.error(`Failed to pause API key for user ${id}:`, keyErr);
+          }
+        }
+
+        void auditLog({
+          actorId: adminId,
+          actorType: "admin",
+          action: "client_user.suspended",
+          targetId: id,
+          targetType: "client_user",
+          metadata: { username: user.username, reason, changedBy: adminUsername, permanent: false },
+        });
+
+        return res.json({
+          success: true,
+          message: "User suspended (soft-deleted)",
+          user: updated,
+          permanent: false,
+          emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+        });
+      }
     } catch (error) {
       console.error("Delete client user error:", error);
       res.status(500).json({ message: "Internal server error" });
@@ -1045,6 +3802,378 @@ Disallow: /*`);
   });
 
   // ========== END ADMIN CLIENT USER MANAGEMENT ROUTES ==========
+
+  // ========== EMAIL & SMTP MANAGEMENT ROUTES ==========
+
+  // 1. Get SMTP Configuration
+  app.get("/api/interface/email/settings", requireAuth, async (req, res) => {
+    try {
+      const config = await getSmtpConfig();
+      res.json({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        user: config.user,
+        passMasked: config.pass ? "••••••••" : "",
+        isConfigured: !!(config.host && config.user && config.pass),
+        from: config.from,
+        fromName: config.fromName,
+        providerPreset: config.providerPreset || "custom",
+      });
+    } catch (error: any) {
+      console.error("Get email settings error:", error);
+      res.status(500).json({ message: "Failed to retrieve email settings" });
+    }
+  });
+
+  // 2. Save SMTP Configuration
+  const saveSmtpSchema = z.object({
+    host: z.string().trim(),
+    port: z.coerce.number().int().min(1).max(65535),
+    secure: z.boolean().default(false),
+    user: z.string().trim(),
+    pass: z.string().optional(),
+    from: z.string().email("Invalid sender email address").trim(),
+    fromName: z.string().trim().default("CleanTraffic Security"),
+    providerPreset: z.string().default("custom"),
+  });
+
+  app.post("/api/interface/email/settings", requireAuth, async (req, res) => {
+    try {
+      const parse = saveSmtpSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid SMTP settings", errors: parse.error.flatten().fieldErrors });
+      }
+
+      await saveSmtpConfig(parse.data);
+      const updated = await getSmtpConfig();
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "email.update_smtp_settings",
+        metadata: { host: updated.host, port: updated.port, from: updated.from, preset: updated.providerPreset },
+      });
+
+      res.json({
+        message: "SMTP settings saved and updated successfully!",
+        isConfigured: !!(updated.host && updated.user && updated.pass),
+        settings: {
+          host: updated.host,
+          port: updated.port,
+          secure: updated.secure,
+          user: updated.user,
+          passMasked: updated.pass ? "••••••••" : "",
+          from: updated.from,
+          fromName: updated.fromName,
+          providerPreset: updated.providerPreset,
+        },
+      });
+    } catch (error: any) {
+      console.error("Save email settings error:", error);
+      res.status(500).json({ message: "Failed to save SMTP settings" });
+    }
+  });
+
+  // 3. Test SMTP Connection & Send Test Email
+  const testSmtpSchema = z.object({
+    host: z.string().optional(),
+    port: z.coerce.number().optional(),
+    secure: z.boolean().optional(),
+    user: z.string().optional(),
+    pass: z.string().optional(),
+    from: z.string().optional(),
+    fromName: z.string().optional(),
+    testRecipient: z.string().email().optional(),
+  });
+
+  app.post("/api/interface/email/test-connection", requireAuth, async (req, res) => {
+    try {
+      const parse = testSmtpSchema.safeParse(req.body);
+      const testData = parse.success ? parse.data : {};
+      
+      const configOverride: Partial<SmtpConfig> = {};
+      if (testData.host) configOverride.host = testData.host;
+      if (testData.port) configOverride.port = testData.port;
+      if (testData.secure !== undefined) configOverride.secure = testData.secure;
+      if (testData.user) configOverride.user = testData.user;
+      if (testData.pass && testData.pass !== "••••••••") configOverride.pass = testData.pass;
+      if (testData.from) configOverride.from = testData.from;
+      if (testData.fromName) configOverride.fromName = testData.fromName;
+
+      const result = await verifySmtpConnection(configOverride);
+
+      if (!result.success) {
+        return res.status(400).json(result);
+      }
+
+      // If test recipient provided, send an actual test email
+      if (testData.testRecipient) {
+        const sendResult = await sendEmail({
+          to: testData.testRecipient,
+          subject: "CleanTraffic Security - SMTP Connection Test",
+          html: `<div style="font-family:sans-serif; background:#0b0f19; color:#f8fafc; padding:32px; border-radius:12px;">
+            <h2 style="color:#38bdf8; margin-top:0;">✅ SMTP Integration Verified!</h2>
+            <p>Congratulations! Your SMTP settings on CleanTraffic Security are functioning properly.</p>
+            <p style="color:#94a3b8; font-size:13px;">Sent at: ${new Date().toUTCString()}</p>
+          </div>`,
+          templateType: "test_connection",
+        });
+
+        if (!sendResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: `SMTP connected, but failed to deliver test email to ${testData.testRecipient}: ${sendResult.message}`,
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: `Connection successful! Test email delivered to ${testData.testRecipient}.`,
+        });
+      }
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Test SMTP error:", error);
+      res.status(500).json({ success: false, message: error?.message || "Internal error testing SMTP" });
+    }
+  });
+
+  // 4. Get Email Templates
+  app.get("/api/interface/email/templates", requireAuth, async (req, res) => {
+    try {
+      const types: (keyof typeof defaultEmailTemplates)[] = ["verification", "reset", "welcome", "custom", "newsletter"];
+      const templates: Record<string, { subject: string; html: string; defaultSubject: string; defaultHtml: string }> = {};
+
+      for (const t of types) {
+        const stored = await getEmailTemplate(t);
+        const def = defaultEmailTemplates[t] || defaultEmailTemplates.custom;
+        templates[t] = {
+          subject: stored.subject,
+          html: stored.html,
+          defaultSubject: def.subject,
+          defaultHtml: def.html,
+        };
+      }
+
+      res.json({ templates });
+    } catch (error: any) {
+      console.error("Get templates error:", error);
+      res.status(500).json({ message: "Failed to load email templates" });
+    }
+  });
+
+  // 5. Save Email Template
+  const saveTemplateSchema = z.object({
+    type: z.enum(["verification", "reset", "welcome", "custom", "newsletter"]),
+    subject: z.string().min(1, "Subject is required"),
+    html: z.string().min(1, "HTML content is required"),
+  });
+
+  app.post("/api/interface/email/templates", requireAuth, async (req, res) => {
+    try {
+      const parse = saveTemplateSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid template payload", errors: parse.error.flatten().fieldErrors });
+      }
+
+      const { type, subject, html } = parse.data;
+      await saveEmailTemplate(type, { subject, html });
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: `email.update_template_${type}`,
+        metadata: { subject },
+      });
+
+      res.json({ message: `Template '${type}' saved and activated successfully!` });
+    } catch (error: any) {
+      console.error("Save template error:", error);
+      res.status(500).json({ message: "Failed to save email template" });
+    }
+  });
+
+  // 6. Preview Template with Sample Variables
+  app.post("/api/interface/email/templates/preview", requireAuth, async (req, res) => {
+    try {
+      const { subject = "", html = "", sampleVars = {} } = req.body;
+      const sampleVariables = {
+        name: "Alex Mercer",
+        username: "alex_m",
+        email: "alex.mercer@enterprise.io",
+        code: "839201",
+        verification_link: "https://cleantraffic.io/verify-email?token=ct_demo_preview_token",
+        reset_link: "https://cleantraffic.io/signin",
+        app_name: "CleanTraffic Security",
+        support_email: "support@cleantraffic.io",
+        current_year: String(new Date().getFullYear()),
+        login_link: "https://cleantraffic.io/signin",
+        api_key: "ctc_9f83a210c44e9912",
+        custom_message: `<p>We are rolling out enhanced bot detection and threat analysis algorithms. Your traffic security filters have automatically been updated with zero downtime.</p>`,
+        ...sampleVars,
+      };
+
+      const renderedSubject = renderTemplate(subject, sampleVariables);
+      const renderedHtml = renderTemplate(html, sampleVariables);
+
+      res.json({ renderedSubject, renderedHtml });
+    } catch (error: any) {
+      console.error("Preview template error:", error);
+      res.status(500).json({ message: "Failed to render template preview" });
+    }
+  });
+
+  // 7. Send Direct Email to a Specific User
+  const sendToUserSchema = z.object({
+    userId: z.string().optional(),
+    email: z.string().email("Valid email required"),
+    subject: z.string().min(1, "Subject is required"),
+    message: z.string().min(1, "Message is required"),
+    name: z.string().optional(),
+    isHtml: z.boolean().default(true),
+  });
+
+  app.post("/api/interface/email/send-to-user", requireAuth, async (req, res) => {
+    try {
+      const parse = sendToUserSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid email parameters", errors: parse.error.flatten().fieldErrors });
+      }
+
+      const { email, subject, message, name, isHtml } = parse.data;
+
+      // Wrap custom message in standard CleanTraffic branded container if it's plain text
+      let htmlContent = message;
+      if (!message.includes("<html") && !message.includes("<div")) {
+        const customTpl = await getEmailTemplate("custom");
+        htmlContent = renderTemplate(customTpl.html, {
+          subject,
+          custom_message: message.split("\n").map(p => `<p style="margin: 0 0 16px;">${p}</p>`).join(""),
+          name: name || email.split("@")[0],
+          email,
+        });
+      }
+
+      const result = await sendEmail({
+        to: email,
+        subject,
+        html: htmlContent,
+        templateType: "direct_admin_message",
+        variables: { name, email },
+      });
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "email.send_direct",
+        metadata: { to: email, subject, status: result.success ? "success" : "failed" },
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Send email to user error:", error);
+      res.status(500).json({ success: false, message: error?.message || "Failed to send email" });
+    }
+  });
+
+  // 8. Send Newsletter / Broadcast Email
+  const broadcastSchema = z.object({
+    audience: z.enum(["all", "newsletter", "active_trial", "active_subscribers"]).default("all"),
+    subject: z.string().min(1, "Subject is required"),
+    message: z.string().min(1, "Message is required"),
+  });
+
+  app.post("/api/interface/email/broadcast", requireAuth, async (req, res) => {
+    try {
+      const parse = broadcastSchema.safeParse(req.body);
+      if (!parse.success) {
+        return res.status(400).json({ message: "Invalid broadcast parameters", errors: parse.error.flatten().fieldErrors });
+      }
+
+      const { audience, subject, message } = parse.data;
+      const allUsers = await storage.getAllClientUsers();
+
+      // Filter audience
+      let recipients = allUsers.filter(u => u.email && u.email.includes("@"));
+
+      if (audience === "newsletter") {
+        recipients = recipients.filter(u => u.newsletter === true);
+      } else if (audience === "active_trial") {
+        recipients = recipients.filter(u => u.subscriptionStatus === "trialing" && u.status === "active");
+      } else if (audience === "active_subscribers") {
+        recipients = recipients.filter(u => u.subscriptionStatus === "active");
+      }
+
+      if (recipients.length === 0) {
+        return res.json({
+          success: true,
+          sentCount: 0,
+          failedCount: 0,
+          message: "No users matched the selected audience criteria.",
+        });
+      }
+
+      const newsletterTpl = await getEmailTemplate("newsletter");
+      let successCount = 0;
+      let failCount = 0;
+
+      // Process delivery
+      for (const u of recipients) {
+        const userEmail = u.email!.trim();
+        const userName = u.fullName || u.username;
+        const html = renderTemplate(newsletterTpl.html, {
+          subject,
+          custom_message: message.split("\n").map(p => `<p style="margin: 0 0 16px;">${p}</p>`).join(""),
+          name: userName,
+          email: userEmail,
+        });
+
+        const res = await sendEmail({
+          to: userEmail,
+          subject,
+          html,
+          templateType: "broadcast_newsletter",
+          variables: { name: userName, email: userEmail },
+        });
+
+        if (res.success) successCount++;
+        else failCount++;
+      }
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "email.broadcast",
+        metadata: { audience, subject, totalRecipients: recipients.length, successCount, failCount },
+      });
+
+      res.json({
+        success: true,
+        sentCount: successCount,
+        failedCount: failCount,
+        totalRecipients: recipients.length,
+        message: `Broadcast complete: ${successCount} emails delivered (${failCount} failed).`,
+      });
+    } catch (error: any) {
+      console.error("Broadcast email error:", error);
+      res.status(500).json({ success: false, message: error?.message || "Failed to process broadcast" });
+    }
+  });
+
+  // 9. Get Outbound Email Logs
+  app.get("/api/interface/email/logs", requireAuth, async (req, res) => {
+    try {
+      const logs = await getEmailLogs();
+      res.json({ logs });
+    } catch (error: any) {
+      console.error("Get email logs error:", error);
+      res.status(500).json({ message: "Failed to retrieve email logs" });
+    }
+  });
+
+  // ========== END EMAIL & SMTP MANAGEMENT ROUTES ==========
 
   // ========== WHITE-LABEL DOMAIN SETTINGS ==========
   
@@ -1175,10 +4304,24 @@ Disallow: /*`);
     }
   });
 
-  // Pause/Resume API key (protected)
-  app.post("/api/api-keys/:id/pause", requireAuth, async (req, res) => {
+  // Pause/Resume API key (Admin or Key Owner)
+  app.post("/api/api-keys/:id/pause", async (req: any, res) => {
     try {
+      const auth = getSessionOrToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
       const { id } = req.params;
+
+      // If client user, strictly validate ownership of this API key
+      if (auth.type === 'client') {
+        const clientUser = await storage.getClientUser(auth.userId);
+        if (!clientUser || clientUser.apiKeyId !== id) {
+          return res.status(403).json({ message: "Forbidden. You can only manage your own API key." });
+        }
+      }
+
       const paused = await storage.pauseApiKey(id);
       
       if (!paused) {
@@ -1186,8 +4329,8 @@ Disallow: /*`);
       }
 
       void auditLog({
-        actorId: (req as any).session?.userId,
-        actorType: "admin",
+        actorId: auth.userId,
+        actorType: auth.type === "admin" ? "admin" : "system",
         action: "api_key.paused",
         targetId: id,
         targetType: "api_key",
@@ -1199,10 +4342,24 @@ Disallow: /*`);
     }
   });
 
-  // Resume API key (protected)
-  app.post("/api/api-keys/:id/resume", requireAuth, async (req, res) => {
+  // Resume API key (Admin or Key Owner)
+  app.post("/api/api-keys/:id/resume", async (req: any, res) => {
     try {
+      const auth = getSessionOrToken(req);
+      if (!auth) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
       const { id } = req.params;
+
+      // If client user, strictly validate ownership of this API key
+      if (auth.type === 'client') {
+        const clientUser = await storage.getClientUser(auth.userId);
+        if (!clientUser || clientUser.apiKeyId !== id) {
+          return res.status(403).json({ message: "Forbidden. You can only manage your own API key." });
+        }
+      }
+
       const resumed = await storage.pauseApiKey(id); // pauseApiKey toggles, so it resumes paused keys
       
       if (!resumed) {
@@ -1210,8 +4367,8 @@ Disallow: /*`);
       }
 
       void auditLog({
-        actorId: (req as any).session?.userId,
-        actorType: "admin",
+        actorId: auth.userId,
+        actorType: auth.type === "admin" ? "admin" : "system",
         action: "api_key.resumed",
         targetId: id,
         targetType: "api_key",
@@ -1247,104 +4404,195 @@ Disallow: /*`);
     }
   });
 
+  // Helper function to extract API key from any request location
+  function extractApiKeyFromRequest(req: any): string {
+    const headerKey = ((req.headers['x-api-key'] || req.headers['api-key']) as string | undefined)?.trim();
+    if (headerKey) return headerKey;
+    const authHeader = req.headers['authorization'] as string | undefined;
+    if (authHeader) {
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+      if (token) return token;
+    }
+    const bodyKey = (req.body?.apiKey || req.body?.api_key) as string | undefined;
+    if (bodyKey?.trim()) return bodyKey.trim();
+    const queryKey = (req.query?.api_key || req.query?.apiKey) as string | undefined;
+    if (queryKey?.trim()) return queryKey.trim();
+    const queryKeys = Object.keys(req.query || {});
+    if (queryKeys.length > 0 && queryKeys[0] && !queryKeys[0].includes('=')) {
+      return queryKeys[0].trim();
+    }
+    return '';
+  }
+
+  // Centralized API key validator for /api/classify traffic routing
+  async function validateApiKeyForClassification(apiKey: string | null): Promise<{
+    valid: boolean;
+    statusCode: number;
+    code: string;
+    message: string;
+    apiKeyId: string | null;
+    limitReached: boolean;
+    entitlementType?: string;
+  }> {
+    const authRes = await authorizeApiKey(apiKey);
+    return {
+      valid: authRes.authorized,
+      statusCode: authRes.statusCode,
+      code: authRes.code,
+      message: authRes.message,
+      apiKeyId: authRes.apiKeyId,
+      limitReached: authRes.limitReached,
+      entitlementType: authRes.entitlementType,
+    };
+  }
+
   // Classification endpoint (GET with API key support)
   app.get("/api/classify", classifyLimiter, async (req, res) => {
-    // Support both formats: ?api_key=XXX or just the first query param value
-    let apiKey = req.query.api_key as string;
-    
-    // If api_key not provided, check if first query param is the key itself (backward compatibility)
-    if (!apiKey) {
-      const queryKeys = Object.keys(req.query);
-      if (queryKeys.length > 0) {
-        apiKey = queryKeys[0];
-      }
-    }
-    
-    // REQUIRE API key - no anonymous classification
-    // Redirect to Google for white-label security (don't reveal it's an API)
-    if (!apiKey) {
-      return res.redirect(301, 'https://www.google.com');
-    }
-    
-    let limitReached = false;
-    let apiKeyId: string | null = null;
-    
-    // Validate API key
-    const validKey = await storage.getApiKey(apiKey);
-    if (!validKey || !validKey.enabled) {
-      return res.status(401).json({ 
-        error: "Invalid or disabled API key",
-        status: "unauthorized"
+    const apiKey = extractApiKeyFromRequest(req);
+    const authResult = await validateApiKeyForClassification(apiKey);
+
+    if (!authResult.valid) {
+      void auditLog({
+        actorType: "system",
+        action: "classification.auth_denied",
+        targetId: authResult.apiKeyId,
+        targetType: "api_key",
+        metadata: {
+          code: authResult.code,
+          statusCode: authResult.statusCode,
+          ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress,
+        },
+      });
+
+      return res.status(authResult.statusCode).json({
+        visitorType: "Bot",
+        visitor_type: "Bot",
+        isHuman: false,
+        is_human: false,
+        redirectUrl: null,
+        redirect_url: null,
+        destination: null,
+        url: null,
+        status: authResult.statusCode === 401 ? "unauthorized" : "forbidden",
+        code: authResult.code,
+        message: authResult.message,
+        error: authResult.message,
       });
     }
-    
-    // Store API key ID for classification tracking
-    apiKeyId = validKey.id;
-    
-    // Check subscription status for the API key owner — expired trials get bot fallback
-    const keyOwner = await storage.getClientUserByApiKey(apiKeyId);
-    if (keyOwner) {
-      const now = new Date();
-      const subActive =
-        keyOwner.subscriptionStatus === 'active' ||
-        (keyOwner.subscriptionStatus === 'trialing' && (!keyOwner.trialEndsAt || keyOwner.trialEndsAt > now));
-      if (!subActive) limitReached = true;
-    }
 
-    // Check and increment usage count
-    const usageAllowed = await storage.incrementApiKeyUsage(apiKey);
-    if (!usageAllowed) {
-      // Don't return error - classify as Bot instead (forces bot URL redirect)
-      limitReached = true;
-    }
-    
-    // Continue with classification logic, passing API key ID
-    return handleClassification(req, res, limitReached, apiKeyId);
+    return handleClassification(req, res, authResult.limitReached, authResult.apiKeyId);
   });
 
   // Public classification endpoint (POST) - with API key support for PHP scripts
   app.post("/api/classify", classifyLimiter, async (req, res) => {
-    // Check for API key in header (X-API-Key)
-    const apiKeyFromHeader = req.headers['x-api-key'] as string;
-    
-    // REQUIRE API key - no anonymous classification
-    // Redirect to Google for white-label security (don't reveal it's an API)
-    if (!apiKeyFromHeader) {
-      return res.redirect(301, 'https://www.google.com');
+    // If request originates from the Bot Defense Simulator, handle via non-metered simulation path
+    const isSimulatorRequest = req.headers["x-simulator-request"] === "true" || req.body?.isSimulator === true;
+    if (isSimulatorRequest) {
+      let apiKeyId: string | null = null;
+      const apiKey = extractApiKeyFromRequest(req);
+      if (apiKey && apiKey !== "demo") {
+        const record = (await storage.getApiKey(apiKey)) || (await storage.getApiKeyById(apiKey));
+        if (record) {
+          apiKeyId = record.id;
+        }
+      }
+      return handleClassification(req, res, false, apiKeyId, null, true);
     }
-    
-    let limitReached = false;
-    let apiKeyId: string | null = null;
-    
-    // Validate API key
-    const validKey = await storage.getApiKey(apiKeyFromHeader);
-    if (!validKey || !validKey.enabled) {
-      return res.status(401).json({ 
-        error: "Invalid or disabled API key",
-        status: "unauthorized"
+
+    const apiKey = extractApiKeyFromRequest(req);
+    const authResult = await validateApiKeyForClassification(apiKey);
+
+    if (!authResult.valid) {
+      void auditLog({
+        actorType: "system",
+        action: "classification.auth_denied",
+        targetId: authResult.apiKeyId,
+        targetType: "api_key",
+        metadata: {
+          code: authResult.code,
+          statusCode: authResult.statusCode,
+          ip: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket?.remoteAddress,
+        },
+      });
+
+      return res.status(authResult.statusCode).json({
+        visitorType: "Bot",
+        visitor_type: "Bot",
+        isHuman: false,
+        is_human: false,
+        redirectUrl: null,
+        redirect_url: null,
+        destination: null,
+        url: null,
+        status: authResult.statusCode === 401 ? "unauthorized" : "forbidden",
+        code: authResult.code,
+        message: authResult.message,
+        error: authResult.message,
       });
     }
-    
-    // Store API key ID for classification tracking and redirect URL lookup
-    apiKeyId = validKey.id;
 
-    // Check subscription status for the API key owner — expired trials get bot fallback
-    const postKeyOwner = await storage.getClientUserByApiKey(apiKeyId);
-    if (postKeyOwner) {
-      const now = new Date();
-      const subActive =
-        postKeyOwner.subscriptionStatus === 'active' ||
-        (postKeyOwner.subscriptionStatus === 'trialing' && (!postKeyOwner.trialEndsAt || postKeyOwner.trialEndsAt > now));
-      if (!subActive) limitReached = true;
+    return handleClassification(req, res, authResult.limitReached, authResult.apiKeyId);
+  });
+
+  // Dedicated Simulation & Defense Testing endpoint
+  // Strictly for simulator testing: does NOT decrement user API quota, does NOT pollute production visitor logs,
+  // and is rate limited to 10 test evaluations per 1 minute.
+  app.post("/api/classify/simulate", simulatorLimiter, async (req, res) => {
+    let apiKeyId: string | null = null;
+    const apiKey = extractApiKeyFromRequest(req);
+    if (apiKey && apiKey !== "demo") {
+      const record = (await storage.getApiKey(apiKey)) || (await storage.getApiKeyById(apiKey));
+      if (record) {
+        apiKeyId = record.id;
+      }
     }
-    
-    // Check and increment usage count
-    const usageAllowed = await storage.incrementApiKeyUsage(apiKeyFromHeader);
-    if (!usageAllowed) {
-      limitReached = true;
+    return handleClassification(req, res, false, apiKeyId, null, true);
+  });
+
+  // Client error reporting endpoint (from PHP script)
+  app.post("/api/client-error", async (req, res) => {
+    try {
+      const { apiKey, ip, error } = req.body;
+      let apiKeyId = null;
+      
+      if (apiKey) {
+        const validKey = await storage.getApiKey(apiKey);
+        if (validKey) apiKeyId = validKey.id;
+      }
+      
+      const classification = await storage.createClassification({
+        ipAddress: ip || 'Unknown',
+        location: 'API Connection Error',
+        country: 'Unknown',
+        countryCode: '',
+        city: '',
+        region: '',
+        browser: 'PHP Client',
+        deviceType: 'Server',
+        visitorType: 'Error',
+        isp: error ? String(error).substring(0, 100) : 'Unknown Error',
+        detectionMethod: 'Client Connection Failure',
+        apiKeyId: apiKeyId
+      });
+      
+      if (apiKeyId) {
+        broadcastClassification(apiKeyId, {
+          id: classification.id || Math.random().toString(),
+          timestamp: new Date().toISOString(),
+          ipAddress: ip || 'Unknown',
+          visitorType: 'Bot',
+          detectionMethod: 'Client Connection Failure',
+          country: 'Unknown',
+          isp: error ? String(error).substring(0, 100) : 'Unknown Error',
+          action: 'Blocked'
+        });
+      }
+      
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Failed to log client error:", err);
+      res.status(500).json({ error: "Internal error" });
     }
-    
-    return handleClassification(req, res, limitReached, apiKeyId);
   });
 
   // ========== BILLING ROUTES ==========
@@ -1359,24 +4607,83 @@ Disallow: /*`);
   // GET billing status for the authenticated client user
   app.get("/api/user/billing", requireClientAuth, async (req: any, res) => {
     try {
-      const user = await storage.getClientUser(req.session.clientUserId);
-      if (!user) return res.status(404).json({ message: "User not found" });
-      const now = new Date();
-      const trialDaysRemaining = user.trialEndsAt
-        ? Math.max(0, Math.ceil((user.trialEndsAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
-        : null;
-      const isActive =
-        user.subscriptionStatus === 'active' ||
-        (user.subscriptionStatus === 'trialing' && user.trialEndsAt && user.trialEndsAt > now);
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      const rawUser = await storage.getClientUser(userId);
+      if (!rawUser) return res.status(404).json({ message: "User not found" });
+
+      const { user, statusSummary } = await syncClientUserSubscription(rawUser);
+
       res.json({
-        subscriptionStatus: user.subscriptionStatus,
-        trialEndsAt: user.trialEndsAt,
-        trialDaysRemaining,
-        isActive,
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        trialEndsAt: statusSummary.trialEndsAt,
+        trialDaysRemaining: statusSummary.trialDaysRemaining,
+        isActive: statusSummary.isActive,
+        isTrial: statusSummary.isTrial,
+        isTrialExpired: statusSummary.isTrialExpired,
+        isExpiringSoon: statusSummary.isExpiringSoon,
+        notification: statusSummary.notification,
       });
     } catch (error) {
       console.error("Get billing status error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // POST upgrade subscription tier for the authenticated client user
+  app.post("/api/user/upgrade", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      const rawUser = await storage.getClientUser(userId);
+      if (!rawUser) return res.status(404).json({ message: "User not found" });
+
+      const requestedTier = normalizeTier(req.body?.tier || req.body?.subscriptionTier || "Pro");
+
+      const updated = await storage.updateClientUser(rawUser.id, {
+        subscriptionStatus: "active",
+        subscriptionTier: requestedTier,
+        trialEndsAt: null, // Clear trial end date on active upgrade
+      });
+
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update subscription" });
+      }
+
+      const { user, statusSummary } = await syncClientUserSubscription(updated);
+
+      void auditLog({
+        actorId: user.id,
+        actorType: "client" as any,
+        action: "user.subscription_upgraded",
+        targetId: user.id,
+        targetType: "client_user",
+        metadata: { tier: requestedTier, previousStatus: rawUser.subscriptionStatus },
+      });
+
+      console.log(`[USER_UPGRADE] User ${user.username} (${user.id}) upgraded to ${requestedTier} tier!`);
+
+      res.json({
+        success: true,
+        message: `Successfully upgraded to ${requestedTier} tier!`,
+        subscriptionStatus: statusSummary.status,
+        subscriptionTier: statusSummary.tier,
+        statusLabel: statusSummary.statusLabel,
+        tierLabel: statusSummary.tierLabel,
+        isActive: statusSummary.isActive,
+        isTrial: statusSummary.isTrial,
+        isTrialExpired: statusSummary.isTrialExpired,
+        isExpiringSoon: statusSummary.isExpiringSoon,
+        trialEndsAt: statusSummary.trialEndsAt,
+        trialDaysRemaining: statusSummary.trialDaysRemaining,
+        notification: statusSummary.notification,
+      });
+    } catch (error) {
+      console.error("Upgrade error:", error);
+      res.status(500).json({ message: "Failed to upgrade subscription" });
     }
   });
 
@@ -1567,31 +4874,37 @@ Disallow: /*`);
 
   // ========== END BILLING ROUTES ==========
 
-  async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null) {
+  async function handleClassification(req: any, res: any, limitReached: boolean = false, apiKeyId: string | null = null, authError: string | null = null, isSimulation: boolean = false) {
+    let configuredBotUrl: string | null = null;
+    let redirectVersion = 0;
     try {
       
-      // Check if IP is provided in request body (POST) or query parameter (GET) or use actual visitor IP
-      let clientIp = req.body?.ip as string ||
-                     req.query.ip as string || 
-                     req.headers['cf-connecting-ip'] || 
-                     req.headers['true-client-ip'] || 
-                     req.headers['x-client-ip'] || 
-                     req.headers['x-forwarded-for'] || 
-                     req.headers['x-real-ip'] || 
-                     req.headers['fastly-client-ip'] ||
-                     req.ip || 
-                     req.connection?.remoteAddress || 
-                     req.socket?.remoteAddress || 
-                     'unknown';
-      
-      // Handle comma-separated forwarded IPs (take the first one)
-      if (typeof clientIp === 'string' && clientIp.includes(',')) {
-        clientIp = clientIp.split(',')[0].trim();
+      // Extract Visitor IP with Cloudflare, Akamai, Fastly, AWS ALB & Reverse Proxy awareness
+      const ipCandidates = [
+        req.body?.ip,
+        req.query?.ip,
+        req.headers['cf-connecting-ip'],
+        req.headers['true-client-ip'],
+        req.headers['x-real-ip'],
+        req.headers['fastly-client-ip'],
+        req.headers['x-client-ip'],
+        req.headers['x-forwarded-for'],
+        req.ip,
+        req.connection?.remoteAddress,
+        req.socket?.remoteAddress,
+      ];
+      let clientIp = 'unknown';
+      for (const cand of ipCandidates) {
+        if (cand) {
+          const resolved = extractFirstPublicIp(cand as any);
+          if (resolved && resolved !== 'unknown') {
+            clientIp = resolved;
+            break;
+          }
+        }
       }
-      
-      // Convert array to string if needed
-      if (Array.isArray(clientIp)) {
-        clientIp = clientIp[0];
+      if (clientIp === 'unknown') {
+        clientIp = req.ip || req.connection?.remoteAddress || '127.0.0.1';
       }
       
       // Check user agent from request body (POST) or headers
@@ -1610,439 +4923,693 @@ Disallow: /*`);
       const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
-      // Use original CleanTraffic API classification system
-      // Load API key from storage layer (works with both MemStorage and DatabaseStorage)
-      const cleanTrafficApiKey = await storage.getSetting('cleantraffic_api_key');
-      
-      if (!cleanTrafficApiKey) {
-        console.warn("CleanTraffic API key not configured in storage");
-        return res.status(500).json({ 
-          message: "CleanTraffic API key not configured",
-          error: "Missing API key in storage"
-        });
-      }
-      
-      console.log("✅ API key loaded from storage");
+      // Load Geolocation & Threat Intelligence API key
+      const cleanTrafficApiKey = await getEffectiveIp2GeoKey();
 
-      // CASCADING CLASSIFICATION LOGIC (FAIL-SECURE)
-      // DEFAULT TO BOT - Only allow as Human after passing all security checks
-      // Step 1: Basic Security Checks → Step 2: API Call → Step 3: Country/ISP Rules → Step 4: Final Verdict
-      
-      let classificationData: any = {};
-      let visitorType = 'Bot'; // 🔒 FAIL-SECURE: Default to Bot for safety
-      let detectionMethod = 'Unknown/Unverified';
-      let blockReason = 'Default security policy - verification required';
+      // Fetch user configured redirect URLs & routing rules strictly from API key owner account
+      let ownerUser: ClientUser | undefined = undefined;
+      let configuredHumanUrl: string | null = null;
+      let configuredBotUrl: string | null = null;
+      let ownerAllowedCountries: string[] = [];
+      let ownerAllowedDevices: string = "all";
+      let ownerDesktopOsFilter: string = "both";
+      let ownerBlockVpn: string = "block";
+      let ownerBlockDatacenter: string = "block";
+      let ownerBlockTor: string = "block";
+      let ownerFingerprintActivate: string = "enabled";
+      let ownerWildcardSubdomains: string = "disabled";
+      let ownerAllowVpn: boolean = false;
+      let ownerAllowSearchCrawlers: string = "allow";
+      let ownerBlockAiCrawlers: string = "block";
+      let ownerAllowSocialPreviews: string = "allow";
 
-      // SECURITY CHECK 1: User Agent Validation
-      if (!userAgent || userAgent.trim() === '') {
-        visitorType = 'Bot';
-        detectionMethod = 'Missing User Agent';
-        blockReason = 'No user agent provided - likely bot/scraper';
-        console.log(`🚫 BLOCKED (Missing User Agent): ${clientIp}`);
-      }
-      // Check for suspicious/bot user agents
-      else if (userAgent && (
-        userAgent.toLowerCase().includes('bot') ||
-        userAgent.toLowerCase().includes('crawler') ||
-        userAgent.toLowerCase().includes('spider') ||
-        userAgent.toLowerCase().includes('scraper') ||
-        userAgent.toLowerCase().includes('curl') ||
-        userAgent.toLowerCase().includes('wget') ||
-        userAgent.toLowerCase().includes('python') ||
-        userAgent.toLowerCase().includes('java/') ||
-        userAgent.toLowerCase().includes('headless')
-      )) {
-        visitorType = 'Bot';
-        detectionMethod = 'Suspicious User Agent';
-        blockReason = `Detected bot/scraper user agent: ${userAgent.substring(0, 50)}`;
-        console.log(`🚫 BLOCKED (Suspicious UA): ${clientIp} - ${userAgent.substring(0, 50)}`);
-      }
+      if (apiKeyId) {
+        try {
+          ownerUser = await storage.getClientUserByApiKey(apiKeyId);
+          if (ownerUser) {
+            const redirectUrls = await storage.getUserRedirectUrls(ownerUser.id);
+            if (redirectUrls) {
+              configuredHumanUrl = redirectUrls.humanUrl?.trim() || null;
+              configuredBotUrl = redirectUrls.botUrl?.trim() || null;
+              redirectVersion = redirectUrls.updatedAt ? new Date(redirectUrls.updatedAt).getTime() : 0;
+              
+              if (redirectUrls.allowedCountries && redirectUrls.allowedCountries.trim() && redirectUrls.allowedCountries.trim().toUpperCase() !== "ALL") {
+                ownerAllowedCountries = redirectUrls.allowedCountries
+                  .split(',')
+                  .map((c: string) => c.trim().toUpperCase())
+                  .filter(c => c && c !== "ALL");
+              } else {
+                ownerAllowedCountries = [];
+              }
 
-      // Call API first to get country and ISP data (only if not already blocked)
-      try {
-        // Check cache first for faster response
-        const cachedData = ip2geoCache.get(clientIp);
-        if (cachedData) {
-          classificationData = cachedData;
-          console.log(`✅ Using cached data for IP: ${clientIp}`);
-        } else {
-          // Call IP2Geolocation API directly with the API key
-          const apiUrl = `https://api.ip2location.io/?key=${encodeURIComponent(cleanTrafficApiKey)}&ip=${encodeURIComponent(clientIp)}`;
-          
-          console.log(`🔍 Calling IP2Geolocation API for IP: ${clientIp}`);
-          
-          const response = await fetch(apiUrl, {
-            method: 'GET',
-            headers: {
-              'User-Agent': userAgent,
-              'Accept': 'application/json'
+              ownerAllowedDevices = redirectUrls.allowedDevices || "all";
+              ownerDesktopOsFilter = redirectUrls.desktopOsFilter || "both";
+              ownerBlockVpn = redirectUrls.blockVpn || (redirectUrls.allowVpn ? "allow" : "block");
+              ownerBlockDatacenter = redirectUrls.blockDatacenter || "block";
+              ownerBlockTor = redirectUrls.blockTor || "block";
+              ownerFingerprintActivate = redirectUrls.fingerprintActivate || "enabled";
+              ownerWildcardSubdomains = redirectUrls.wildcardSubdomains || "disabled";
+              ownerAllowVpn = ownerBlockVpn === "allow";
+              ownerAllowSearchCrawlers = redirectUrls.allowSearchCrawlers || "allow";
+              ownerBlockAiCrawlers = redirectUrls.blockAiCrawlers || "block";
+              ownerAllowSocialPreviews = redirectUrls.allowSocialPreviews || "allow";
             }
-          });
-          
-          if (response.ok) {
-            const geoData = await response.json();
-            
-            // Convert IP2Geolocation response to our format
-            const location = geoData.city_name && geoData.country_name 
-              ? `${geoData.city_name}, ${geoData.country_name}`
-              : (geoData.country_name || 'Unknown');
-            
-            const isp = geoData.as || 'Unknown';
-            const countryCode = geoData.country_code || '';
-            const countryName = geoData.country_name || 'Unknown';
-            const cityName = geoData.city_name || 'Unknown';
-            const regionName = geoData.region_name || '';
-            
-            classificationData = {
-              ip: clientIp,
-              location: location,
-              isp: isp,
-              country_code: countryCode,
-              country_name: countryName,
-              city_name: cityName,
-              region_name: regionName,
-              browser: browser,
-              device_type: deviceType,
-              usage_type: geoData.usage_type,
-              is_proxy: geoData.is_proxy,
-              proxy_data: geoData.proxy
-            };
-            
-            // Cache the response for 30 minutes
-            ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
-            console.log(`📍 API Response: IP=${clientIp}, Country=${countryCode}, ISP=${isp}, UsageType=${geoData.usage_type || 'MISSING'}`);
-            
-            // CHECK FOR API LIMITATION (Trial/Expired/Unpaid Plan)
-            if (!geoData.usage_type) {
-              console.warn(`⚠️ API LIMITATION DETECTED: IP2Geo returned no usage_type field for IP ${clientIp}`);
-              console.warn(`⚠️ This indicates trial/expired/unpaid API plan - Cannot determine if human or bot`);
+          }
+        } catch (urlErr) {
+          console.error("Error fetching user redirect URLs for API key owner:", urlErr);
+        }
+      }
+
+      // Cascading Classification Pipeline
+      let classificationData: any = {};
+      let visitorType = 'Human';
+      let detectionMethod = 'IP Analysis';
+      let blockReason = '';
+      let adIntel: AdIntelligenceResult = {
+        isPaidAdClick: false,
+        adNetwork: null,
+        adClickId: null,
+        adParam: null,
+        isClaimingAdReviewer: false,
+        reviewerName: null,
+        reviewerPlatform: null,
+        isVerifiedAdReviewer: false,
+        isImposterReviewer: false,
+        verificationMethod: 'None',
+        isExemptFromHeadless: false,
+        isExemptFromGeoDeviceRules: false,
+      };
+
+      try {
+        // TIER 0: RATE LIMITS & SUBSCRIPTION STATUS
+        if (authError) {
+          visitorType = 'Bot';
+          detectionMethod = 'Authentication Failed';
+          blockReason = authError;
+          console.log(`🚫 BLOCKED (Tier 0 - Auth Error): ${clientIp} - ${authError}`);
+        } else if (limitReached) {
+          visitorType = 'Bot';
+          detectionMethod = 'Rate Limit / Subscription Expired';
+          blockReason = 'Account limit reached or subscription expired';
+          console.log(`🚫 BLOCKED (Tier 0 - Limit Reached): ${clientIp}`);
+        }
+        
+        // TIER 1A: AD INTELLIGENCE & AD REVIEWER AUDIT (Zero-Latency ASN + Cached Reverse DNS)
+        const cachedGeoForAd = ip2geoCache.get(clientIp);
+        const effectiveIspForAd = cachedGeoForAd?.isp || req.body?.isp || null;
+        adIntel = await evaluateAdIntelligence(
+          clientIp,
+          userAgent,
+          effectiveIspForAd,
+          req.query || {},
+          req.body || {}
+        );
+
+        let isAllowedCrawler = false;
+
+        // Check if visitor claims to be an official Ad Reviewer / Crawler
+        if (visitorType !== 'Bot' && adIntel.isClaimingAdReviewer) {
+          if (adIntel.isImposterReviewer) {
+            // FAKE AD REVIEWER (e.g. Scraper sending User-Agent: AdsBot-Google from Hetzner/DigitalOcean or failing rDNS)
+            visitorType = 'Bot';
+            detectionMethod = 'Spoofed Ad Crawler (Impersonation)';
+            blockReason = adIntel.verificationFailureReason || `Spoofed ${adIntel.reviewerName || 'Ad Reviewer'} detected`;
+            console.log(`🚫 BLOCKED (Tier 1 - Spoofed Ad Reviewer): ${clientIp} - ${adIntel.reviewerName} failed ASN/rDNS audit`);
+          } else if (adIntel.isVerifiedAdReviewer) {
+            // VERIFIED OFFICIAL AD REVIEWER (Authentic Google AdsBot, Meta Reviewer, TikTok, Microsoft AdsBot)
+            visitorType = 'Human';
+            detectionMethod = `${adIntel.reviewerName || 'Verified Ad Reviewer'} (${adIntel.verificationMethod === 'Cached_rDNS' ? 'Cached rDNS' : 'Cryptographic rDNS + ASN'})`;
+            isAllowedCrawler = true;
+            console.log(`✅ ALLOWED (Official Ad Compliance Reviewer): ${clientIp} - ${adIntel.reviewerName} verified via ${adIntel.verificationMethod}`);
+          }
+        }
+
+        // TIER 1: MONPERRUS CRAWLER DATABASE & BAD BOT SIGNATURES (Pre-database check)
+        const crawlerCheck = checkCrawlerUserAgent(userAgent);
+        if (visitorType !== 'Bot' && !isAllowedCrawler && crawlerCheck.isBot) {
+          if (crawlerCheck.crawlerType === 'search_engine') {
+            if (ownerAllowSearchCrawlers === 'allow') {
+              visitorType = 'Human';
+              detectionMethod = 'Verified Search Indexer (SEO)';
+              isAllowedCrawler = true;
+              console.log(`✅ ALLOWED (Search Engine Indexer): ${clientIp} - ${crawlerCheck.name} allowed per owner SEO policy`);
+            } else {
               visitorType = 'Bot';
-              detectionMethod = 'API Limitation - Cannot Detect (Trial/Expired Plan)';
-              classificationData.visitor_type = visitorType;
-              classificationData.detection_method = detectionMethod;
-              
-              // Skip all other classification logic - go straight to saving and redirecting
-              const classification = await storage.createClassification({
-                ipAddress: clientIp,
-                location: classificationData.location || 'Unknown',
-                country: classificationData.country_name || 'Unknown',
-                countryCode: classificationData.country_code || 'Unknown',
-                city: classificationData.city_name || 'Unknown',
-                region: classificationData.region_name || '',
-                browser: classificationData.browser || browser,
-                deviceType: classificationData.device_type || deviceType,
-                visitorType: visitorType,
-                isp: classificationData.isp || 'Unknown',
-                detectionMethod: detectionMethod,
-                apiKeyId: apiKeyId,
-              });
-
-              // Broadcast to any connected dashboard clients for this API key
-              if (apiKeyId) {
-                broadcastClassification(apiKeyId, {
-                  id: classification.id ?? randomUUID(),
-                  timestamp: classification.timestamp
-                    ? new Date(classification.timestamp).toISOString()
-                    : new Date().toISOString(),
-                  ipAddress: clientIp,
-                  visitorType: 'Bot',
-                  detectionMethod: detectionMethod,
-                  country: classificationData.country_name || 'Unknown',
-                  isp: classificationData.isp || 'Unknown',
-                  action: 'Blocked',
-                });
-              }
-
-              const response: any = {
-                ip: clientIp,
-                location: classification.location || 'Unknown',
-                browser: classification.browser || 'Unknown',
-                device_type: classification.deviceType || 'Unknown', 
-                visitorType: 'Bot',
-                isp: classification.isp || 'Unknown'
-              };
-              
-              // Always redirect to bot URL when API is limited
-              if (apiKeyId) {
-                const user = await storage.getClientUserByApiKey(apiKeyId);
-                const redirectUrls = user ? await storage.getUserRedirectUrls(user.id) : undefined;
-                const botUrl = redirectUrls?.botUrl || 'https://google.com';
-                response.redirectUrl = botUrl;
-                console.log(`⚠️ API LIMITED: Redirecting ALL visitors to bot URL - ${botUrl}`);
-              }
-              
-              return res.json(response);
+              detectionMethod = crawlerCheck.category || 'Search Engine Crawler';
+              blockReason = `${crawlerCheck.name || 'Search Crawler'} blocked by user SEO crawler policy`;
+              console.log(`🚫 BLOCKED (Tier 1 - Search Crawler Policy): ${clientIp} - ${crawlerCheck.name}`);
+            }
+          } else if (crawlerCheck.crawlerType === 'ai_crawler') {
+            if (ownerBlockAiCrawlers === 'allow') {
+              visitorType = 'Human';
+              detectionMethod = 'Authorized AI Crawler';
+              isAllowedCrawler = true;
+              console.log(`✅ ALLOWED (AI Crawler): ${clientIp} - ${crawlerCheck.name} permitted per owner policy`);
+            } else {
+              visitorType = 'Bot';
+              detectionMethod = crawlerCheck.category || 'AI Crawler';
+              blockReason = `${crawlerCheck.name || 'AI Crawler'} blocked by user AI scraping policy`;
+              console.log(`🚫 BLOCKED (Tier 1 - AI Scraper Policy): ${clientIp} - ${crawlerCheck.name}`);
+            }
+          } else if (crawlerCheck.crawlerType === 'social_preview') {
+            if (ownerAllowSocialPreviews === 'allow') {
+              visitorType = 'Human';
+              detectionMethod = 'Social Media Link Preview';
+              isAllowedCrawler = true;
+              console.log(`✅ ALLOWED (Social Preview): ${clientIp} - ${crawlerCheck.name} allowed for link preview`);
+            } else {
+              visitorType = 'Bot';
+              detectionMethod = crawlerCheck.category || 'Social Preview Bot';
+              blockReason = `${crawlerCheck.name || 'Social Preview Bot'} blocked by user social preview policy`;
+              console.log(`🚫 BLOCKED (Tier 1 - Social Preview Policy): ${clientIp} - ${crawlerCheck.name}`);
             }
           } else {
-            console.error(`IP2Geolocation API error: ${response.status}`);
-            classificationData = {
-              ip: clientIp,
-              location: 'Unknown',
-              country_name: 'Unknown',
-              isp: 'Unknown',
-              country_code: '',
-              browser: browser,
-              device_type: deviceType
-            };
-          }
-        }
-
-        // NEW PRIORITY-BASED CASCADING CLASSIFICATION LOGIC
-        // Priority 1: ISP Blacklist (Immediate Block)
-        // Priority 2: Country Whitelist Check (with DCH detection)
-        // Priority 3: IP2Location Detection (DCH/Proxy/VPN/TOR)
-        // Priority 4: ISP Whitelist Override (Allow trusted ISPs)
-        
-        const countryCode = classificationData.country_code || '';
-        const ispName = classificationData.isp || '';
-        const usageType = classificationData.usage_type || '';
-        
-        // PRIORITY 1: ISP BLACKLIST - Immediate block, no questions asked
-        if (ispName && ispName !== 'Unknown') {
-          const isBlacklisted = await storage.isIspBlacklisted(ispName);
-          if (isBlacklisted) {
             visitorType = 'Bot';
-            detectionMethod = 'ISP Blacklisted';
-            blockReason = `ISP blacklisted: ${ispName}`;
-            console.log(`🚫 BLOCKED (Priority 1 - ISP Blacklist): ${clientIp} - ${ispName}`);
+            detectionMethod = crawlerCheck.category || 'Monperrus Crawler Signature';
+            blockReason = `${crawlerCheck.name || 'Bot'} detected (${crawlerCheck.patternMatched || 'Signature'})`;
+            console.log(`🚫 BLOCKED (Tier 1 - Crawler Database): ${clientIp} - ${crawlerCheck.name} [${userAgent.substring(0, 40)}]`);
           }
         }
 
-        // PRIORITY 2: COUNTRY WHITELIST (Optional - If exists)
-        if (visitorType !== 'Bot' || countryCode) { // Check even if Bot (may promote to Human)
-          const countryWhitelist = await storage.getCountryWhitelist();
-          const hasCountryWhitelist = countryWhitelist.length > 0;
-          
-          if (hasCountryWhitelist && countryCode) {
-            const isCountryWhitelisted = await storage.isCountryAllowed(countryCode);
-            
-            if (isCountryWhitelisted) {
-              // Country is whitelisted, but still check if it's datacenter
-              if (usageType === 'DCH') {
-                visitorType = 'Bot';
-                detectionMethod = 'Datacenter in Whitelisted Country';
-                blockReason = `Datacenter traffic from whitelisted country: ${countryCode}`;
-                console.log(`🚫 BLOCKED (Priority 2 - DCH in Whitelisted Country): ${clientIp} - ${countryCode}`);
-              } else {
-                // Country whitelisted and NOT datacenter = HUMAN ✅
-                visitorType = 'Human';
-                detectionMethod = 'Country Whitelist';
-                blockReason = '';
-                console.log(`✅ ALLOWED (Priority 2 - Country Whitelisted): ${clientIp} - ${countryCode}, Usage: ${usageType}`);
+        // TIER 1B: HIGH-FREQUENCY REQUEST VELOCITY ANOMALY (Intercepts automated scrapers on clean residential IPs)
+        const velocityCheck = checkRequestVelocity(clientIp);
+        if (visitorType !== 'Bot' && !isAllowedCrawler && velocityCheck.isVelocityExceeded) {
+          visitorType = 'Bot';
+          detectionMethod = 'High-Frequency Request Velocity';
+          blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP';
+          console.log(`🚫 BLOCKED (Tier 1B - Request Velocity): ${clientIp} - ${velocityCheck.reason}`);
+        }
+
+        // Check header anomalies & Client Hints (Sec-CH-UA) consistency
+        if (visitorType !== 'Bot' && !isAllowedCrawler) {
+          const isApiForwarded = Boolean(req.body?.userAgent || req.body?.ip);
+          const effectiveHeaders = isApiForwarded
+            ? {
+                accept: req.body?.accept || req.body?.headers?.['accept'] || req.body?.headers?.['Accept'] || '',
+                'accept-language': req.body?.acceptLanguage || req.body?.accept_language || req.body?.headers?.['accept-language'] || req.body?.headers?.['Accept-Language'] || '',
+                'sec-ch-ua': req.body?.secChUa || req.body?.sec_ch_ua || req.body?.headers?.['sec-ch-ua'] || req.body?.headers?.['Sec-Ch-Ua'] || '',
+                'sec-ch-ua-platform': req.body?.secChUaPlatform || req.body?.sec_ch_ua_platform || req.body?.headers?.['sec-ch-ua-platform'] || req.body?.headers?.['Sec-Ch-Ua-Platform'] || '',
+                'sec-ch-ua-mobile': req.body?.secChUaMobile || req.body?.sec_ch_ua_mobile || req.body?.headers?.['sec-ch-ua-mobile'] || req.body?.headers?.['Sec-Ch-Ua-Mobile'] || '',
               }
-            } else {
-              // Country NOT in whitelist = BLOCK
+            : (req.headers || {});
+
+          // Only perform header anomaly checks if:
+          // 1) It's a direct visitor HTTP request, OR
+          // 2) The forwarding proxy/PHP script explicitly provided the visitor's HTTP headers in the payload
+          const hasForwardedHeaders = Boolean(req.body?.accept || req.body?.acceptLanguage || req.body?.headers);
+          if (!isApiForwarded || hasForwardedHeaders) {
+            const headerCheck = checkHeaderAnomalies(effectiveHeaders, userAgent);
+            if (headerCheck.isSuspicious) {
               visitorType = 'Bot';
-              detectionMethod = 'Country Not Whitelisted';
-              blockReason = `Country not whitelisted: ${countryCode}`;
-              console.log(`🚫 BLOCKED (Priority 2 - Country Not Whitelisted): ${clientIp} - ${countryCode}`);
+              detectionMethod = headerCheck.reason?.includes('Client Hints') ? 'Client Hints Discrepancy' : 'Synthetic Browser Headers';
+              blockReason = headerCheck.reason || 'Synthetic browser headers detected';
+              console.log(`🚫 BLOCKED (Tier 1 - Header Anomaly / Client Hints): ${clientIp} - ${headerCheck.reason}`);
             }
-          } else if (!hasCountryWhitelist && visitorType !== 'Bot') {
-            // No country whitelist configured, allow to continue to next check
-            visitorType = 'Human';
-            detectionMethod = 'IP Analysis';
           }
         }
 
-        // PRIORITY 3: IP2LOCATION DETECTION (Primary detection - Always active)
-        if (visitorType === 'Human') {
-          // Datacenter/Hosting detection (DCH only - residential proxies allowed)
-          if (usageType === 'DCH') {
-            visitorType = 'Bot';
-            detectionMethod = 'Datacenter';
-            blockReason = `IP2Location detected: Datacenter`;
-            console.log(`🚫 BLOCKED (Priority 3 - IP2Location Datacenter): ${clientIp}`);
+        // TIER 1C: ACTIVE CLIENT-SIDE HARDWARE & HEADLESS INTEGRITY CHECK
+        // If the interstitial verification gateway passes forward hardware/DOM verification tokens (e.g. from ?ctc_verify=1)
+        // Exempt verified ad compliance reviewers (e.g. Google AdsBot, Meta review bots that run headless Chrome)
+        if (visitorType !== 'Bot' && !adIntel.isExemptFromHeadless) {
+          const clientTokens = req.body?.clientTokens || req.body?.tokens || req.body?.hardwareTokens || null;
+          if (clientTokens) {
+            const hwCheck = evaluateClientHardwareTokens(clientTokens, userAgent);
+            if (hwCheck.isAutomated) {
+              visitorType = 'Bot';
+              detectionMethod = 'Headless Browser Fingerprint';
+              blockReason = hwCheck.reason || 'Automated headless browser environment detected';
+              console.log(`🚫 BLOCKED (Tier 1C - Headless Browser Fingerprint): ${clientIp} - ${hwCheck.reason}`);
+            }
           }
-          
-          // Proxy/VPN/TOR detection
-          if (classificationData.is_proxy || 
-              classificationData.proxy_data?.is_vpn || 
-              classificationData.proxy_data?.is_tor || 
-              classificationData.proxy_data?.is_data_center || 
-              classificationData.proxy_data?.is_web_crawler) {
+        }
+
+        // Check IP blocklist
+        if (visitorType !== 'Bot') {
+          const isBlockedIp = await storage.isIpBlocked(clientIp);
+          if (isBlockedIp) {
             visitorType = 'Bot';
-            
-            // Determine specific detection method
-            if (classificationData.proxy_data?.is_vpn) {
-              detectionMethod = 'VPN Detected';
-            } else if (classificationData.proxy_data?.is_tor) {
-              detectionMethod = 'TOR Detected';
-            } else if (classificationData.proxy_data?.is_data_center) {
-              detectionMethod = 'Datacenter Detected';
-            } else if (classificationData.proxy_data?.is_web_crawler) {
-              detectionMethod = 'Crawler Detected';
+            detectionMethod = 'IP Blocklist';
+            blockReason = `IP is on custom blocklist: ${clientIp}`;
+            console.log(`🚫 BLOCKED (Tier 1 - IP Blocklist): ${clientIp}`);
+          }
+        }
+
+        // Check CIDR blocklist
+        if (visitorType !== 'Bot') {
+          const isBlockedCidr = await storage.isIpInBlockedCidrRange(clientIp);
+          if (isBlockedCidr) {
+            visitorType = 'Bot';
+            detectionMethod = 'CIDR Blocklist';
+            blockReason = `IP is in blocked CIDR range: ${clientIp}`;
+            console.log(`🚫 BLOCKED (Tier 1 - CIDR Blocklist): ${clientIp}`);
+          }
+        }
+
+        // TIER 2: USER DEVICE & OS ROUTING RULES (100% Local evaluation from User-Agent - ZERO external IP2 calls)
+        // Note: Allowed crawlers & search indexers bypass interactive device filters so indexing works reliably
+        if (visitorType !== 'Bot' && !isAllowedCrawler && ownerAllowedDevices && ownerAllowedDevices !== 'all') {
+          const lowerDevice = (deviceType || '').toLowerCase();
+          if (ownerAllowedDevices === 'desktop') {
+            if (lowerDevice !== 'desktop') {
+              visitorType = 'Bot';
+              detectionMethod = 'Device Restricted (Desktop Only)';
+              blockReason = `Device ${deviceType || 'non-desktop'} blocked by desktop-only policy`;
+              console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is desktop only`);
+            } else if (ownerDesktopOsFilter && ownerDesktopOsFilter !== 'both') {
+              const isWindows = /windows nt|win32|win64/i.test(userAgent);
+              const isMac = /macintosh|mac os x/i.test(userAgent);
+              if (ownerDesktopOsFilter === 'windows' && !isWindows) {
+                visitorType = 'Bot';
+                detectionMethod = 'OS Restricted (Windows Desktop Only)';
+                blockReason = `Non-Windows OS blocked by Windows-only desktop policy`;
+                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required Windows desktop`);
+              } else if (ownerDesktopOsFilter === 'mac' && !isMac) {
+                visitorType = 'Bot';
+                detectionMethod = 'OS Restricted (Mac Desktop Only)';
+                blockReason = `Non-Mac OS blocked by macOS-only desktop policy`;
+                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required Mac desktop`);
+              }
+            }
+          } else if (ownerAllowedDevices === 'mobile' && lowerDevice !== 'mobile') {
+            visitorType = 'Bot';
+            detectionMethod = 'Device Restricted (Mobile Only)';
+            blockReason = `Device ${deviceType || 'non-mobile'} blocked by mobile-only policy`;
+            console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is mobile only`);
+          } else if (ownerAllowedDevices === 'mobile_tablet' && lowerDevice !== 'mobile' && lowerDevice !== 'tablet') {
+            visitorType = 'Bot';
+            detectionMethod = 'Device Restricted (Mobile & Tablet Only)';
+            blockReason = `Device ${deviceType || 'desktop'} blocked by mobile/tablet policy`;
+            console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is mobile & tablet only`);
+          }
+        }
+
+        // Check if visitor was caught locally in Layer 1 or Layer 2
+        if (visitorType === 'Bot') {
+          // Zero-cost local rejection: Do NOT burn external IP2 API credits!
+          const cachedData = ip2geoCache.get(clientIp);
+          classificationData = cachedData ? { ...cachedData } : {
+            ip: clientIp,
+            location: isPrivateOrLocalIp(clientIp) ? 'Localhost' : 'Unknown',
+            isp: isPrivateOrLocalIp(clientIp) ? 'Localhost' : 'Filtered by Rule',
+            country_code: '',
+            country_name: 'Unknown',
+            city_name: '',
+            region_name: '',
+            usage_type: 'POLICY',
+            connection_type: 'Local Rule Filter',
+          };
+          classificationData.browser = browser;
+          classificationData.device_type = deviceType;
+        } else {
+          // TIER 3: FETCH IP GEOLOCATION & THREAT INTELLIGENCE (Only for candidates that passed Layer 1 & 2)
+          const cachedData = ip2geoCache.get(clientIp);
+          if (cachedData) {
+            classificationData = { ...cachedData };
+          } else {
+            const fetchedGeo = await fetchIpGeolocation(cleanTrafficApiKey, clientIp, userAgent);
+            if (fetchedGeo) {
+              classificationData = fetchedGeo;
+              ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
             } else {
-              detectionMethod = 'Proxy Detected';
+              classificationData = {
+                ip: clientIp,
+                location: isPrivateOrLocalIp(clientIp) ? 'Localhost' : 'Unknown',
+                isp: isPrivateOrLocalIp(clientIp) ? 'Localhost' : 'Unknown',
+                country_code: isPrivateOrLocalIp(clientIp) ? 'AU' : '',
+                country_name: isPrivateOrLocalIp(clientIp) ? 'Australia' : 'Unknown',
+                city_name: isPrivateOrLocalIp(clientIp) ? 'Localhost' : 'Unknown',
+                region_name: '',
+                usage_type: 'RES',
+                is_proxy: false
+              };
             }
-            
-            blockReason = `IP2Location detected: ${detectionMethod}`;
-            console.log(`🚫 BLOCKED (Priority 3 - ${detectionMethod}): ${clientIp}`);
+          }
+          classificationData.browser = browser;
+          classificationData.device_type = deviceType;
+
+          const countryCode = (classificationData.country_code || '').toUpperCase();
+          const ispName = classificationData.isp || '';
+          const usageType = classificationData.usage_type || '';
+
+          // TIER 3A: USER GEO-FENCING RULES (User-defined allowed countries evaluated first)
+          // Note: Allowed search crawlers & social preview bots are exempted from localized geo-fencing so global SEO/sharing works
+          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerAllowedCountries.length > 0) {
+            if (countryCode && ownerAllowedCountries.includes(countryCode)) {
+              // Country is explicitly permitted by user
+              console.log(`✅ GEO-FENCING PASS: ${clientIp} country ${countryCode} is in user's allowed list [${ownerAllowedCountries.join(', ')}]`);
+            } else {
+              // Country is outside user's target market
+              visitorType = 'Bot';
+              detectionMethod = 'Geo-Fencing Restricted';
+              blockReason = `Country ${countryCode || 'Unknown'} is not in your allowed countries (${ownerAllowedCountries.join(', ')})`;
+              console.log(`🚫 BLOCKED (Tier 3A - User Geo-Fencing): ${clientIp} (${countryCode || 'Unknown'}) not in [${ownerAllowedCountries.join(', ')}]`);
+            }
+          } else if (visitorType !== 'Bot' && !isAllowedCrawler) {
+            // Fallback to system-wide country whitelist if configured
+            const systemCountryWhitelist = await storage.getCountryWhitelist();
+            const enabledCountries = systemCountryWhitelist.filter(c => c.enabled !== false);
+            if (enabledCountries.length > 0) {
+              if (countryCode) {
+                const isAllowed = await storage.isCountryAllowed(countryCode);
+                if (!isAllowed) {
+                  visitorType = 'Bot';
+                  detectionMethod = 'Country Not Whitelisted';
+                  blockReason = `Country not whitelisted: ${countryCode}`;
+                  console.log(`🚫 BLOCKED (Tier 3A - System Country Whitelist): ${clientIp} - ${countryCode}`);
+                }
+              } else {
+                visitorType = 'Bot';
+                detectionMethod = 'Country Not Whitelisted';
+                blockReason = `Unknown country while geo-fencing is active`;
+              }
+            }
+          }
+
+          // TIER 3B: DATACENTER ASN / CLOUD HOSTING PRE-SCREENING
+          const datacenterAsnCheck = checkDatacenterIsp(ispName);
+          const proxyDetailsForDch = classificationData.proxy_data || {};
+          const isKnownVpnCandidate = Boolean(
+            classificationData.is_proxy ||
+            proxyDetailsForDch.is_vpn ||
+            proxyDetailsForDch.is_residential_proxy ||
+            proxyDetailsForDch.is_consumer_privacy_network
+          );
+
+          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && datacenterAsnCheck.isDatacenter) {
+            visitorType = 'Bot';
+            detectionMethod = 'Datacenter Cloud ASN';
+            blockReason = `Cloud/Datacenter provider detected: ${datacenterAsnCheck.provider}`;
+            console.log(`🚫 BLOCKED (Tier 3B - Datacenter ASN): ${clientIp} - ${datacenterAsnCheck.provider}`);
+          }
+
+          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && (usageType === 'DCH' || classificationData.proxy_data?.is_data_center)) {
+            visitorType = 'Bot';
+            detectionMethod = 'Datacenter Hosting (DCH)';
+            blockReason = 'Datacenter hosting facility IP detected';
+            console.log(`🚫 BLOCKED (Tier 3B - DCH Usage Type): ${clientIp}`);
+          }
+
+          // TIER 3C: SEARCH ENGINE SPIDER (SES) USAGE TYPE PRE-SCREENING
+          if (visitorType !== 'Bot' && !isAllowedCrawler && (usageType === 'SES' || usageType.includes('SES'))) {
+            if (ownerAllowSearchCrawlers === 'allow') {
+              visitorType = 'Human';
+              detectionMethod = 'Verified Search Indexer (SES)';
+              console.log(`✅ ALLOWED (Tier 3C - SES Allowed per SEO Policy): ${clientIp}`);
+            } else {
+              visitorType = 'Bot';
+              detectionMethod = 'Search Engine Spider (SES)';
+              blockReason = 'Search engine spider network address identified by IP intelligence';
+              console.log(`🚫 BLOCKED (Tier 3C - SES Usage Type): ${clientIp}`);
+            }
+          }
+
+          // TIER 3D: SYSTEM-WIDE ISP BLACKLIST
+          if (visitorType !== 'Bot' && !isAllowedCrawler && ispName && ispName !== 'Unknown') {
+            const isBlacklisted = await storage.isIspBlacklisted(ispName);
+            if (isBlacklisted) {
+              visitorType = 'Bot';
+              detectionMethod = 'ISP Blacklisted';
+              blockReason = `ISP blacklisted: ${ispName}`;
+              console.log(`🚫 BLOCKED (Tier 3D - ISP Blacklist): ${clientIp} - ${ispName}`);
+            }
+          }
+
+          // TIER 3E: VPN & PROXY POLICY (Multi-Vector Safe Classification Pipeline)
+          const proxyDetails = classificationData.proxy_data || {};
+          const isDetectedAsProxyOrVpn = Boolean(
+            classificationData.is_proxy || 
+            proxyDetails.is_vpn || 
+            proxyDetails.is_tor || 
+            proxyDetails.is_web_crawler ||
+            proxyDetails.is_ai_crawler ||
+            proxyDetails.is_residential_proxy ||
+            proxyDetails.is_public_proxy ||
+            proxyDetails.is_web_proxy ||
+            proxyDetails.is_consumer_privacy_network ||
+            proxyDetails.is_enterprise_private_network ||
+            proxyDetails.is_botnet ||
+            proxyDetails.is_spammer ||
+            proxyDetails.is_scanner ||
+            proxyDetails.is_bogon
+          );
+
+          if (visitorType !== 'Bot' && !isAllowedCrawler && isDetectedAsProxyOrVpn) {
+            const isApiForwarded = Boolean(req.body?.userAgent || req.body?.ip);
+            const effectiveHeaders: Record<string, any> = isApiForwarded
+              ? {
+                  accept: req.body?.accept || req.body?.headers?.['accept'] || req.body?.headers?.['Accept'] || '',
+                  'accept-language': req.body?.acceptLanguage || req.body?.accept_language || req.body?.headers?.['accept-language'] || req.body?.headers?.['Accept-Language'] || '',
+                  'sec-ch-ua': req.body?.secChUa || req.body?.sec_ch_ua || req.body?.headers?.['sec-ch-ua'] || '',
+                  'sec-ch-ua-platform': req.body?.secChUaPlatform || req.body?.sec_ch_ua_platform || req.body?.headers?.['sec-ch-ua-platform'] || '',
+                  'sec-ch-ua-mobile': req.body?.secChUaMobile || req.body?.sec_ch_ua_mobile || req.body?.headers?.['sec-ch-ua-mobile'] || '',
+                  'sec-fetch-site': req.body?.secFetchSite || req.body?.sec_fetch_site || req.body?.headers?.['sec-fetch-site'] || '',
+                  'sec-fetch-mode': req.body?.secFetchMode || req.body?.sec_fetch_mode || req.body?.headers?.['sec-fetch-mode'] || '',
+                }
+              : (req.headers || {});
+
+            const safeVpnResult = evaluateSafeProxyClassification(
+              proxyDetails,
+              classificationData.fraud_score || 0,
+              usageType,
+              ispName,
+              effectiveHeaders,
+              userAgent,
+              {
+                blockVpn: (ownerBlockVpn as any) || (ownerAllowVpn ? 'allow' : 'block'),
+                allowVpn: Boolean(ownerAllowVpn),
+                blockDatacenter: (ownerBlockDatacenter as any) || 'block',
+                blockTor: (ownerBlockTor as any) || 'block',
+                allowSearchCrawlers: (ownerAllowSearchCrawlers as any) || 'allow',
+                blockAiCrawlers: (ownerBlockAiCrawlers as any) || 'block',
+                allowSocialPreviews: (ownerAllowSocialPreviews as any) || 'allow',
+              },
+              datacenterAsnCheck.isDatacenter
+            );
+
+            visitorType = safeVpnResult.verdict;
+            detectionMethod = safeVpnResult.detectionMethod;
+            blockReason = safeVpnResult.blockReason;
+            classificationData.connection_type = safeVpnResult.subType;
+            classificationData.risk_score = safeVpnResult.riskScore;
+            classificationData.threat_level = safeVpnResult.threatLevel;
+            classificationData.telemetry_signals = safeVpnResult.signals;
+
+            if (visitorType === 'Bot') {
+              console.log(`🚫 BLOCKED (Tier 3E - Safe Proxy Defense): ${clientIp} - ${safeVpnResult.detectionMethod} [Type: ${safeVpnResult.subType}, Risk: ${safeVpnResult.riskScore}]`);
+            } else {
+              console.log(`✅ ALLOWED (Tier 3E - Verified Safe VPN): ${clientIp} - ${safeVpnResult.detectionMethod} [Type: ${safeVpnResult.subType}, Risk: ${safeVpnResult.riskScore}]`);
+            }
+          }
+
+          // TIER 3F: ISP WHITELIST OVERRIDE (Allow trusted ISPs if flagged falsely)
+          if (visitorType === 'Bot' && ispName && ispName !== 'Unknown') {
+            const isWhitelisted = await storage.isIspWhitelisted(ispName);
+            if (isWhitelisted) {
+              visitorType = 'Human';
+              detectionMethod = 'ISP Whitelist Override';
+              blockReason = `ISP whitelisted (trusted): ${ispName}`;
+              console.log(`✅ ALLOWED (Tier 3F - ISP Whitelist Override): ${clientIp} - ${ispName} is trusted`);
+            }
           }
         }
 
-        // PRIORITY 4: ISP WHITELIST OVERRIDE (Optional - Allow trusted ISPs)
-        // This can override previous bot detections for trusted ISPs
-        if (visitorType === 'Bot' && ispName && ispName !== 'Unknown') {
-          const isWhitelisted = await storage.isIspWhitelisted(ispName);
-          if (isWhitelisted) {
-            visitorType = 'Human';
-            detectionMethod = 'ISP Whitelist Override';
-            blockReason = `ISP whitelisted (trusted): ${ispName}`;
-            console.log(`✅ ALLOWED (Priority 4 - ISP Whitelist Override): ${clientIp} - ${ispName} is trusted`);
+        // TIER 4: REPUTATION & VERDICT FINALIZATION
+        if (visitorType === 'Human') {
+          if (detectionMethod === 'IP Analysis' || !detectionMethod) {
+            detectionMethod = 'Clean Residential IP';
           }
         }
 
-        // Final classification with all data
+        if (!classificationData.connection_type) {
+          classificationData.connection_type = classificationData.usage_type
+            ? formatUsageTypeDescription(classificationData.usage_type)
+            : (visitorType === 'Human' ? 'Residential Fixed-Line Broadband (ISP)' : 'Datacenter / Cloud Server (DCH)');
+        }
+
         classificationData.visitor_type = visitorType;
         classificationData.detection_method = detectionMethod;
-        
-        console.log(`✅ Final Classification: ${clientIp} = ${visitorType} (${detectionMethod})`);
-        
+        console.log(`✅ Final Classification: ${clientIp} = ${visitorType} (${detectionMethod}) [Usage: ${classificationData.usage_type || 'N/A'}, Connection: ${classificationData.connection_type}]`);
+
       } catch (error) {
-        console.error("🚨 CRITICAL: Classification error -  FAIL-SECURE activated:", error);
-        // 🔒 FAIL-SECURE: Default to Bot on ANY error for safety
-        visitorType = 'Bot';
-        detectionMethod = 'Error - API Failure (Fail-Secure)';
-        blockReason = 'System error during classification - blocked for safety';
+        console.error("Classification error caught, falling back safely:", error);
+        visitorType = userAgent && !userAgent.toLowerCase().includes('bot') ? 'Human' : 'Bot';
+        detectionMethod = 'Fallback Classification';
         classificationData = {
           ip: clientIp,
           location: 'Unknown',
           country_name: 'Unknown',
+          country_code: '',
           isp: 'Unknown',
           browser: browser,
           device_type: deviceType,
           visitor_type: visitorType,
           detection_method: detectionMethod
         };
-        console.log(`🚫 BLOCKED (Error Fail-Secure): ${clientIp} - API/System error, blocked for safety`);
       }
 
-      // 10-MINUTE SILENT LOGGING: Check if this IP was logged recently
-      // First visit logs, subsequent visits within 10 minutes are silent, then logs again after 10 minutes
-      const now = Date.now();
-      const lastLogTime = ipLastLogTime.get(clientIp);
-      const shouldLog = !lastLogTime || (now - lastLogTime > SILENT_LOG_DURATION);
-      
-      let classification: any;
-      
-      if (shouldLog) {
-        // Log this classification to the database
-        classification = await storage.createClassification({
-          ipAddress: clientIp,
-          location: classificationData.location || 'Unknown',
-          country: classificationData.country_name || 'Unknown',
-          countryCode: classificationData.country_code || 'Unknown',
-          city: classificationData.city_name || 'Unknown',
-          region: classificationData.region_name || '',
-          browser: classificationData.browser || browser,
-          deviceType: classificationData.device_type || deviceType,
-          visitorType: visitorType,
-          isp: classificationData.isp || 'Unknown',
-          detectionMethod: classificationData.detection_method || 'IP Analysis',
-          apiKeyId: apiKeyId, // Track which API key made this request
-        });
-        
-        // Broadcast to any connected dashboard clients for this API key
-        if (apiKeyId) {
-          broadcastClassification(apiKeyId, {
-            id: classification.id ?? randomUUID(),
-            timestamp: classification.timestamp
-              ? new Date(classification.timestamp).toISOString()
-              : new Date().toISOString(),
-            ipAddress: clientIp,
-            visitorType: visitorType as 'Human' | 'Bot',
-            detectionMethod: classificationData.detection_method || 'IP Analysis',
-            country: classificationData.country_name || 'Unknown',
-            isp: classificationData.isp || 'Unknown',
-            action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
-          });
+      // Load system default URLs as fallback ONLY if the account has not configured custom URLs
+      let systemDefaultHumanUrl = '';
+      let systemDefaultBotUrl = '';
+      try {
+        const redirectUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'redirect_url.txt');
+        const botUrlFile = path.join(process.cwd(), 'cleantraffic-php-package', 'bot_url.txt');
+        if (fs.existsSync(redirectUrlFile)) {
+          systemDefaultHumanUrl = fs.readFileSync(redirectUrlFile, 'utf8').trim();
         }
+        if (fs.existsSync(botUrlFile)) {
+          systemDefaultBotUrl = fs.readFileSync(botUrlFile, 'utf8').trim();
+        }
+      } catch (e) {}
 
-        // Update the last log time for this IP
-        ipLastLogTime.set(clientIp, now);
-        console.log(`📝 Logged classification for ${clientIp}`);
-      } else {
-        // Silent mode: Skip logging, but construct classification object from data
-        const timeSinceLastLog = Math.round((now - lastLogTime) / 1000); // seconds
-        console.log(`🔇 Silent mode: ${clientIp} last logged ${timeSinceLastLog}s ago (${Math.round(SILENT_LOG_DURATION / 1000 - timeSinceLastLog)}s until next log)`);
-        
-        classification = {
-          ipAddress: clientIp,
-          location: classificationData.location || 'Unknown',
-          country: classificationData.country_name || 'Unknown',
-          city: classificationData.city_name || 'Unknown',
-          browser: classificationData.browser || browser,
-          deviceType: classificationData.device_type || deviceType,
-          visitorType: visitorType,
-          isp: classificationData.isp || 'Unknown',
-        };
+      // The user's dashboard configuration ALWAYS takes precedence and is NEVER overridden by system defaults
+      const finalHumanUrl = (configuredHumanUrl && configuredHumanUrl.trim() !== '') 
+        ? configuredHumanUrl.trim() 
+        : (systemDefaultHumanUrl || null);
+
+      const finalBotUrl = (configuredBotUrl && configuredBotUrl.trim() !== '') 
+        ? configuredBotUrl.trim() 
+        : (systemDefaultBotUrl || null);
+
+      const isHumanVisitor = (visitorType === 'Human') && !limitReached && !authError;
+      const effectiveRedirectUrl = isHumanVisitor ? finalHumanUrl : finalBotUrl;
+
+      // Save classification record asynchronously (non-blocking) so HTTP response returns in <30ms
+      // Simulator tests do NOT log to database or count against quotas
+      if (!isSimulation) {
+        (async () => {
+          try {
+            const effectiveDetection = classificationData.detection_method || detectionMethod || (adIntel.isPaidAdClick ? `${adIntel.adNetwork || 'Paid Ad'} Click` : 'IP Analysis');
+            let effectiveConnection = classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter');
+            if (adIntel.isPaidAdClick) {
+              effectiveConnection = `${effectiveConnection} • ${adIntel.adNetwork || 'Paid Ad'}`;
+            } else if (adIntel.isVerifiedAdReviewer) {
+              effectiveConnection = `Official Ad Reviewer (${adIntel.reviewerPlatform || 'Verified'})`;
+            }
+
+            const classification = await storage.createClassification({
+              ipAddress: clientIp,
+              location: classificationData.location || 'Unknown',
+              country: classificationData.country_name || 'Unknown',
+              countryCode: classificationData.country_code || 'Unknown',
+              city: classificationData.city_name || 'Unknown',
+              region: classificationData.region_name || '',
+              browser: classificationData.browser || browser,
+              deviceType: classificationData.device_type || deviceType,
+              visitorType: visitorType,
+              isp: classificationData.isp || 'Unknown',
+              detectionMethod: effectiveDetection,
+              connectionType: effectiveConnection,
+              apiKeyId: apiKeyId, // Track which API key made this request
+            });
+            
+            // Broadcast live to connected dashboard clients for this specific API key
+            if (apiKeyId) {
+              broadcastClassification(apiKeyId, {
+                id: classification.id ?? randomUUID(),
+                timestamp: classification.timestamp
+                  ? new Date(classification.timestamp).toISOString()
+                  : new Date().toISOString(),
+                ipAddress: clientIp,
+                visitorType: visitorType as 'Human' | 'Bot',
+                detectionMethod: effectiveDetection,
+                country: classificationData.country_name || 'Unknown',
+                isp: classificationData.isp || 'Unknown',
+                action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
+                connectionType: effectiveConnection,
+                usageType: classificationData.usage_type || '',
+                riskScore: classificationData.risk_score,
+                adNetwork: adIntel.adNetwork || (adIntel.isVerifiedAdReviewer ? `${adIntel.reviewerName} (Ad Reviewer)` : null),
+                adClickId: adIntel.adClickId || null,
+                isAdTraffic: Boolean(adIntel.isPaidAdClick || adIntel.isVerifiedAdReviewer),
+              });
+            }
+            console.log(`📝 Logged classification for IP ${clientIp} (${visitorType}) [Ad: ${adIntel.adNetwork || (adIntel.isVerifiedAdReviewer ? 'Reviewer' : 'None')}] under API key ID ${apiKeyId || 'global'}`);
+          } catch (logErr) {
+            console.error("Error writing classification log:", logErr);
+          }
+        })();
       }
-      
-      // Email is captured from URL parameters (line 843) and available for redirect logic
-      // but NOT stored in database for privacy (email variable available here if needed)
 
+      // Comprehensive tracing and audit log for traffic routing decisions
+      console.log(`[TRAFFIC_ROUTING_TRACE]
+================================================================================
+  Visitor IP:              ${clientIp}
+  API Key ID:              ${apiKeyId || '[None / Global]'}
+  Account Owner:           ${ownerUser ? `${ownerUser.username} (${ownerUser.id})` : '[Unassigned / Not Found]'}
+  Detected Visitor Type:   ${isHumanVisitor ? 'Human' : 'Bot'}
+  Ad Traffic Detected:     ${adIntel.isPaidAdClick ? `YES - ${adIntel.adNetwork} (Click ID: ${adIntel.adClickId})` : (adIntel.isVerifiedAdReviewer ? `YES - ${adIntel.reviewerName}` : 'No')}
+  Triggering Condition:    ${blockReason ? `Blocked by: ${blockReason}` : (detectionMethod || classificationData.detection_method || 'Clean Traffic Passed')}
+  Detection Method:        ${detectionMethod || classificationData.detection_method || 'IP Analysis'}
+  Dashboard Human URL:     ${configuredHumanUrl || '[Not set by user]'}
+  Dashboard Bot URL:       ${configuredBotUrl || '[Not set by user]'}
+  System Default Human:    ${systemDefaultHumanUrl || '[None]'}
+  System Default Bot:      ${systemDefaultBotUrl || '[None]'}
+  Final Redirect URL:      ${effectiveRedirectUrl || '[None / Empty]'}
+================================================================================`);
+
+      const isErrorCode = !isHumanVisitor && (finalBotUrl === '404' || finalBotUrl === '403');
       const response: any = {
         ip: clientIp,
-        location: classification.location || 'Unknown',
-        browser: classification.browser || 'Unknown',
-        device_type: classification.deviceType || 'Unknown', 
-        visitorType: classification.visitorType || 'Human', // PHP expects camelCase
-        isp: classification.isp || 'Unknown'
+        location: classificationData.location || 'Unknown',
+        country: classificationData.country_name || 'Unknown',
+        countryCode: classificationData.country_code || '',
+        city: classificationData.city_name || 'Unknown',
+        browser: classificationData.browser || browser || 'Unknown',
+        device_type: classificationData.device_type || deviceType || 'Unknown', 
+        visitorType: isHumanVisitor ? 'Human' : 'Bot',
+        visitor_type: isHumanVisitor ? 'Human' : 'Bot',
+        isHuman: isHumanVisitor,
+        is_human: isHumanVisitor,
+        action: isHumanVisitor ? 'Allowed' : 'Blocked',
+        statusAction: isErrorCode ? finalBotUrl : 'redirect',
+        statusCode: isErrorCode ? parseInt(finalBotUrl!) : 200,
+        detection_method: classificationData.detection_method || detectionMethod || 'IP Analysis',
+        block_reason: blockReason || null,
+        isp: classificationData.isp || 'Unknown',
+        usage_type: classificationData.usage_type || '',
+        connection_type: classificationData.connection_type || (isHumanVisitor ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
+        risk_score: classificationData.risk_score ?? (isHumanVisitor ? 8 : 80),
+        threat_level: classificationData.threat_level || (isHumanVisitor ? 'low' : 'medium'),
+        adNetwork: adIntel.adNetwork || null,
+        ad_network: adIntel.adNetwork || null,
+        adClickId: adIntel.adClickId || null,
+        ad_click_id: adIntel.adClickId || null,
+        isPaidAdClick: adIntel.isPaidAdClick,
+        is_paid_ad_click: adIntel.isPaidAdClick,
+        isAdReviewer: adIntel.isVerifiedAdReviewer,
+        is_ad_reviewer: adIntel.isVerifiedAdReviewer,
+        adParam: adIntel.adParam || null,
+        redirectUrl: effectiveRedirectUrl || null,
+        redirect_url: effectiveRedirectUrl || null,
+        destination: effectiveRedirectUrl || null,
+        destinationUrl: effectiveRedirectUrl || null,
+        url: effectiveRedirectUrl || null,
+        humanUrl: finalHumanUrl || null,
+        human_url: finalHumanUrl || null,
+        botUrl: finalBotUrl || null,
+        bot_url: finalBotUrl || null,
+        redirectVersion: redirectVersion,
+        configured: Boolean(effectiveRedirectUrl),
+        isSimulation: isSimulation,
+        status: "success"
       };
-      
-      // If API key is provided, add redirect URL for PHP script usage
-      if (apiKeyId) {
-        try {
-          // Get API key details to check status (paused/expired)
-          const apiKeyDetails = await storage.getApiKeyById(apiKeyId);
-          
-          // If API key is paused or expired, redirect ALL visitors to bot URL
-          if (apiKeyDetails && (apiKeyDetails.status === 'paused' || apiKeyDetails.status === 'expired')) {
-            const user = await storage.getClientUserByApiKey(apiKeyId);
-            const redirectUrls = user ? await storage.getUserRedirectUrls(user.id) : undefined;
-            const botUrl = redirectUrls?.botUrl || 'https://google.com';
-            const redirectVersion = redirectUrls?.updatedAt ? new Date(redirectUrls.updatedAt).getTime() : 0;
-            response.redirectUrl = botUrl;
-            response.redirectVersion = redirectVersion;
-            response.visitorType = 'Bot'; // Force bot classification when paused/expired
-            console.log(`⚠️ License ${apiKeyDetails.status.toUpperCase()}: Redirecting all visitors to bot URL`);
-          } else {
-            // Normal operation - get redirect URLs
-            const user = await storage.getClientUserByApiKey(apiKeyId);
-            let humanUrl = 'https://example.com/human';
-            let botUrl = 'https://google.com';
-            let redirectVersion = 0;
-            
-            if (user) {
-              const redirectUrls = await storage.getUserRedirectUrls(user.id);
-              humanUrl = redirectUrls?.humanUrl || humanUrl;
-              botUrl = redirectUrls?.botUrl || botUrl;
-              redirectVersion = redirectUrls?.updatedAt ? new Date(redirectUrls.updatedAt).getTime() : 0;
-            } else {
-              console.warn(`⚠️ No client user found for API key ID: ${apiKeyId} - using default redirect URLs`);
-            }
-            
-            // Return appropriate redirect URL based on visitor type
-            response.redirectUrl = classification.visitorType === 'Human' 
-              ? humanUrl 
-              : botUrl;
-            response.redirectVersion = redirectVersion;
-          }
-        } catch (error) {
-          console.error("Error fetching redirect URLs:", error);
-          // ALWAYS provide redirect URLs even if lookup fails (prevents "Configuration error")
-          response.redirectUrl = classification.visitorType === 'Human' 
-            ? 'https://example.com/human' 
-            : 'https://google.com';
-          response.redirectVersion = 0;
-        }
-      }
       
       res.json(response);
     } catch (error) {
       console.error("Classification error:", error);
-      res.status(500).json({ 
-        message: "Classification failed", 
+      res.status(200).json({ 
+        visitorType: "Bot",
+        visitor_type: "Bot",
+        isHuman: false,
+        is_human: false,
+        redirectUrl: configuredBotUrl || null,
+        redirect_url: configuredBotUrl || null,
+        destination: configuredBotUrl || null,
+        url: configuredBotUrl || null,
+        redirectVersion: redirectVersion,
+        configured: Boolean(configuredBotUrl),
+        message: "Classification failed - fail secure", 
         error: error instanceof Error ? error.message : 'Unknown error'
       });
     }
@@ -2143,16 +5710,18 @@ Disallow: /*`);
     }
   });
 
-  // Get IP2Geolocation API key status (with masked key and last updated)
+  // Get IP2Geolocation API key status and health
   app.get("/api/ip2geo-api-key/status", requireAuth, async (req, res) => {
     try {
-      const apiKey = await storage.getSetting('cleantraffic_api_key');
+      const apiKey = await getEffectiveIp2GeoKey();
+      const health = ip2LocationHealth.getState();
       
       if (!apiKey) {
         return res.json({
           hasKey: false,
           keyPreview: null,
-          lastUpdated: "Never"
+          lastUpdated: "Never",
+          health
         });
       }
       
@@ -2164,19 +5733,59 @@ Disallow: /*`);
       res.json({
         hasKey: true,
         keyPreview: maskedKey,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: health.lastChecked || new Date().toISOString(),
+        health
       });
     } catch (error) {
       console.error("Check IP2Geo API key status error:", error);
       res.status(500).json({ 
         hasKey: false,
         keyPreview: null,
-        lastUpdated: "Never"
+        lastUpdated: "Never",
+        health: ip2LocationHealth.getState()
       });
     }
   });
 
-  // Update CleanTraffic API key
+  // Dedicated Health Check Endpoint for IP2Location API
+  app.get("/api/ip2geo-api-key/health", requireAuth, async (req, res) => {
+    try {
+      const health = ip2LocationHealth.getState();
+      res.json(health);
+    } catch (error: any) {
+      res.status(500).json({ error: true, message: error.message || "Failed to retrieve health status" });
+    }
+  });
+
+  // On-demand Test / Diagnostic Probe for IP2Location API Key
+  app.post("/api/ip2geo-api-key/test", requireAuth, async (req, res) => {
+    try {
+      const { apiKey } = req.body || {};
+      const keyToTest = apiKey && typeof apiKey === 'string' && apiKey.trim().length > 0
+        ? apiKey.trim()
+        : await getEffectiveIp2GeoKey();
+
+      if (!keyToTest) {
+        return res.status(400).json({
+          success: false,
+          message: "No API key configured to test. Please enter a key.",
+          health: ip2LocationHealth.getState()
+        });
+      }
+
+      const result = await ip2LocationHealth.testKey(keyToTest);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Test IP2Geo API key error:", error);
+      res.status(500).json({
+        success: false,
+        message: error.message || "Failed to execute diagnostic probe",
+        health: ip2LocationHealth.getState()
+      });
+    }
+  });
+
+  // Update CleanTraffic / IP2Location / IP2Geo API key
   app.put("/api/ip2geo-api-key", requireAuth, async (req, res) => {
     try {
       const { apiKey } = req.body;
@@ -2190,121 +5799,65 @@ Disallow: /*`);
       
       const trimmedKey = apiKey.trim();
       
-      if (trimmedKey.length < 10) {
+      if (trimmedKey.length < 8) {
         return res.status(400).json({
           error: true,
           message: "API key appears to be invalid (too short)"
         });
       }
       
-      // Test the API key with IP2Geolocation API
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-        
-        const testApiUrl = `https://api.ip2location.io/?key=${encodeURIComponent(trimmedKey)}&ip=8.8.8.8`;
-        const testResponse = await fetch(testApiUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json'
-          },
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        
-        const testData = await testResponse.json();
-        
-        console.log('IP2Geolocation API validation:', { status: testResponse.status, data: testData });
-        
-        // Check if API key is valid - IP2Location returns error field for invalid keys
-        if (!testResponse.ok || testData.error || !testData.country_name) {
-          console.log('API key validation failed:', testData);
-          return res.status(400).json({
-            error: true,
-            message: testData.error?.message || "Invalid API key - Must be a valid IP2Geolocation API key"
-          });
-        }
-        
-        console.log('API key validation successful:', { 
-          country: testData.country_name, 
-          city: testData.city_name,
-          isp: testData.as 
-        });
-      } catch (validationError: any) {
-        if (validationError.name === 'AbortError') {
-          return res.status(400).json({
-            error: true,
-            message: "API key validation timed out - please try again"
-          });
-        }
-        return res.status(400).json({
-          error: true,
-          message: "Failed to validate API key with CleanTraffic service"
-        });
-      }
-      
-      // Save to storage layer (works with both MemStorage and DatabaseStorage)
+      // Test the API key using comprehensive health diagnostics
+      const testResult = await ip2LocationHealth.testKey(trimmedKey);
+
+      // Save to storage layer (works with both Firestore and DatabaseStorage)
       await storage.setSetting('cleantraffic_api_key', trimmedKey);
-      console.log("API key saved to storage");
       
-      // Update both environment variables for immediate effect
+      // Update runtime environment variables for immediate effect
       process.env.IP2GEO_API_KEY = trimmedKey;
       process.env.IP2GEOLOCATION_API_KEY = trimmedKey;
+      process.env.IP2LOCATION_API_KEY = trimmedKey;
       
-      // Save to persistent file for consistent access (this is what classification reads first)
+      // Save to persistent file
       try {
-        // Save to PHP package API key file for immediate use
-        const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-        
-        // Clear any PHP cache before writing
-        if (fs.existsSync(keyFile)) {
-          fs.unlinkSync(keyFile); // Remove old file completely
+        const pkgDir = path.join(process.cwd(), 'cleantraffic-php-package');
+        if (!fs.existsSync(pkgDir)) {
+          fs.mkdirSync(pkgDir, { recursive: true });
         }
-        
-        // Write new key with exclusive lock
+        const keyFile = path.join(pkgDir, 'api_key.txt');
         fs.writeFileSync(keyFile, trimmedKey, { flag: 'w', mode: 0o644 });
-        console.log("API key saved to PHP package file for immediate use");
         
-        // Also update .env file for Replit persistence
+        // Also update .env file
         const envPath = path.join(process.cwd(), '.env');
         let envContent = '';
-        
         try {
           if (fs.existsSync(envPath)) {
             envContent = fs.readFileSync(envPath, 'utf8');
           }
-        } catch (readError) {
-          console.log("Creating new .env file");
-        }
+        } catch (readError) {}
         
-        // Update or add the API key in .env format
         const keyPattern = /^IP2GEOLOCATION_API_KEY=.*$/gm;
         const newKeyLine = `IP2GEOLOCATION_API_KEY=${trimmedKey}`;
-        
         if (keyPattern.test(envContent)) {
           envContent = envContent.replace(keyPattern, newKeyLine);
         } else {
           envContent = envContent.trim() + '\n' + newKeyLine + '\n';
         }
-        
         fs.writeFileSync(envPath, envContent, 'utf8');
-        console.log("API key updated in .env file for Replit persistence");
-        
       } catch (writeError) {
-        console.warn("Could not update persistent files:", writeError);
-        // This is not fatal, continue with memory-only storage
+        console.warn("Notice: Could not write persistent key file:", writeError);
       }
       
-      // Clear any cached IP data since we have a new API key
+      // Clear cached IP data so future classifications use the new key
       if (typeof ip2geoCache !== 'undefined' && ip2geoCache.clear) {
         ip2geoCache.clear();
-        console.log("Cleared IP geolocation cache after API key update");
       }
       
       res.json({
-        success: true,
-        message: "CleanTraffic API key updated and validated successfully",
-        keyPreview: `${trimmedKey.substring(0, 5)}...${trimmedKey.substring(trimmedKey.length - 5)}`
+        success: testResult.success,
+        message: testResult.message,
+        keyPreview: `${trimmedKey.substring(0, 4)}*****${trimmedKey.substring(trimmedKey.length - 4)}`,
+        health: testResult.health,
+        details: testResult.details
       });
       
     } catch (error) {
@@ -3056,6 +6609,28 @@ Disallow: /*`);
         return res.status(400).json({ message: "domainId is required" });
       }
 
+      if (clientUser.complianceStatus === "flagged") {
+        return res.status(403).json({
+          message: clientUser.statusReason
+            ? `Your account is currently under compliance review (${clientUser.statusReason}). Generating campaign domains is temporarily unavailable.`
+            : "Your account is currently under compliance review and this action is temporarily unavailable.",
+          code: "ACCOUNT_FLAGGED",
+          complianceStatus: "flagged",
+          statusReason: clientUser.statusReason,
+        });
+      }
+
+      if (clientUser.complianceStatus === "pending") {
+        return res.status(403).json({
+          message: clientUser.statusReason
+            ? `Your account is pending verification and review (${clientUser.statusReason}). Modifying campaign domains is unavailable until your account is cleared.`
+            : "Your account is pending verification and review. Modifying campaign domains is unavailable until your account is cleared.",
+          code: "ACCOUNT_PENDING",
+          complianceStatus: "pending",
+          statusReason: clientUser.statusReason,
+        });
+      }
+
       // Check daily limit
       const [todayGenerations, dailyLimit] = await Promise.all([
         storage.getUserDomainGenerationsToday(userId),
@@ -3103,13 +6678,251 @@ Disallow: /*`);
         success: true,
         generation,
         domain: domain.domain,
-        apiKey: apiKey?.keyValue || 'NO_API_KEY',
-        redirectUrls: redirectUrls || { humanUrl: 'https://example.com', botUrl: 'https://google.com' },
+        apiKey: apiKey?.keyValue ? `${apiKey.keyValue.slice(0, 4)}••••••••${apiKey.keyValue.slice(-4)}` : 'NO_API_KEY',
+        redirectUrls: redirectUrls || { humanUrl: '', botUrl: '' },
         remaining: dailyLimit - todayCount - 1
       });
     } catch (error) {
       console.error("Generate domain link error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // ── Admin Interstitial Theme Management Endpoints ────────────────────────
+  // List all themes (including inactive/disabled)
+  app.get("/api/admin/themes", requireAuth, async (req, res) => {
+    try {
+      const themes = await storage.getInterstitialThemes(true);
+      res.json(themes);
+    } catch (error) {
+      console.error("Admin fetch themes error:", error);
+      res.status(500).json({ message: "Failed to fetch themes" });
+    }
+  });
+
+  // Create/push new theme design
+  app.post("/api/admin/themes", requireAuth, async (req, res) => {
+    try {
+      const { name, description, category, badge, previewBg, previewAccent, htmlHead, htmlBody, scriptJs, isDefault, enabled } = req.body;
+      if (!name || !htmlHead || !htmlBody) {
+        return res.status(400).json({ message: "Name, CSS (htmlHead), and HTML structure (htmlBody) are required" });
+      }
+      const created = await storage.createInterstitialTheme({
+        name: String(name).trim(),
+        description: description ? String(description).trim() : "",
+        category: category || "Light",
+        badge: badge ? String(badge).trim() : null,
+        previewBg: previewBg || "#f8fafc",
+        previewAccent: previewAccent || "#059669",
+        htmlHead: String(htmlHead).trim(),
+        htmlBody: String(htmlBody).trim(),
+        scriptJs: scriptJs ? String(scriptJs).trim() : null,
+        isDefault: Boolean(isDefault),
+        enabled: enabled !== false,
+      });
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "theme.created",
+        targetId: created.id,
+        targetType: "interstitial_theme",
+        metadata: { name: created.name, category: created.category },
+      });
+
+      res.status(201).json(created);
+    } catch (error: any) {
+      console.error("Admin create theme error:", error);
+      res.status(500).json({ message: error?.message || "Failed to create theme" });
+    }
+  });
+
+  // Update theme
+  app.put("/api/admin/themes/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const updated = await storage.updateInterstitialTheme(id, updates);
+      if (!updated) {
+        return res.status(404).json({ message: "Theme not found" });
+      }
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "theme.updated",
+        targetId: id,
+        targetType: "interstitial_theme",
+        metadata: { updates },
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Admin update theme error:", error);
+      res.status(500).json({ message: error?.message || "Failed to update theme" });
+    }
+  });
+
+  // Delete theme
+  app.delete("/api/admin/themes/:id", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const theme = await storage.getInterstitialTheme(id);
+      if (!theme) {
+        return res.status(404).json({ message: "Theme not found" });
+      }
+      if (theme.isDefault) {
+        return res.status(400).json({ message: "Cannot delete the default interstitial theme" });
+      }
+
+      const deleted = await storage.deleteInterstitialTheme(id);
+      if (!deleted) {
+        return res.status(400).json({ message: "Failed to delete theme" });
+      }
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "theme.deleted",
+        targetId: id,
+        targetType: "interstitial_theme",
+        metadata: { name: theme.name },
+      });
+
+      res.json({ success: true, message: "Theme deleted successfully" });
+    } catch (error: any) {
+      console.error("Admin delete theme error:", error);
+      res.status(500).json({ message: error?.message || "Failed to delete theme" });
+    }
+  });
+
+  // Set default theme
+  app.post("/api/admin/themes/:id/set-default", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.setDefaultInterstitialTheme(id);
+      if (!success) {
+        return res.status(404).json({ message: "Theme not found" });
+      }
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "theme.set_default",
+        targetId: id,
+        targetType: "interstitial_theme",
+      });
+
+      res.json({ success: true, message: "Theme set as default" });
+    } catch (error: any) {
+      console.error("Admin set default theme error:", error);
+      res.status(500).json({ message: error?.message || "Failed to set default theme" });
+    }
+  });
+
+  // ── Client User Theme Endpoints ──────────────────────────────────────────
+  // List enabled themes for users
+  app.get("/api/user/themes", async (_req, res) => {
+    try {
+      const themes = await storage.getInterstitialThemes(false);
+      res.json(themes);
+    } catch (error) {
+      console.error("User fetch themes error:", error);
+      res.status(500).json({ message: "Failed to fetch themes" });
+    }
+  });
+
+  // Preview rendered HTML for a specific theme
+  app.get("/api/user/themes/:id/preview-html", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const theme = await storage.getInterstitialTheme(id);
+      if (!theme) {
+        return res.status(404).send("Theme not found");
+      }
+
+      const heading = String(req.query.heading || "Verifying your connection...");
+      const subnote = String(req.query.subnote || "Please wait while we secure your session.");
+
+      const renderedBody = theme.htmlBody
+        .replace(/{{HEADING}}/g, heading)
+        .replace(/{{SUBNOTE}}/g, subnote);
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${heading}</title>
+  <style>
+${theme.htmlHead}
+  </style>
+</head>
+<body>
+${renderedBody}
+${theme.scriptJs ? `<script>\n${theme.scriptJs}\n</script>` : ""}
+</body>
+</html>`;
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.send(html);
+    } catch (error) {
+      console.error("Theme preview error:", error);
+      res.status(500).send("Error generating preview");
+    }
+  });
+
+  // Update user's chosen loading theme & texts
+  app.put("/api/user/interstitial-theme", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || req.clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+
+      const { interstitialThemeId, interstitialHeading, interstitialSubnote } = req.body;
+      if (!interstitialThemeId) {
+        return res.status(400).json({ message: "interstitialThemeId is required" });
+      }
+
+      // Verify theme exists
+      const theme = await storage.getInterstitialTheme(interstitialThemeId);
+      if (!theme) {
+        return res.status(400).json({ message: "Selected theme does not exist" });
+      }
+
+      // Fetch or initialize user redirect settings
+      const existing = await storage.getUserRedirectUrls(userId);
+      const updated = await storage.setUserRedirectUrls(userId, {
+        humanUrl: existing?.humanUrl || "",
+        botUrl: existing?.botUrl || "404",
+        allowedCountries: existing?.allowedCountries || "ALL",
+        allowedDevices: existing?.allowedDevices || "all",
+        desktopOsFilter: existing?.desktopOsFilter || "both",
+        blockVpn: existing?.blockVpn || "block",
+        blockDatacenter: existing?.blockDatacenter || "block",
+        blockTor: existing?.blockTor || "block",
+        fingerprintActivate: existing?.fingerprintActivate || "enabled",
+        wildcardSubdomains: existing?.wildcardSubdomains || "disabled",
+        allowVpn: existing?.allowVpn || false,
+        allowSearchCrawlers: existing?.allowSearchCrawlers || "allow",
+        blockAiCrawlers: existing?.blockAiCrawlers || "block",
+        allowSocialPreviews: existing?.allowSocialPreviews || "allow",
+        interstitialThemeId: theme.id,
+        interstitialHeading: interstitialHeading ? String(interstitialHeading).trim() : "Verifying your connection...",
+        interstitialSubnote: interstitialSubnote ? String(interstitialSubnote).trim() : "Please wait while we secure your session.",
+      });
+
+      res.json({
+        success: true,
+        message: "Interstitial loading theme updated successfully",
+        redirectUrls: updated,
+      });
+    } catch (error: any) {
+      console.error("Update interstitial theme error:", error);
+      res.status(500).json({ message: error?.message || "Failed to update interstitial theme" });
     }
   });
 

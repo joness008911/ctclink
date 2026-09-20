@@ -1,0 +1,490 @@
+/**
+ * High-Performance Bot & Crawler Detection Engine
+ * Incorporates the Monperrus Crawler Database, Ultimate Bad Bot signatures,
+ * and Datacenter ASN pre-screening tables for zero-latency local classification.
+ */
+
+// Monperrus & Curated Crawler User-Agent Patterns (Compiled Regex Array)
+const KNOWN_CRAWLER_PATTERNS: Array<{ pattern: RegExp; name: string; category: string }> = [
+  // Major Search Engine Crawlers
+  { pattern: /googlebot/i, name: "Googlebot", category: "Search Engine Crawler" },
+  { pattern: /google-inspectiontool/i, name: "Google Inspection Tool", category: "Search Engine Crawler" },
+  { pattern: /mediapartners-google/i, name: "Google Ads/AdSense Bot", category: "Ad Crawler" },
+  { pattern: /adsbot-google/i, name: "Google AdsBot", category: "Ad Crawler" },
+  { pattern: /bingbot/i, name: "Bingbot", category: "Search Engine Crawler" },
+  { pattern: /bingpreview/i, name: "Bing Preview", category: "Search Engine Crawler" },
+  { pattern: /adidxbot/i, name: "Bing AdsBot", category: "Ad Crawler" },
+  { pattern: /yandex(bot|images|video|media|blogs|favicons|metrika)/i, name: "Yandex Bot", category: "Search Engine Crawler" },
+  { pattern: /baiduspider/i, name: "Baidu Spider", category: "Search Engine Crawler" },
+  { pattern: /duckduckbot/i, name: "DuckDuckGo Bot", category: "Search Engine Crawler" },
+  { pattern: /petalbot/i, name: "Huawei PetalBot", category: "Search Engine Crawler" },
+  { pattern: /applebot/i, name: "Applebot", category: "Search Engine Crawler" },
+  { pattern: /sogou( spider| web spider| head spider)/i, name: "Sogou Spider", category: "Search Engine Crawler" },
+  { pattern: /seznambot/i, name: "SeznamBot", category: "Search Engine Crawler" },
+  { pattern: /naverbot|yeti/i, name: "Naver Yeti", category: "Search Engine Crawler" },
+  { pattern: /daumoa/i, name: "Daum Bot", category: "Search Engine Crawler" },
+  { pattern: /qwantify/i, name: "Qwantify", category: "Search Engine Crawler" },
+  { pattern: /slurp/i, name: "Yahoo Slurp", category: "Search Engine Crawler" },
+  { pattern: /exabot/i, name: "Exabot", category: "Search Engine Crawler" },
+  { pattern: /ia_archiver/i, name: "Alexa / Internet Archive", category: "Archiver" },
+  { pattern: /archive\.org_bot/i, name: "Wayback Machine Archive", category: "Archiver" },
+
+  // Social Media & Link Preview Bots
+  { pattern: /facebookexternalhit/i, name: "Facebook External Hit", category: "Social Preview Bot" },
+  { pattern: /facebot/i, name: "Facebot", category: "Social Preview Bot" },
+  { pattern: /twitterbot/i, name: "Twitterbot", category: "Social Preview Bot" },
+  { pattern: /linkedinbot/i, name: "LinkedInBot", category: "Social Preview Bot" },
+  { pattern: /pinterestbot|pinterest/i, name: "Pinterest Bot", category: "Social Preview Bot" },
+  { pattern: /slackbot/i, name: "Slackbot", category: "Social Preview Bot" },
+  { pattern: /telegrambot/i, name: "TelegramBot", category: "Social Preview Bot" },
+  { pattern: /whatsapp/i, name: "WhatsApp Preview", category: "Social Preview Bot" },
+  { pattern: /discordbot/i, name: "Discordbot", category: "Social Preview Bot" },
+  { pattern: /redditbot/i, name: "RedditBot", category: "Social Preview Bot" },
+  { pattern: /skypeuripreview/i, name: "Skype URI Preview", category: "Social Preview Bot" },
+  { pattern: /vkshare/i, name: "VK Share Bot", category: "Social Preview Bot" },
+  { pattern: /tumblr/i, name: "Tumblr Bot", category: "Social Preview Bot" },
+  { pattern: /bytespider/i, name: "ByteDance / TikTok Spider", category: "Scraper" },
+
+  // AI & LLM Machine Learning Crawlers & Scrapers
+  { pattern: /gptbot/i, name: "ChatGPT / OpenAI GPTBot", category: "AI Crawler" },
+  { pattern: /chatgpt-user/i, name: "ChatGPT User Agent", category: "AI Crawler" },
+  { pattern: /oai-searchbot/i, name: "OpenAI SearchBot", category: "AI Crawler" },
+  { pattern: /claudebot|claude-web|anthropic-ai/i, name: "Anthropic ClaudeBot", category: "AI Crawler" },
+  { pattern: /perplexitybot/i, name: "PerplexityBot", category: "AI Crawler" },
+  { pattern: /ccbot/i, name: "Common Crawl Bot", category: "AI Crawler" },
+  { pattern: /cohere-ai/i, name: "Cohere AI Crawler", category: "AI Crawler" },
+  { pattern: /diffbot/i, name: "Diffbot AI Extractor", category: "AI Crawler" },
+  { pattern: /omgilibot/i, name: "Omgili AI Scraper", category: "AI Crawler" },
+  { pattern: /meta-externalagent/i, name: "Meta AI External Agent", category: "AI Crawler" },
+  { pattern: /google-extended/i, name: "Google-Extended (Gemini)", category: "AI Crawler" },
+
+  // Commercial SEO, Content Scrapers & Monitoring Crawlers
+  { pattern: /ahrefs(bot|siteaudit)/i, name: "AhrefsBot", category: "SEO Scraper" },
+  { pattern: /semrush(bot|audit)/i, name: "SemrushBot", category: "SEO Scraper" },
+  { pattern: /mj12bot/i, name: "Majestic-12 Bot", category: "SEO Scraper" },
+  { pattern: /dotbot/i, name: "DotBot", category: "SEO Scraper" },
+  { pattern: /rogerbot/i, name: "Moz Rogerbot", category: "SEO Scraper" },
+  { pattern: /screaming frog/i, name: "Screaming Frog SEO Spider", category: "SEO Scraper" },
+  { pattern: /blexbot/i, name: "BLEXBot", category: "SEO Scraper" },
+  { pattern: /dataforseo/i, name: "DataForSeoBot", category: "SEO Scraper" },
+  { pattern: /serpstatbot/i, name: "SerpstatBot", category: "SEO Scraper" },
+  { pattern: /spyfu/i, name: "SpyFu Bot", category: "SEO Scraper" },
+  { pattern: /zoominfobot/i, name: "Zoominfo Bot", category: "Data Scraper" },
+  { pattern: /amazonbot/i, name: "Amazon Crawler", category: "Commercial Bot" },
+  { pattern: /uptimerobot/i, name: "UptimeRobot", category: "Uptime Monitor" },
+  { pattern: /pingdom/i, name: "Pingdom Monitor", category: "Uptime Monitor" },
+  { pattern: /statuscake/i, name: "StatusCake Monitor", category: "Uptime Monitor" },
+  { pattern: /site24x7/i, name: "Site24x7", category: "Uptime Monitor" },
+  { pattern: /datadog/i, name: "Datadog Synthetics", category: "Monitoring Bot" },
+  { pattern: /newrelicpinger/i, name: "New Relic Pinger", category: "Monitoring Bot" },
+  { pattern: /admantx/i, name: "ADmantX Ad Verifier", category: "Ad Verifier" },
+  { pattern: /integralads|ias-/i, name: "Integral Ad Science (IAS)", category: "Ad Verifier" },
+  { pattern: /doubleverify/i, name: "DoubleVerify Bot", category: "Ad Verifier" },
+  { pattern: /moatbot/i, name: "Oracle Moat Ad Bot", category: "Ad Verifier" },
+  { pattern: /brandverity/i, name: "BrandVerity Ad Inspector", category: "Ad Verifier" },
+
+  // Malicious Security Scanners & Vulnerability Probes (Ultimate Bad Bot list)
+  { pattern: /censysinspect/i, name: "Censys Scanner", category: "Security Scanner" },
+  { pattern: /shodan/i, name: "Shodan Scanner", category: "Security Scanner" },
+  { pattern: /zoomeye/i, name: "ZoomEye Scanner", category: "Security Scanner" },
+  { pattern: /masscan/i, name: "Masscan Port Scanner", category: "Security Scanner" },
+  { pattern: /zgrab/i, name: "Zgrab Banner Grabber", category: "Security Scanner" },
+  { pattern: /nmap/i, name: "Nmap Scripting Engine", category: "Security Scanner" },
+  { pattern: /sqlmap/i, name: "SQLmap Injection Tool", category: "Exploit Tool" },
+  { pattern: /nikto/i, name: "Nikto Vulnerability Scanner", category: "Security Scanner" },
+  { pattern: /wpscan/i, name: "WPScan WordPress Scanner", category: "Security Scanner" },
+  { pattern: /nuclei/i, name: "Nuclei Vulnerability Scanner", category: "Security Scanner" },
+  { pattern: /gobuster|dirbuster|ffuf|feroxbuster/i, name: "Directory Bruteforcer", category: "Security Scanner" },
+  { pattern: /acunetix|nessus|openvas|qualys/i, name: "Commercial Security Scanner", category: "Security Scanner" },
+  { pattern: /netcraft/i, name: "Netcraft Survey Agent", category: "Security Scanner" },
+
+  // Headless Browsers, Automated Emulators & WebDrivers
+  { pattern: /headlesschrome/i, name: "Headless Chrome", category: "Headless Browser" },
+  { pattern: /phantomjs/i, name: "PhantomJS", category: "Headless Browser" },
+  { pattern: /selenium/i, name: "Selenium WebDriver", category: "Automation Engine" },
+  { pattern: /puppeteer/i, name: "Puppeteer / Chromium Automation", category: "Automation Engine" },
+  { pattern: /playwright/i, name: "Playwright Automation", category: "Automation Engine" },
+  { pattern: /webdriver/i, name: "Generic WebDriver", category: "Automation Engine" },
+  { pattern: /htmlunit/i, name: "HtmlUnit Java Browser", category: "Automation Engine" },
+  { pattern: /nightmare/i, name: "Nightmare JS", category: "Automation Engine" },
+
+  // Automated Scripting Libraries & CLI Tools
+  { pattern: /^curl\//i, name: "cURL CLI", category: "HTTP Library" },
+  { pattern: /^wget\//i, name: "Wget CLI", category: "HTTP Library" },
+  { pattern: /python-requests|python-urllib|httpx|aiohttp|scrapy/i, name: "Python HTTP Client / Scrapy", category: "HTTP Library" },
+  { pattern: /go-http-client/i, name: "Go HTTP Client", category: "HTTP Library" },
+  { pattern: /apache-httpclient|jakarta commons-httpclient|java\//i, name: "Java HTTP Client", category: "HTTP Library" },
+  { pattern: /okhttp/i, name: "OkHttp Library", category: "HTTP Library" },
+  { pattern: /node-fetch|axios|undici|got\/|needle\//i, name: "Node.js HTTP Client", category: "HTTP Library" },
+  { pattern: /libwww-perl|lwp-trivial/i, name: "Perl LWP", category: "HTTP Library" },
+  { pattern: /guzzlehttp|php\/[0-9]/i, name: "PHP Guzzle / HTTP Client", category: "HTTP Library" },
+  { pattern: /ruby|faraday/i, name: "Ruby HTTP Library", category: "HTTP Library" },
+  { pattern: /winhttp|msie (4|5|6)\.0/i, name: "WinHTTP / Legacy Emulation", category: "HTTP Library" },
+];
+
+// Major Cloud & Datacenter ASN / Provider Names
+const DATACENTER_ISP_PATTERNS: Array<{ pattern: RegExp; provider: string }> = [
+  { pattern: /amazon|aws|amazon\.com|amazon technologies|amazon data services/i, provider: "Amazon Web Services (AWS)" },
+  { pattern: /google cloud|google llc|google hosting|gcp/i, provider: "Google Cloud Platform" },
+  { pattern: /microsoft corporation|azure|msft/i, provider: "Microsoft Azure" },
+  { pattern: /digitalocean/i, provider: "DigitalOcean" },
+  { pattern: /hetzner/i, provider: "Hetzner Online" },
+  { pattern: /ovh|ovhcloud|kimsufi|soyoustart/i, provider: "OVHcloud" },
+  { pattern: /linode|akamai connected cloud/i, provider: "Linode / Akamai" },
+  { pattern: /choopa|vultr|the constant company/i, provider: "Vultr / Choopa" },
+  { pattern: /leaseweb/i, provider: "Leaseweb" },
+  { pattern: /contabo/i, provider: "Contabo Hosting" },
+  { pattern: /oracle cloud|oracle america/i, provider: "Oracle Cloud" },
+  { pattern: /alibaba|aliyun/i, provider: "Alibaba Cloud" },
+  { pattern: /tencent cloud|tencent building/i, provider: "Tencent Cloud" },
+  { pattern: /rackspace/i, provider: "Rackspace Hosting" },
+  { pattern: /scaleway|online sas/i, provider: "Scaleway" },
+  { pattern: /hostinger/i, provider: "Hostinger Datacenter" },
+  { pattern: /ionos|1&1 internet/i, provider: "IONOS / 1&1 Hosting" },
+  { pattern: /m247/i, provider: "M247 Datacenter" },
+  { pattern: /cogent communications/i, provider: "Cogent Datacenter Transit" },
+  { pattern: /hostwinds/i, provider: "Hostwinds" },
+];
+
+export type CrawlerType = 'search_engine' | 'ai_crawler' | 'social_preview' | 'malicious_bot' | 'none';
+
+/**
+ * Checks whether a User-Agent matches known search engine crawlers, SEO tools,
+ * security scanners, or automated headless browsers.
+ */
+export function checkCrawlerUserAgent(userAgent: string | undefined | null): {
+  isBot: boolean;
+  name?: string;
+  category?: string;
+  crawlerType: CrawlerType;
+  patternMatched?: string;
+} {
+  if (!userAgent || userAgent.trim() === "") {
+    return {
+      isBot: true,
+      name: "Empty User Agent",
+      category: "Automated Tool",
+      crawlerType: "malicious_bot",
+      patternMatched: "Missing User-Agent Header",
+    };
+  }
+
+  const cleanUA = userAgent.trim();
+
+  for (const item of KNOWN_CRAWLER_PATTERNS) {
+    if (item.pattern.test(cleanUA)) {
+      let crawlerType: CrawlerType = 'malicious_bot';
+      if (item.category === "Search Engine Crawler" || item.category === "Ad Crawler") {
+        crawlerType = 'search_engine';
+      } else if (item.category === "AI Crawler") {
+        crawlerType = 'ai_crawler';
+      } else if (item.category === "Social Preview Bot") {
+        crawlerType = 'social_preview';
+      }
+
+      return {
+        isBot: true,
+        name: item.name,
+        category: item.category,
+        crawlerType,
+        patternMatched: item.pattern.toString(),
+      };
+    }
+  }
+
+  // Generic keyword match catch-all
+  const lower = cleanUA.toLowerCase();
+  if (
+    lower.includes("bot") ||
+    lower.includes("crawler") ||
+    lower.includes("spider") ||
+    lower.includes("scraper") ||
+    lower.includes("archiver") ||
+    lower.includes("checker") ||
+    lower.includes("preview") ||
+    lower.includes("inspection")
+  ) {
+    return {
+      isBot: true,
+      name: "Generic Bot / Crawler Signature",
+      category: "Automated Robot",
+      crawlerType: "malicious_bot",
+      patternMatched: "Generic Bot Keyword",
+    };
+  }
+
+  return { isBot: false, crawlerType: "none" };
+}
+
+/**
+ * Checks whether an ISP or ASN organization belongs to a commercial datacenter or cloud server provider.
+ */
+export function checkDatacenterIsp(ispOrOrg: string | undefined | null): {
+  isDatacenter: boolean;
+  provider?: string;
+} {
+  if (!ispOrOrg || ispOrOrg === "Unknown") {
+    return { isDatacenter: false };
+  }
+
+  const clean = ispOrOrg.trim();
+
+  for (const item of DATACENTER_ISP_PATTERNS) {
+    if (item.pattern.test(clean)) {
+      return {
+        isDatacenter: true,
+        provider: item.provider,
+      };
+    }
+  }
+
+  return { isDatacenter: false };
+}
+
+/**
+ * Fast header consistency and Client Hints (Sec-CH-UA) cross-check for automated/spoofed HTTP clients.
+ */
+export function checkHeaderAnomalies(headers: Record<string, any>, userAgent: string): {
+  isSuspicious: boolean;
+  reason?: string;
+} {
+  if (!userAgent) return { isSuspicious: true, reason: "Missing User-Agent" };
+
+  const accept = headers["accept"] || "";
+  const acceptLanguage = headers["accept-language"] || headers["Accept-Language"] || "";
+
+  // CLI tools like curl / python / scripts typically omit accept-language completely
+  // If user-agent claims to be a modern desktop Chrome/Safari/Firefox but provides zero Accept-Language or generic */*
+  const isClaimingModernBrowser =
+    userAgent.includes("Mozilla/5.0") &&
+    (userAgent.includes("Chrome/") || userAgent.includes("Safari/") || userAgent.includes("Firefox/"));
+
+  if (isClaimingModernBrowser && !acceptLanguage && (!accept || accept === "*/*")) {
+    return {
+      isSuspicious: true,
+      reason: "Synthetic Browser Profile (Missing Accept-Language and Standard Headers)",
+    };
+  }
+
+  // Client Hints (Sec-CH-UA) Cross-Verification
+  // Modern Chromium browsers (Chrome, Edge, Opera, Brave) broadcast Sec-CH-UA-Platform and Sec-CH-UA-Mobile.
+  // Automated headless scrapers frequently forge the User-Agent string (e.g. claiming iPhone or macOS)
+  // while forgetting to forge underlying Client Hints or while operating on a Linux container.
+  const rawPlatform = (
+    headers["sec-ch-ua-platform"] ||
+    headers["Sec-Ch-Ua-Platform"] ||
+    headers["sec_ch_ua_platform"] ||
+    ""
+  ).toLowerCase().replace(/"/g, "").trim();
+
+  const rawMobile = (
+    headers["sec-ch-ua-mobile"] ||
+    headers["Sec-Ch-Ua-Mobile"] ||
+    headers["sec_ch_ua_mobile"] ||
+    ""
+  ).toLowerCase().replace(/"/g, "").trim();
+
+  if (rawPlatform) {
+    const isUaApple = /iphone|ipad|ipod|macintosh|mac os x/i.test(userAgent);
+    const isUaWindows = /windows nt|win32|win64/i.test(userAgent);
+    const isUaAndroid = /android/i.test(userAgent);
+    const isUaLinux = /linux/i.test(userAgent) && !isUaAndroid;
+
+    // Discrepancy 1: User-Agent claims Apple (iOS or macOS), but Client Hint platform is Windows, Android, or Linux
+    if (isUaApple && (rawPlatform.includes("windows") || rawPlatform.includes("android") || rawPlatform.includes("linux"))) {
+      return {
+        isSuspicious: true,
+        reason: `Client Hints OS Discrepancy (User-Agent claims Apple/macOS, but Sec-CH-UA-Platform reports "${rawPlatform}")`,
+      };
+    }
+
+    // Discrepancy 2: User-Agent claims Windows, but Client Hint platform is Android, macOS, or iOS
+    if (isUaWindows && (rawPlatform.includes("android") || rawPlatform.includes("macos") || rawPlatform.includes("ios"))) {
+      return {
+        isSuspicious: true,
+        reason: `Client Hints OS Discrepancy (User-Agent claims Windows, but Sec-CH-UA-Platform reports "${rawPlatform}")`,
+      };
+    }
+
+    // Discrepancy 3: User-Agent claims Android, but Client Hint platform is Windows or macOS
+    if (isUaAndroid && (rawPlatform.includes("windows") || rawPlatform.includes("macos"))) {
+      return {
+        isSuspicious: true,
+        reason: `Client Hints OS Discrepancy (User-Agent claims Android, but Sec-CH-UA-Platform reports "${rawPlatform}")`,
+      };
+    }
+  }
+
+  // Discrepancy 4: Mobile Hint Mismatch
+  // If Sec-CH-UA-Mobile is explicitly '?0' (Desktop), but User-Agent claims an iPhone, iPad, or Android Mobile
+  if (rawMobile === "?0" || rawMobile === "0") {
+    const isUaMobilePhone = /iphone|ipod|android.*mobile/i.test(userAgent);
+    if (isUaMobilePhone) {
+      return {
+        isSuspicious: true,
+        reason: `Client Hints Mobile Mismatch (User-Agent claims Mobile Phone, but Sec-CH-UA-Mobile declared Desktop ?0)`,
+      };
+    }
+  }
+
+  return { isSuspicious: false };
+}
+
+/**
+ * High-performance in-memory request velocity tracker to intercept automated
+ * scrapers and headless bots executing on clean residential/office IPs.
+ */
+interface VelocityRecord {
+  timestamps: number[];
+  lastSeen: number;
+}
+
+const velocityMap = new Map<string, VelocityRecord>();
+const VELOCITY_BURST_LIMIT = 4; // Max requests within 2 seconds
+const VELOCITY_BURST_WINDOW_MS = 2000;
+const VELOCITY_RATE_LIMIT = 5; // Max requests within 10 seconds (triggers at 5th hit)
+const VELOCITY_RATE_WINDOW_MS = 10000;
+
+export function checkRequestVelocity(clientIp: string): {
+  isVelocityExceeded: boolean;
+  reqCount?: number;
+  reason?: string;
+} {
+  if (!clientIp || clientIp === "unknown" || clientIp === "127.0.0.1" || clientIp === "::1") {
+    return { isVelocityExceeded: false };
+  }
+
+  const now = Date.now();
+  let record = velocityMap.get(clientIp);
+  if (!record) {
+    record = { timestamps: [now], lastSeen: now };
+    velocityMap.set(clientIp, record);
+    return { isVelocityExceeded: false };
+  }
+
+  // Filter timestamps within the rate window
+  record.timestamps = record.timestamps.filter((t) => now - t < VELOCITY_RATE_WINDOW_MS);
+  record.timestamps.push(now);
+  record.lastSeen = now;
+
+  // Check rapid 2-second burst limit
+  const recentBurstCount = record.timestamps.filter((t) => now - t < VELOCITY_BURST_WINDOW_MS).length;
+  if (recentBurstCount > VELOCITY_BURST_LIMIT) {
+    return {
+      isVelocityExceeded: true,
+      reqCount: recentBurstCount,
+      reason: `Rapid-fire automated click velocity (${recentBurstCount} req / 2s)`,
+    };
+  }
+
+  // Check 10-second frequency rate limit (triggers on 5 or more visits within 10 seconds)
+  if (record.timestamps.length >= VELOCITY_RATE_LIMIT) {
+    return {
+      isVelocityExceeded: true,
+      reqCount: record.timestamps.length,
+      reason: `High-frequency scraping velocity (${record.timestamps.length} req / 10s)`,
+    };
+  }
+
+  // Periodic pruning if map grows large (> 5000 entries)
+  if (velocityMap.size > 5000) {
+    const cutoff = now - VELOCITY_RATE_WINDOW_MS;
+    for (const [ip, rec] of velocityMap.entries()) {
+      if (rec.lastSeen < cutoff) {
+        velocityMap.delete(ip);
+      }
+    }
+  }
+
+  return { isVelocityExceeded: false };
+}
+
+/**
+ * Validates hardware, DOM, and behavioral integrity signals collected by
+ * the lightweight interstitial verification script.
+ * 
+ * GOLDEN SAFETY RULE:
+ * Absence of movement/touch is ALWAYS treated as 100% human (patient buyer reading or holding phone).
+ * We ONLY flag when there is POSITIVE, MATHEMATICALLY IMPOSSIBLE PROOF of bot software
+ * (e.g. navigator.webdriver === true, fake isTrusted=false clicks, headless 0x0 screen dimensions,
+ * or software-emulated Mesa/SwiftShader GPU renderer on claimed consumer device).
+ */
+export function evaluateClientHardwareTokens(tokenPayload: any, userAgent: string): {
+  isAutomated: boolean;
+  reason: string;
+} {
+  if (!tokenPayload || typeof tokenPayload !== "object") {
+    return { isAutomated: false, reason: "" };
+  }
+
+  // 1. Direct Webdriver / Automation Flag
+  // (Selenium, Puppeteer, Playwright, Chromedriver default flag)
+  if (tokenPayload.webdriver === true || tokenPayload.webdriver === "1") {
+    return {
+      isAutomated: true,
+      reason: "Automated Browser Engine (navigator.webdriver === true)",
+    };
+  }
+
+  // 2. Synthetic Event Spoofing (Script attempted to dispatch fake clicks/touches)
+  if (tokenPayload.untrustedEvent === true || tokenPayload.untrustedEvent === "1") {
+    return {
+      isAutomated: true,
+      reason: "Synthetic Input Injection (event.isTrusted === false)",
+    };
+  }
+
+  // 3. Headless Screen Geometry & Depth Anomalies
+  // Physical devices always have screen width/height > 0 and outerWidth/outerHeight > 0.
+  // Headless Linux containers without virtual display often report outerWidth = 0, outerHeight = 0.
+  const outerW = Number(tokenPayload.outerWidth);
+  const outerH = Number(tokenPayload.outerHeight);
+  const screenW = Number(tokenPayload.screenWidth);
+  const screenH = Number(tokenPayload.screenHeight);
+  const colorDepth = Number(tokenPayload.colorDepth);
+
+  if (outerW === 0 && outerH === 0 && screenW > 0) {
+    return {
+      isAutomated: true,
+      reason: "Headless Display Geometry (outerWidth & outerHeight === 0)",
+    };
+  }
+
+  if (colorDepth > 0 && colorDepth < 16) {
+    return {
+      isAutomated: true,
+      reason: `Headless Color Depth Anomaly (${colorDepth}-bit headless buffer)`,
+    };
+  }
+
+  // 4. Software Emulated GPU / Mesa SwiftShader Renderer
+  // If the browser claims to be a high-end mobile iPhone or Samsung Galaxy, but renders via
+  // a Linux software rasterizer (SwiftShader, llvmpipe, Mesa Offscreen) inside a Docker container
+  const gpuRenderer = String(tokenPayload.gpuRenderer || "").toLowerCase();
+  const isClaimedMobile = /iphone|ipad|android/i.test(userAgent);
+  if (isClaimedMobile) {
+    if (
+      gpuRenderer.includes("swiftshader") ||
+      gpuRenderer.includes("llvmpipe") ||
+      gpuRenderer.includes("mesa offscreen") ||
+      gpuRenderer.includes("virtualbox") ||
+      gpuRenderer.includes("vmware")
+    ) {
+      return {
+        isAutomated: true,
+        reason: `Headless Emulated GPU Rasterizer on claimed mobile device (${tokenPayload.gpuRenderer})`,
+      };
+    }
+  }
+
+  // 5. Plugin / Languages Prototype Tampering
+  if (tokenPayload.missingPluginsArray === true && /chrome|edge|safari/i.test(userAgent)) {
+    // Completely undefined navigator.plugins or tampered getter in Chromium
+    return {
+      isAutomated: true,
+      reason: "Tampered Browser Environment (navigator.plugins prototype corrupted)",
+    };
+  }
+
+  return { isAutomated: false, reason: "" };
+}

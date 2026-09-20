@@ -43,7 +43,7 @@ export const apiKeys = pgTable("api_keys", {
   status: text("status").default("active").notNull(), // active, paused, expired
   expirationPeriod: text("expiration_period").default("unlimited").notNull(), // daily, weekly, monthly, unlimited
   expiresAt: timestamp("expires_at"),
-  callLimit: integer("call_limit").default(1000).notNull(),
+  callLimit: integer("call_limit").default(5000).notNull(),
   callCount: integer("call_count").default(0).notNull(),
   lastUsed: timestamp("last_used"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -108,18 +108,39 @@ export const clientIpWhitelist = pgTable("client_ip_whitelist", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export interface StatusHistoryEntry {
+  fromStatus?: string;
+  toStatus?: string;
+  fromCompliance?: string;
+  toCompliance?: string;
+  reason: string;
+  changedBy: string;
+  changedAt?: string;
+  timestamp?: string;
+}
+
 // Client Users (End-user customers who use the CleanTraffic service)
 export const clientUsers = pgTable("client_users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
+  fullName: text("full_name"),
   email: text("email"),
+  emailVerified: boolean("email_verified").default(false).notNull(),
+  emailVerifiedAt: timestamp("email_verified_at"),
   apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }),
-  status: text("status").default("active").notNull(), // active, suspended, expired
+  status: text("status").default("active").notNull(), // active, suspended, deactivated, deleted
   tosAccepted: timestamp("tos_accepted"), // Terms of service acceptance timestamp
   complianceStatus: text("compliance_status").default("pending").notNull(), // pending, cleared, flagged, suspended
+  statusReason: text("status_reason"),
+  statusUpdatedAt: timestamp("status_updated_at"),
+  statusUpdatedBy: text("status_updated_by"),
+  statusHistory: jsonb("status_history").$type<StatusHistoryEntry[]>(),
+  deactivatedAt: timestamp("deactivated_at"),
+  newsletter: boolean("newsletter").default(false),
   // Billing fields
-  subscriptionStatus: text("subscription_status").default("trialing").notNull(), // trialing, active, past_due, cancelled
+  subscriptionStatus: text("subscription_status").default("trialing").notNull(), // trialing, trial_expired, active, past_due, cancelled
+  subscriptionTier: text("subscription_tier").default("Pro").notNull(), // Basic, Pro, Premium, Enterprise
   trialEndsAt: timestamp("trial_ends_at"), // null = no trial configured yet
   stripeCustomerId: text("stripe_customer_id"),
   stripeSubscriptionId: text("stripe_subscription_id"),
@@ -127,12 +148,45 @@ export const clientUsers = pgTable("client_users", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// User Redirect URLs (Custom redirect URLs per user)
+// User Redirect URLs (Custom redirect URLs & traffic rules per user)
 export const userRedirectUrls = pgTable("user_redirect_urls", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => clientUsers.id, { onDelete: 'cascade' }),
-  humanUrl: text("human_url").notNull().default("https://example.com/human"),
-  botUrl: text("bot_url").notNull().default("https://google.com"),
+  humanUrl: text("human_url").notNull().default(""),
+  botUrl: text("bot_url").notNull().default(""),
+  allowedCountries: text("allowed_countries").default("ALL"), // "ALL" or comma-separated ISO codes e.g. "AU,US,GB"
+  allowedDevices: text("allowed_devices").default("all"), // "all" | "desktop" | "mobile" | "mobile_tablet"
+  desktopOsFilter: text("desktop_os_filter").default("both"), // "both" | "windows" | "mac"
+  blockVpn: text("block_vpn").default("block"), // "block" | "allow"
+  blockDatacenter: text("block_datacenter").default("block"), // "block" | "allow"
+  blockTor: text("block_tor").default("block"), // "block" | "allow"
+  fingerprintActivate: text("fingerprint_activate").default("enabled"), // "enabled" | "disabled"
+  wildcardSubdomains: text("wildcard_subdomains").default("disabled"), // "disabled" | "enabled"
+  allowVpn: boolean("allow_vpn").default(false).notNull(), // backwards-compatibility boolean
+  allowSearchCrawlers: text("allow_search_crawlers").default("allow"), // "allow" | "block" (default: allow so SEO and indexing are preserved)
+  blockAiCrawlers: text("block_ai_crawlers").default("block"), // "block" | "allow" (default: block AI training scrapers)
+  allowSocialPreviews: text("allow_social_previews").default("allow"), // "allow" | "block" (default: allow link preview crawlers)
+  interstitialThemeId: text("interstitial_theme_id").default("clean_light"),
+  interstitialHeading: text("interstitial_heading").default("Verifying your connection..."),
+  interstitialSubnote: text("interstitial_subnote").default("Please wait while we secure your session."),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// Interstitial Themes (Admin managed loading UI styles for client scripts)
+export const interstitialThemes = pgTable("interstitial_themes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  category: text("category").default("Light").notNull(),
+  badge: text("badge"),
+  isDefault: boolean("is_default").default(false).notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
+  previewBg: text("preview_bg").default("#f8fafc").notNull(),
+  previewAccent: text("preview_accent").default("#059669").notNull(),
+  htmlHead: text("html_head").notNull(),
+  htmlBody: text("html_body").notNull(),
+  scriptJs: text("script_js"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
@@ -177,7 +231,7 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   callCount: true,
 }).extend({
   expirationPeriod: z.enum(["10seconds", "1minute", "1hour", "daily", "weekly", "monthly", "unlimited"]).default("unlimited"),
-  callLimit: z.number().min(1).max(100000).default(1000),
+  callLimit: z.number().min(1).max(100000).default(5000),
 });
 
 export const insertSettingSchema = createInsertSchema(settings).omit({
@@ -219,8 +273,9 @@ export const insertClientUserSchema = createInsertSchema(clientUsers).omit({
   id: true,
   createdAt: true,
   updatedAt: true,
-  tosAccepted: true,
-  complianceStatus: true,
+}).extend({
+  tosAccepted: z.date().nullable().optional(),
+  complianceStatus: z.string().optional(),
 });
 
 export const insertUserRedirectUrlsSchema = createInsertSchema(userRedirectUrls).omit({
@@ -269,6 +324,18 @@ export type DomainPool = typeof domainPool.$inferSelect;
 export type InsertUserDomainGeneration = z.infer<typeof insertUserDomainGenerationSchema>;
 export type UserDomainGeneration = typeof userDomainGenerations.$inferSelect;
 
+export const insertInterstitialThemeSchema = createInsertSchema(interstitialThemes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  id: z.string().optional(),
+});
+export type InsertInterstitialTheme = z.infer<typeof insertInterstitialThemeSchema>;
+export type InterstitialTheme = typeof interstitialThemes.$inferSelect;
+
+export * from "./interstitialThemes";
+
 // Tracks Stripe webhook events that have already been processed (idempotency guard)
 export const stripeProcessedEvents = pgTable("stripe_processed_events", {
   eventId: text("event_id").primaryKey(),
@@ -299,3 +366,5 @@ export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
 
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLogs.$inferSelect;
+
+export * from "./subscription";
