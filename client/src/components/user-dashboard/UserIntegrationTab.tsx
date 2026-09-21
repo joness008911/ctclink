@@ -26,7 +26,15 @@ import {
   ExternalLink,
   SlidersHorizontal,
   Info,
-  Target
+  Target,
+  Globe,
+  Server,
+  Cpu,
+  ShoppingBag,
+  Boxes,
+  Shield,
+  HelpCircle,
+  FileCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +53,15 @@ import {
   generatePhpIntegrationScript,
   type InterstitialTheme 
 } from "@shared/interstitialThemes";
+import {
+  generateCloudflareWorkerScript,
+  generateJsSnippet,
+  generateWordPressPluginPhp,
+  generateNextJsMiddleware,
+  generateNodeExpressMiddleware,
+} from "@shared/integrationGenerators";
+
+export type IntegrationStack = "php" | "cloudflare" | "shopify" | "wordpress" | "nodejs";
 
 interface UserIntegrationTabProps {
   apiKeyValue: string | null;
@@ -61,11 +78,16 @@ export function UserIntegrationTab({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  // Active stack selector
+  const [selectedStack, setSelectedStack] = useState<IntegrationStack>("php");
+  const [nodeSubTab, setNodeSubTab] = useState<"nextjs" | "express">("nextjs");
+
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
 
-  // Themes state
+  // Themes state (for PHP Interstitial & Universal Loading)
+  const [enableLoading, setEnableLoading] = useState<boolean>(true);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [selectedThemeId, setSelectedThemeId] = useState<string>("clean_light");
   const [customHeading, setCustomHeading] = useState<string>("Verifying your connection...");
@@ -87,6 +109,9 @@ export function UserIntegrationTab({
   // Sync state once user settings are loaded
   useEffect(() => {
     if (userSettings) {
+      if (userSettings.interstitialEnabled !== undefined) {
+        setEnableLoading(Boolean(userSettings.interstitialEnabled));
+      }
       if (userSettings.interstitialThemeId) {
         setSelectedThemeId(userSettings.interstitialThemeId);
       }
@@ -113,19 +138,62 @@ export function UserIntegrationTab({
     .trim()
     .replace(/\/+$/, "");
 
-  // Generate dynamic PHP code with active theme and custom copy
+  // 1. Generate dynamic PHP code with active theme and custom copy
   const phpIntegrationCode = generatePhpIntegrationScript({
     apiKeyValue,
     effectiveEndpoint,
     theme: activeTheme,
     heading: customHeading,
     subnote: customSubnote,
+    enableLoading,
+  });
+
+  // 2. Generate Cloudflare Edge Worker script
+  const cloudflareWorkerCode = generateCloudflareWorkerScript({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
+    heading: customHeading,
+    subnote: customSubnote,
+  });
+
+  // 3. Generate JavaScript Snippet (Shopify / Wix / Webflow)
+  const jsSnippet = generateJsSnippet({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
+    themeId: selectedThemeId,
+    heading: customHeading,
+    subnote: customSubnote,
+  });
+
+  // 4. Generate WordPress Plugin PHP
+  const wordPressPluginCode = generateWordPressPluginPhp({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
+    heading: customHeading,
+    subnote: customSubnote,
+  });
+
+  // 5. Generate Next.js & Express Middleware
+  const nextJsMiddlewareCode = generateNextJsMiddleware({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
+  });
+
+  const nodeExpressMiddlewareCode = generateNodeExpressMiddleware({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
   });
 
   // Mutation to persist theme settings to user's tenant account
   const saveThemeMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("PUT", "/api/user/interstitial-theme", {
+        interstitialEnabled: enableLoading,
         interstitialThemeId: selectedThemeId,
         interstitialHeading: customHeading,
         interstitialSubnote: customSubnote,
@@ -134,8 +202,8 @@ export function UserIntegrationTab({
     },
     onSuccess: () => {
       toast({
-        title: "Loading Theme Saved",
-        description: `Your loading screen is now set to "${activeTheme.name}". The PHP integration code below has been updated.`,
+        title: "Settings Saved",
+        description: `Your protection mode is set to "${enableLoading ? "Loading Interstitial Screen" : "Transparent Inline Guard"}". Integration snippets have been updated.`,
       });
       setHasUnsavedThemeChanges(false);
       queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
@@ -148,6 +216,11 @@ export function UserIntegrationTab({
       });
     },
   });
+
+  const handleToggleLoading = (enabled: boolean) => {
+    setEnableLoading(enabled);
+    setHasUnsavedThemeChanges(true);
+  };
 
   const handleSelectTheme = (themeId: string) => {
     setSelectedThemeId(themeId);
@@ -172,17 +245,19 @@ export function UserIntegrationTab({
     toast({ title: "API Key Copied", description: "Copied to clipboard" });
   };
 
-  const handleCopyCode = () => {
-    navigator.clipboard.writeText(phpIntegrationCode);
+  // Copy code helper for the active stack
+  const handleCopyCurrentCode = (codeText: string, label: string) => {
+    navigator.clipboard.writeText(codeText);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
     toast({ 
-      title: "PHP Code Copied", 
-      description: `Integration script using "${activeTheme.name}" theme copied to clipboard.` 
+      title: `${label} Copied`, 
+      description: "Code snippet copied to clipboard." 
     });
   };
 
-  const handleDownloadZip = async () => {
+  // 1. Download PHP Package (.zip)
+  const handleDownloadPhpZip = async () => {
     if (!apiKeyValue) {
       toast({
         title: "No API Key",
@@ -202,28 +277,17 @@ export function UserIntegrationTab({
         `1. Upload index.php to your web server or campaign root (e.g., public_html/promo/index.php).\n` +
         `2. Active Loading Screen Theme: ${activeTheme.name} (${activeTheme.id})\n` +
         `3. Heading Text: "${customHeading}"\n` +
-        `4. Ensure PHP 7.4+ with the standard cURL extension is enabled.\n` +
-        `5. When visitors land on your link, they immediately see the clean verification splash (zero blank white screen).\n` +
-        `6. Classification executes asynchronously in the background. On success, humans are forwarded to your configured Human Target URL, while bots receive your configured action (404, 403, or Bot URL).\n` +
-        `7. AD ATTRIBUTION & CLICK TOKEN FORWARDING:\n` +
-        `   - All paid ad click tokens (Meta: fbclid, fbclickid; Google: gclid, wbraid, gbraid; TikTok: ttclid; Microsoft: msclkid; X: twclid) and UTM tags\n` +
-        `     are automatically captured across Apache, Nginx, LiteSpeed, and reverse proxies via GET, QUERY_STRING, and REQUEST_URI fallback.\n` +
-        `   - Paid campaigns are automatically attributed with live token tracking in your CleanTraffic Dashboard.\n` +
-        `   - Natural visitors without ad tokens are cleanly separated and classified as Organic / Direct traffic.\n` +
-        `   - Verified human visitors are forwarded with 100% of their original campaign parameters intact.\n` +
-        `8. TESTING AD PARAMETERS:\n` +
-        `   - Test Facebook/Meta: visit https://your-domain.com/index.php?fbclid=test1234 or ?fbclickid=test1234\n` +
-        `   - Test Google Ads: visit https://your-domain.com/index.php?gclid=test1234\n` +
-        `   - Test Organic: visit https://your-domain.com/index.php (without parameters)\n` +
-        `9. If an external service or network timeout occurs, the script safely fails closed with an immediate polished retry state.\n` +
-        `10. All rules, geo-fencing, device filters, and target URLs remain dynamically managed in real time from your CleanTraffic Dashboard.\n`
+        `4. Ensure PHP 7.4+ with standard cURL extension is enabled.\n` +
+        `5. Visitors see the clean verification splash (<15ms) while classification executes in the background.\n` +
+        `6. All paid ad click tokens (fbclid, fbclickid, gclid, ttclid, msclkid, twclid, wbraid, gbraid) are automatically captured and forwarded.\n` +
+        `7. Testing: Visit https://yourdomain.com/index.php?fbclid=test1234 or ?gclid=test1234\n`
       );
 
       const content = await zip.generateAsync({ type: "blob" });
       const url = window.URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `cleantraffic-${activeTheme.id}-script.zip`;
+      a.download = `cleantraffic-${activeTheme.id}-php.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -231,7 +295,7 @@ export function UserIntegrationTab({
 
       toast({
         title: "Download Started",
-        description: `Your customized integration script with "${activeTheme.name}" has been downloaded.`,
+        description: `Your customized PHP package with "${activeTheme.name}" has been downloaded.`,
       });
     } catch (err: any) {
       toast({
@@ -242,7 +306,80 @@ export function UserIntegrationTab({
     }
   };
 
-  // Categories list
+  // 2. Download Cloudflare Worker script (.js)
+  const handleDownloadCloudflareWorker = () => {
+    const blob = new Blob([cloudflareWorkerCode], { type: "application/javascript;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "cleantraffic-worker.js";
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+
+    toast({
+      title: "Worker Downloaded",
+      description: "cleantraffic-worker.js downloaded for Cloudflare deployment.",
+    });
+  };
+
+  // 3. Download WordPress Plugin (.zip)
+  const handleDownloadWordPressZip = async () => {
+    if (!apiKeyValue) {
+      toast({
+        title: "No API Key",
+        description: "Please wait for your active API key to load.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const zip = new JSZip();
+      zip.file("cleantraffic-shield.php", wordPressPluginCode);
+      zip.file(
+        "readme.txt",
+        `=== CleanTraffic Security Shield ===\n` +
+        `Contributors: CleanTraffic\n` +
+        `Tags: security, bot protection, cloaking, ad attribution, firewall\n` +
+        `Requires at least: 5.0\n` +
+        `Tested up to: 6.5\n` +
+        `Stable tag: 2.1.0\n` +
+        `License: GPLv2 or later\n\n` +
+        `== Description ==\n` +
+        `Real-time bot protection, ad attribution, and cloaking shield for WordPress & WooCommerce.\n\n` +
+        `== Installation ==\n` +
+        `1. Log in to your WordPress Admin dashboard.\n` +
+        `2. Go to Plugins > Add New > Upload Plugin.\n` +
+        `3. Select this ZIP package and click "Install Now".\n` +
+        `4. Activate the plugin. Your API key is pre-configured.\n`
+      );
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const url = window.URL.createObjectURL(content);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "cleantraffic-wordpress-plugin.zip";
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "WordPress Plugin Downloaded",
+        description: "cleantraffic-wordpress-plugin.zip ready for WordPress upload.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Download Error",
+        description: err.message || "Failed to generate WordPress ZIP",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Categories list for theme filtering
   const categories = ["All", "Light", "Minimal", "Corporate", "Security", "Dark"];
   const filteredThemes = selectedCategory === "All"
     ? themes
@@ -259,14 +396,14 @@ export function UserIntegrationTab({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm sm:text-base font-bold text-white tracking-tight">
-                Need help integrating? View the complete step-by-step documentation
+                Complete Multi-Stack Integration & Installation Guides
               </h3>
               <span className="hidden sm:inline-block text-[10px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
-                Setup Guides
+                5 Platforms
               </span>
             </div>
             <p className="text-xs text-emerald-100/80 mt-1 max-w-2xl leading-relaxed">
-              Step-by-step setup guides for cPanel, aaPanel, WordPress, custom Nginx/Apache servers, Campaign & Endpoint routing modes, and live verification diagnostics.
+              Step-by-step setup guides for cPanel, Cloudflare Edge Workers, Shopify, Wix, WordPress, Vercel, Railway, and custom VPS deployments.
             </p>
           </div>
         </div>
@@ -276,15 +413,9 @@ export function UserIntegrationTab({
             onClick={() => navigate("/docs#installation")}
             className="w-full md:w-auto bg-white hover:bg-emerald-50 text-[#06241D] font-bold text-xs h-9 px-4 rounded-lg gap-2 shadow-xs transition-all"
           >
-            <span>View Integration Docs</span>
+            <span>View All Docs</span>
             <ArrowRight className="h-3.5 w-3.5 text-[#0A5C48]" />
           </Button>
-          <button
-            onClick={() => navigate("/docs")}
-            className="hidden sm:inline-flex text-xs font-semibold text-emerald-200 hover:text-white underline underline-offset-4 transition-colors whitespace-nowrap"
-          >
-            Read All Docs →
-          </button>
         </div>
       </div>
 
@@ -296,21 +427,44 @@ export function UserIntegrationTab({
               <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
                 <Code className="h-4 w-4" />
               </div>
-              Integration Script Generator
+              Universal Integration Center
             </h2>
             <p className="text-xs text-[#64748B] mt-1">
-              Select your preferred visitor loading state, customize the copy, and deploy the self-contained PHP file on your landing page.
+              Choose your platform below to generate pre-authenticated, ready-to-deploy protection code for your website or campaign.
             </p>
           </div>
 
-          <Button
-            onClick={handleDownloadZip}
-            disabled={!apiKeyValue}
-            className="bg-[#0A5C48] hover:bg-[#07382D] text-white text-xs font-bold px-5 h-10 rounded-lg gap-2 shadow-xs transition-all"
-          >
-            <Download className="h-4 w-4" />
-            Download ZIP ({activeTheme.name})
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedStack === "php" && (
+              <Button
+                onClick={handleDownloadPhpZip}
+                disabled={!apiKeyValue}
+                className="bg-[#0A5C48] hover:bg-[#07382D] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shadow-xs transition-all"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download PHP ZIP
+              </Button>
+            )}
+            {selectedStack === "cloudflare" && (
+              <Button
+                onClick={handleDownloadCloudflareWorker}
+                className="bg-[#F6821F] hover:bg-[#E06D0C] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shadow-xs transition-all"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download worker.js
+              </Button>
+            )}
+            {selectedStack === "wordpress" && (
+              <Button
+                onClick={handleDownloadWordPressZip}
+                disabled={!apiKeyValue}
+                className="bg-[#0073AA] hover:bg-[#005A87] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shadow-xs transition-all"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Plugin ZIP
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* API Key & Endpoint Bar */}
@@ -366,372 +520,967 @@ export function UserIntegrationTab({
             />
           </div>
         </div>
-      </div>
 
-      {/* ── THEME SELECTION & LOADING SCREEN CUSTOMIZER ── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5EAE7] pb-5">
-          <div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
-                <Palette className="h-4 w-4" />
-              </div>
-              <h3 className="text-lg font-bold text-[#0F172A] tracking-tight">
-                Visitor Verification Loading Screen UI
-              </h3>
-              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-100 text-[10px] uppercase font-bold">
-                Tenant Isolated
-              </Badge>
+        {/* ── VERIFICATION & LOADING MODE SELECTOR ── */}
+        <div className="pt-2 border-t border-[#E5EAE7]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <div>
+              <Label className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5 uppercase tracking-wider">
+                <SlidersHorizontal className="h-3.5 w-3.5 text-[#0A5C48]" />
+                Verification & Loading Experience
+              </Label>
+              <p className="text-[11px] text-[#64748B] mt-0.5">
+                Choose whether your visitors see an instant security verification screen or experience zero-delay inline inspection.
+              </p>
             </div>
-            <p className="text-xs text-[#64748B] mt-1 max-w-2xl">
-              Choose the instant splash screen shown to visitors on your PHP link while bot classification runs. Each user can pick a distinct theme, preview it in real-time, and save it directly into their generated script.
-            </p>
+
+            <div className="flex items-center gap-2">
+              {hasUnsavedThemeChanges && (
+                <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded font-medium animate-pulse">
+                  Unsaved mode
+                </span>
+              )}
+              <Button
+                onClick={() => saveThemeMutation.mutate()}
+                disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
+                className={`h-7 px-3 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                  hasUnsavedThemeChanges
+                    ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
+                    : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                }`}
+              >
+                {saveThemeMutation.isPending ? (
+                  <>
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3 w-3" />
+                    <span>Save Preference</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            {hasUnsavedThemeChanges && (
-              <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md font-medium flex items-center gap-1 animate-pulse">
-                <Info className="h-3 w-3" /> Unsaved changes
-              </span>
-            )}
-            <Button
-              onClick={() => saveThemeMutation.mutate()}
-              disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
-              className={`h-9 px-4 text-xs font-bold rounded-lg shadow-xs transition-all flex items-center gap-1.5 ${
-                hasUnsavedThemeChanges
-                  ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
-                  : "bg-slate-100 text-slate-400 cursor-not-allowed"
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Mode A: Loading Screen Interstitial */}
+            <div
+              onClick={() => handleToggleLoading(true)}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                enableLoading
+                  ? "bg-emerald-50/70 border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/20"
+                  : "bg-white border-[#E0E9E4] hover:border-slate-300"
               }`}
             >
-              {saveThemeMutation.isPending ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="h-3.5 w-3.5" />
-                  <span>Save Loading Theme</span>
-                </>
-              )}
-            </Button>
-          </div>
-        </div>
-
-        {/* Custom Text Customization Inputs */}
-        <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold text-[#0F172A]">Primary Headline Text</Label>
-              <span className="text-[11px] text-[#64748B]">Appears as main title</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
+                    enableLoading ? "bg-[#0A5C48] text-white" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="text-xs font-bold text-[#0F172A]">Interstitial Loading Screen</span>
+                </div>
+                <Badge className={`text-[10px] px-1.5 py-0 ${
+                  enableLoading ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"
+                }`}>
+                  {enableLoading ? "Active Mode" : "Optional"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-[#64748B] mt-2 leading-relaxed">
+                Displays a high-converting security verification animation (&lt;15ms) while evaluating visitor signals and ad click tokens in the background.
+              </p>
+              <div className="mt-2 text-[10px] text-emerald-800 font-medium flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                <span>Customizable themes, retry button &amp; countdown</span>
+              </div>
             </div>
-            <Input
-              value={customHeading}
-              onChange={(e) => handleHeadingChange(e.target.value)}
-              placeholder="Verifying your connection..."
-              className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs h-9 focus:border-[#0A5C48]"
-            />
-          </div>
 
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold text-[#0F172A]">Sub-note Description</Label>
-              <span className="text-[11px] text-[#64748B]">Supporting message under title</span>
+            {/* Mode B: Transparent Inline Protection */}
+            <div
+              onClick={() => handleToggleLoading(false)}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                !enableLoading
+                  ? "bg-emerald-50/70 border-emerald-500/80 shadow-xs ring-1 ring-emerald-500/20"
+                  : "bg-white border-[#E0E9E4] hover:border-slate-300"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${
+                    !enableLoading ? "bg-[#0A5C48] text-white" : "bg-slate-100 text-slate-500"
+                  }`}>
+                    <Zap className="h-3.5 w-3.5" />
+                  </div>
+                  <span className="text-xs font-bold text-[#0F172A]">Transparent Inline Guard</span>
+                </div>
+                <Badge className={`text-[10px] px-1.5 py-0 ${
+                  !enableLoading ? "bg-emerald-700 text-white" : "bg-slate-100 text-slate-600"
+                }`}>
+                  {!enableLoading ? "Active Mode" : "Optional"}
+                </Badge>
+              </div>
+              <p className="text-[11px] text-[#64748B] mt-2 leading-relaxed">
+                Zero visual loading screen. Seamlessly inspects traffic inline before rendering page output. Legitimate human visitors experience zero delay.
+              </p>
+              <div className="mt-2 text-[10px] text-emerald-800 font-medium flex items-center gap-1">
+                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                <span>Strict 404/403 HTTP enforcement for bots</span>
+              </div>
             </div>
-            <Input
-              value={customSubnote}
-              onChange={(e) => handleSubnoteChange(e.target.value)}
-              placeholder="Please wait while we secure your session."
-              className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs h-9 focus:border-[#0A5C48]"
-            />
           </div>
         </div>
+      </div>
 
-        {/* Category Filters */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
-            <span className="text-xs font-bold text-[#64748B] mr-2 flex items-center gap-1">
-              <SlidersHorizontal className="h-3 w-3" /> Filter:
-            </span>
-            {categories.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setSelectedCategory(cat)}
-                className={`text-xs px-3 py-1 rounded-lg font-medium transition-all ${
-                  selectedCategory === cat
-                    ? "bg-[#0A5C48] text-white shadow-xs"
-                    : "bg-[#F1F5F3] text-[#475569] hover:bg-[#E5EAE7]"
-                }`}
-              >
-                {cat}
-                {cat === "Light" && " (White Themes)"}
-              </button>
-            ))}
-          </div>
+      {/* ── PLATFORM & STACK SELECTOR TABS ── */}
+      <div className="bg-white border border-[#E5EAE7] rounded-xl p-2 shadow-xs">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+          <button
+            onClick={() => setSelectedStack("php")}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+              selectedStack === "php"
+                ? "bg-[#0A5C48] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Server className="h-4 w-4" />
+            <span>cPanel / PHP (index.php)</span>
+            <Badge className={`text-[10px] px-1.5 py-0 rounded ${
+              selectedStack === "php" ? "bg-emerald-700 text-white" : "bg-slate-200 text-slate-700"
+            }`}>
+              Most Popular
+            </Badge>
+          </button>
 
-          <div className="text-xs text-[#64748B]">
-            Showing <strong>{filteredThemes.length}</strong> available UI templates
-          </div>
+          <button
+            onClick={() => setSelectedStack("cloudflare")}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+              selectedStack === "cloudflare"
+                ? "bg-[#F6821F] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Globe className="h-4 w-4" />
+            <span>Cloudflare Edge Worker</span>
+            <Badge className={`text-[10px] px-1.5 py-0 rounded ${
+              selectedStack === "cloudflare" ? "bg-[#D96B0F] text-white" : "bg-orange-100 text-orange-800"
+            }`}>
+              Any Host
+            </Badge>
+          </button>
+
+          <button
+            onClick={() => setSelectedStack("shopify")}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+              selectedStack === "shopify"
+                ? "bg-[#0F172A] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <ShoppingBag className="h-4 w-4" />
+            <span>Shopify, Wix & Webflow</span>
+            <Badge className={`text-[10px] px-1.5 py-0 rounded ${
+              selectedStack === "shopify" ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-700"
+            }`}>
+              1-Line JS
+            </Badge>
+          </button>
+
+          <button
+            onClick={() => setSelectedStack("wordpress")}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+              selectedStack === "wordpress"
+                ? "bg-[#0073AA] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Layers className="h-4 w-4" />
+            <span>WordPress Plugin</span>
+            <Badge className={`text-[10px] px-1.5 py-0 rounded ${
+              selectedStack === "wordpress" ? "bg-[#005A87] text-white" : "bg-blue-100 text-blue-800"
+            }`}>
+              .zip Download
+            </Badge>
+          </button>
+
+          <button
+            onClick={() => setSelectedStack("nodejs")}
+            className={`flex items-center gap-2 px-3.5 py-2.5 rounded-lg text-xs font-bold transition-all shrink-0 ${
+              selectedStack === "nodejs"
+                ? "bg-[#0F172A] text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Cpu className="h-4 w-4" />
+            <span>Node.js / Next.js</span>
+            <Badge className={`text-[10px] px-1.5 py-0 rounded ${
+              selectedStack === "nodejs" ? "bg-slate-800 text-white" : "bg-slate-200 text-slate-700"
+            }`}>
+              Vercel / Railway
+            </Badge>
+          </button>
         </div>
+      </div>
 
-        {/* Theme Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredThemes.map((theme) => {
-            const isSelected = selectedThemeId === theme.id;
-            return (
-              <div
-                key={theme.id}
-                className={`relative rounded-xl border p-4.5 transition-all flex flex-col justify-between ${
-                  isSelected
-                    ? "border-[#0A5C48] ring-2 ring-[#0A5C48]/20 bg-[#FAFDFB] shadow-sm"
-                    : "border-[#E2E8F0] hover:border-[#CBD5E1] bg-white shadow-xs hover:shadow-sm"
-                }`}
-              >
-                <div>
-                  {/* Visual Header / Color Swatch Preview */}
-                  <div 
-                    className="h-24 w-full rounded-lg mb-3 flex items-center justify-center relative overflow-hidden border border-slate-200/80 transition-transform group-hover:scale-[1.01]"
-                    style={{ backgroundColor: theme.previewBg }}
-                  >
-                    {/* Simulated mini card */}
-                    <div className="w-40 bg-white/90 backdrop-blur-xs rounded-md p-2 shadow-xs border border-slate-200/70 flex flex-col items-center text-center">
-                      <div 
-                        className="w-5 h-5 rounded-full flex items-center justify-center mb-1 text-white text-[10px]"
-                        style={{ backgroundColor: theme.previewAccent }}
-                      >
-                        ✓
+      {/* ── STACK 1: CPANEL / PHP INTERSTITIAL ── */}
+      {selectedStack === "php" && (
+        <div className="space-y-6">
+          {/* Theme customizer */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E5EAE7] pb-5">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+                    <Palette className="h-4 w-4" />
+                  </div>
+                  <h3 className="text-lg font-bold text-[#0F172A] tracking-tight">
+                    Visitor Verification Loading Screen UI
+                  </h3>
+                  <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 hover:bg-emerald-100 text-[10px] uppercase font-bold">
+                    Tenant Isolated
+                  </Badge>
+                </div>
+                <p className="text-xs text-[#64748B] mt-1 max-w-2xl">
+                  Choose the instant splash screen shown to visitors on your PHP link while bot classification runs. Each user can pick a distinct theme, preview it in real-time, and save it directly into their generated script.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                {hasUnsavedThemeChanges && (
+                  <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-md font-medium flex items-center gap-1 animate-pulse">
+                    <Info className="h-3 w-3" /> Unsaved changes
+                  </span>
+                )}
+                <Button
+                  onClick={() => saveThemeMutation.mutate()}
+                  disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
+                  className={`h-9 px-4 text-xs font-bold rounded-lg shadow-xs transition-all flex items-center gap-1.5 ${
+                    hasUnsavedThemeChanges
+                      ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
+                      : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                  }`}
+                >
+                  {saveThemeMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Save Loading Theme</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            {/* Headline and subnote customize */}
+            <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold text-[#0F172A]">Primary Headline Text</Label>
+                  <span className="text-[11px] text-[#64748B]">Appears as main title</span>
+                </div>
+                <Input
+                  value={customHeading}
+                  onChange={(e) => handleHeadingChange(e.target.value)}
+                  placeholder="Verifying your connection..."
+                  className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs h-9 focus:border-[#0A5C48]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-bold text-[#0F172A]">Sub-note Description</Label>
+                  <span className="text-[11px] text-[#64748B]">Supporting message under title</span>
+                </div>
+                <Input
+                  value={customSubnote}
+                  onChange={(e) => handleSubnoteChange(e.target.value)}
+                  placeholder="Please wait while we secure your session."
+                  className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs h-9 focus:border-[#0A5C48]"
+                />
+              </div>
+            </div>
+
+            {/* Category filter & Theme Cards */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+                  Available Themes ({filteredThemes.length})
+                </span>
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`text-[11px] px-2.5 py-1 rounded-md font-semibold transition-all ${
+                        selectedCategory === cat
+                          ? "bg-[#0A5C48] text-white shadow-2xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                {filteredThemes.map((theme) => {
+                  const isSelected = selectedThemeId === theme.id;
+                  return (
+                    <div
+                      key={theme.id}
+                      onClick={() => handleSelectTheme(theme.id)}
+                      className={`group relative rounded-xl border p-4 cursor-pointer transition-all flex flex-col justify-between ${
+                        isSelected
+                          ? "border-[#0A5C48] bg-emerald-50/40 ring-2 ring-[#0A5C48]/20 shadow-xs"
+                          : "border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs"
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900 group-hover:text-emerald-900">
+                            {theme.name}
+                          </span>
+                          {isSelected ? (
+                            <span className="w-5 h-5 rounded-full bg-[#0A5C48] text-white flex items-center justify-center text-[10px]">
+                              <Check className="h-3 w-3" />
+                            </span>
+                          ) : (
+                            <div 
+                              className="w-3.5 h-3.5 rounded-full border border-slate-300"
+                              style={{ backgroundColor: theme.previewAccent }}
+                            />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
+                          {theme.description}
+                        </p>
                       </div>
-                      <div className="w-24 h-1.5 bg-slate-300 rounded-full mb-1"></div>
-                      <div className="w-16 h-1 bg-slate-200 rounded-full"></div>
-                    </div>
 
-                    {/* Category / Badge Tags */}
-                    <div className="absolute top-2 left-2 flex items-center gap-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/90 text-slate-700 shadow-xs border border-slate-200">
-                        {theme.category}
-                      </span>
-                      {theme.badge && (
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-600 text-white shadow-xs">
-                          {theme.badge}
-                        </span>
-                      )}
-                    </div>
-
-                    {isSelected && (
-                      <div className="absolute top-2 right-2 bg-[#0A5C48] text-white p-1 rounded-full shadow-xs">
-                        <Check className="h-3.5 w-3.5 stroke-[3]" />
+                      <div className="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between">
+                        <Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200">
+                          {theme.category}
+                        </Badge>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewTheme(theme);
+                          }}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 hover:underline"
+                        >
+                          <Eye className="h-3 w-3" />
+                          <span>Live Preview</span>
+                        </button>
                       </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* Architecture Highlights */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-4 space-y-1 shadow-xs">
+              <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+                <Zap className="h-4 w-4" />
+                1. Zero Blank Screens
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                Renders a client loading interstitial in under 15ms while asynchronous classification executes.
+              </p>
+            </div>
+
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-4 space-y-1 shadow-xs">
+              <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+                <FileCode className="h-4 w-4" />
+                2. Self-Contained
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                Requires only PHP 7.4+ and cURL. No Composer, external drivers, or database setup needed.
+              </p>
+            </div>
+
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-4 space-y-1 shadow-xs">
+              <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+                <ShieldCheck className="h-4 w-4" />
+                3. Fail-Closed Safety
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                If network timeouts occur, gracefully presents a retry UI rather than exposing your destination.
+              </p>
+            </div>
+
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-4 space-y-1 shadow-xs">
+              <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+                <Shield className="h-4 w-4" />
+                4. Anti-Bypass
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                Destination URLs stay completely hidden on the server until classification passes.
+              </p>
+            </div>
+
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-4 space-y-1 shadow-xs">
+              <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+                <Target className="h-4 w-4" />
+                5. Ad Token Preserved
+              </div>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                Preserves gclid, fbclid, ttclid, msclkid, twclid, wbraid, gbraid, and UTMs to your target offer.
+              </p>
+            </div>
+          </div>
+
+          {/* Ad Attribution & Testing Verification Guide */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-xs space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-emerald-400" />
+                <h4 className="text-sm font-bold text-white">How to Test Paid Ad Attribution vs Organic Traffic</h4>
+              </div>
+              <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
+                Live Parameter Engine
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              CleanTraffic isolates paid campaign traffic with click tokens from natural organic visitors. When testing your deployed <code className="text-emerald-300 bg-slate-800 px-1 py-0.5 rounded font-mono text-[11px]">index.php</code> script, use these campaign query parameters:
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
+              <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+                <span className="text-[10px] text-blue-400 font-sans font-bold uppercase tracking-wider block">Meta (Facebook & IG)</span>
+                <div className="text-slate-200 select-all break-all text-[11px]">
+                  ?fbclid=test_token_123<br/>
+                  <span className="text-slate-400 text-[10px] font-sans">Alias: ?fbclickid=test_123</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+                <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase tracking-wider block">Google Ads</span>
+                <div className="text-slate-200 select-all break-all text-[11px]">
+                  ?gclid=test_gclid_123<br/>
+                  <span className="text-slate-400 text-[10px] font-sans">iOS: ?gbraid=... | ?wbraid=...</span>
+                </div>
+              </div>
+
+              <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+                <span className="text-[10px] text-purple-400 font-sans font-bold uppercase tracking-wider block">TikTok & Microsoft</span>
+                <div className="text-slate-200 select-all break-all text-[11px]">
+                  ?ttclid=test_ttclid_123<br/>
+                  <span className="text-slate-400 text-[10px] font-sans">Bing: ?msclkid=test_msclk_123</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* PHP Code Preview Box */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode className="h-4 w-4 text-[#0A5C48]" />
+                <span className="text-sm font-bold text-[#0F172A]">index.php Source Code</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-emerald-50 text-emerald-800 border-emerald-200">
+                  Theme: {activeTheme.name}
+                </span>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
+                  showKey ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-50 text-slate-600 border-slate-200"
+                }`}>
+                  {showKey ? "Live Key Visible" : "Key Masked in Preview"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowKey(!showKey)}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg font-semibold"
+                >
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showKey ? "Mask in Preview" : "Reveal in Preview"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyCurrentCode(phpIntegrationCode, "PHP Code")}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] hover:text-[#0F172A] gap-1.5 rounded-lg shadow-xs font-semibold"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-[#0A5C48]" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedCode ? "Copied" : "Copy Code"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-[#051C15] border border-[#0F382B] rounded-xl p-4 overflow-x-auto shadow-inner">
+              <pre className="font-mono text-xs text-[#C8E0D7] leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                {showKey 
+                  ? phpIntegrationCode 
+                  : phpIntegrationCode.replace(
+                      `$apiKey = '${apiKeyValue || 'ctc_your_api_key_here'}';`,
+                      `$apiKey = '${maskKey(apiKeyValue)}'; // Masked in preview. "Copy Code" & ZIP export active key.`
                     )}
-                  </div>
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
 
-                  {/* Title & Description */}
-                  <div className="flex items-start justify-between gap-2">
-                    <h4 className="text-sm font-bold text-[#0F172A] tracking-tight">
-                      {theme.name}
-                    </h4>
+      {/* ── STACK 2: CLOUDFLARE WORKER ── */}
+      {selectedStack === "cloudflare" && (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center text-[#F6821F]">
+                    <Globe className="h-4 w-4" />
                   </div>
-                  <p className="text-xs text-[#64748B] mt-1 line-clamp-2 leading-relaxed">
-                    {theme.description}
+                  <h3 className="text-lg font-bold text-[#0F172A]">Cloudflare Universal Edge Worker</h3>
+                  <Badge className="bg-orange-100 text-orange-900 border-orange-200 text-[10px] font-bold">
+                    DNS Edge Shield
+                  </Badge>
+                </div>
+                <p className="text-xs text-[#64748B] max-w-2xl leading-relaxed">
+                  Runs at Cloudflare's 300+ global edge locations. Intercepts bots, scrapers, and datacenter traffic before requests reach your web host. Compatible with <strong>Shopify, Wix, Vercel, WordPress, Railway, and private VPS</strong>.
+                </p>
+              </div>
+
+              <Button
+                onClick={handleDownloadCloudflareWorker}
+                className="bg-[#F6821F] hover:bg-[#E06D0C] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shrink-0"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download worker.js
+              </Button>
+            </div>
+
+            {/* Step-by-Step Guide */}
+            <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-3">
+              <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                2-Minute Cloudflare Deployment Steps:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">1</span>
+                  <div className="font-bold text-slate-900">Create Worker</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Log in to Cloudflare &rarr; <strong>Workers & Pages</strong> &rarr; Click <strong>Create Worker</strong>.
                   </p>
                 </div>
 
-                {/* Card Actions */}
-                <div className="pt-4 mt-3 border-t border-slate-100 flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPreviewTheme(theme)}
-                    className="flex-1 h-8 text-xs font-semibold border-[#D5DFD9] hover:bg-[#F2F6F4] text-[#2D3B35] gap-1 rounded-lg"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    Preview
-                  </Button>
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">2</span>
+                  <div className="font-bold text-slate-900">Paste Script</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Click <strong>Quick Edit</strong>, paste the script below (with your active API key), and click <strong>Save and Deploy</strong>.
+                  </p>
+                </div>
 
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => handleSelectTheme(theme.id)}
-                    className={`flex-1 h-8 text-xs font-bold rounded-lg transition-all ${
-                      isSelected
-                        ? "bg-[#0A5C48] text-white hover:bg-[#07382D]"
-                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                    }`}
-                  >
-                    {isSelected ? (
-                      <span className="flex items-center gap-1">
-                        <Check className="h-3 w-3" /> Selected
-                      </span>
-                    ) : (
-                      "Select"
-                    )}
-                  </Button>
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">3</span>
+                  <div className="font-bold text-slate-900">Add Route</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Go to <strong>Settings &rarr; Domains & Routes &rarr; Add Route</strong>. Set Route to <code className="bg-slate-100 px-1 rounded">*yourdomain.com/*</code>.
+                  </p>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">4</span>
+                  <div className="font-bold text-slate-900">Live Protection</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Traffic is now filtered at Cloudflare's nearest edge server in &lt;15ms globally.
+                  </p>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Architecture Highlights */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
-          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
-            <Key className="h-4 w-4" />
-            1. Dedicated API Key
-          </div>
-          <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Your unique API key ties all requests directly to your account. No other user can access or modify your routing settings.
-          </p>
-        </div>
-
-        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
-          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
-            <ShieldCheck className="h-4 w-4" />
-            2. Instant Interstitial
-          </div>
-          <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Eliminates blank white screens with an immediate &lt;15ms security splash while verification runs asynchronously.
-          </p>
-        </div>
-
-        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
-          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
-            <Layers className="h-4 w-4" />
-            3. Fail-Closed Resilience
-          </div>
-          <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Never fails open. Network hiccups and external API timeouts trigger a seamless client retry UI with zero raw error leaks.
-          </p>
-        </div>
-
-        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
-          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
-            <Zap className="h-4 w-4" />
-            4. Anti-Bypass Security
-          </div>
-          <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Destination URLs stay hidden on the server until classification passes. Deploy across unlimited campaign domains safely.
-          </p>
-        </div>
-
-        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
-          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
-            <Target className="h-4 w-4" />
-            5. Ad Token Forwarding
-          </div>
-          <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Preserves and forwards gclid, fbclid, ttclid, msclkid, twclid, wbraid, gbraid, and UTMs directly to your target offer.
-          </p>
-        </div>
-      </div>
-
-      {/* Ad Attribution & Testing Verification Guide */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-xs space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <Target className="h-4 w-4 text-emerald-400" />
-            <h4 className="text-sm font-bold text-white">How to Test Paid Ad Attribution vs Organic Traffic</h4>
-          </div>
-          <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
-            Live Parameter Engine
-          </span>
-        </div>
-
-        <p className="text-xs text-slate-300 leading-relaxed">
-          CleanTraffic isolates paid campaign traffic with click tokens from natural organic visitors. When testing your deployed <code className="text-emerald-300 bg-slate-800 px-1 py-0.5 rounded font-mono text-[11px]">index.php</code> script, use these campaign query parameters:
-        </p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
-            <span className="text-[10px] text-blue-400 font-sans font-bold uppercase tracking-wider block">Meta (Facebook & IG)</span>
-            <div className="text-slate-200 select-all break-all text-[11px]">
-              ?fbclid=test_token_123<br/>
-              <span className="text-slate-400 text-[10px] font-sans">Alias: ?fbclickid=test_123</span>
             </div>
           </div>
 
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
-            <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase tracking-wider block">Google Ads</span>
-            <div className="text-slate-200 select-all break-all text-[11px]">
-              ?gclid=test_gclid_123<br/>
-              <span className="text-slate-400 text-[10px] font-sans">iOS: ?gbraid=... | ?wbraid=...</span>
+          {/* Cloudflare Worker Code Preview */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode className="h-4 w-4 text-[#F6821F]" />
+                <span className="text-sm font-bold text-[#0F172A]">worker.js (Ready to Paste)</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-orange-50 text-orange-800 border-orange-200">
+                  Cloudflare ES Module
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowKey(!showKey)}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg font-semibold"
+                >
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showKey ? "Mask in Preview" : "Reveal in Preview"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyCurrentCode(cloudflareWorkerCode, "Cloudflare Worker")}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedCode ? "Copied" : "Copy Worker Code"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-[#0B132B] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+              <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                {showKey
+                  ? cloudflareWorkerCode
+                  : cloudflareWorkerCode.replace(
+                      `apiKey: '${apiKeyValue || "ctc_live_your_api_key_here"}'`,
+                      `apiKey: '${maskKey(apiKeyValue)}' // Masked in preview`
+                    )}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STACK 3: SHOPIFY, WIX & WEBFLOW ── */}
+      {selectedStack === "shopify" && (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-800">
+                  <ShoppingBag className="h-4 w-4" />
+                </div>
+                <h3 className="text-lg font-bold text-[#0F172A]">Shopify, Wix, Webflow & Squarespace</h3>
+                <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                  Zero Server Access Needed
+                </Badge>
+              </div>
+              <p className="text-xs text-[#64748B] max-w-2xl leading-relaxed">
+                For closed SaaS platforms where uploading PHP files is prohibited. Paste this lightweight script tag into your theme header to inspect visitor tokens, detect bot signatures, and enforce real-time routing.
+              </p>
+            </div>
+
+            {/* Platform Guides */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-2">
+              <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                  <ShoppingBag className="h-4 w-4 text-emerald-700" />
+                  Shopify Installation
+                </div>
+                <ol className="text-xs text-slate-600 space-y-1.5 list-decimal pl-4 leading-relaxed">
+                  <li>Go to <strong>Online Store &rarr; Themes</strong> in your Shopify Admin.</li>
+                  <li>Click the <strong>...</strong> icon and select <strong>Edit Code</strong>.</li>
+                  <li>Open <code className="bg-white px-1 py-0.5 rounded border border-slate-200 font-mono text-[11px]">layout/theme.liquid</code>.</li>
+                  <li>Paste the script tag directly above the closing <code className="bg-white px-1 rounded font-mono text-[11px]">&lt;/head&gt;</code> tag and click Save.</li>
+                </ol>
+              </div>
+
+              <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                  <Globe className="h-4 w-4 text-blue-700" />
+                  Wix Installation
+                </div>
+                <ol className="text-xs text-slate-600 space-y-1.5 list-decimal pl-4 leading-relaxed">
+                  <li>Open your Wix Dashboard &rarr; <strong>Settings &rarr; Custom Code</strong>.</li>
+                  <li>Click <strong>+ Add Custom Code</strong> in the <strong>Head</strong> section.</li>
+                  <li>Paste the script tag, choose <strong>All Pages &rarr; Load once</strong>, and click Apply.</li>
+                </ol>
+              </div>
+
+              <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2">
+                <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                  <Boxes className="h-4 w-4 text-purple-700" />
+                  Webflow & Squarespace
+                </div>
+                <ol className="text-xs text-slate-600 space-y-1.5 list-decimal pl-4 leading-relaxed">
+                  <li>In Webflow: <strong>Project Settings &rarr; Custom Code &rarr; Head Code</strong>.</li>
+                  <li>In Squarespace: <strong>Settings &rarr; Advanced &rarr; Code Injection</strong>.</li>
+                  <li>Paste the script tag into the Header box and save changes.</li>
+                </ol>
+              </div>
             </div>
           </div>
 
-          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
-            <span className="text-[10px] text-purple-400 font-sans font-bold uppercase tracking-wider block">TikTok & Microsoft</span>
-            <div className="text-slate-200 select-all break-all text-[11px]">
-              ?ttclid=test_ttclid_123<br/>
-              <span className="text-slate-400 text-[10px] font-sans">Bing: ?msclkid=test_msclk_123</span>
+          {/* 1-Line Script Tag Card */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode className="h-4 w-4 text-[#0A5C48]" />
+                <span className="text-sm font-bold text-[#0F172A]">Option A: 1-Line Script Tag (Recommended)</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-emerald-50 text-emerald-800 border-emerald-200">
+                  CDN Hosted
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopyCurrentCode(jsSnippet.embedTag, "Embed Tag")}
+                className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+              >
+                {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                {copiedCode ? "Copied" : "Copy Script Tag"}
+              </Button>
+            </div>
+
+            <div className="bg-[#051C15] border border-[#0F382B] rounded-xl p-4 overflow-x-auto shadow-inner">
+              <pre className="font-mono text-xs text-[#C8E0D7] leading-relaxed whitespace-pre">
+                {jsSnippet.embedTag}
+              </pre>
+            </div>
+          </div>
+
+          {/* Inline Script Card */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode className="h-4 w-4 text-slate-700" />
+                <span className="text-sm font-bold text-[#0F172A]">Option B: Inline Autonomous Script</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-100 text-slate-700 border-slate-200">
+                  Zero External CDN Dependency
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleCopyCurrentCode(jsSnippet.inlineScript, "Inline Script")}
+                className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+              >
+                {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                {copiedCode ? "Copied" : "Copy Inline Code"}
+              </Button>
+            </div>
+
+            <div className="bg-[#0B132B] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+              <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-64 overflow-y-auto">
+                {jsSnippet.inlineScript}
+              </pre>
             </div>
           </div>
         </div>
+      )}
 
-        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 text-xs space-y-1.5 text-slate-300">
-          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-            <Info className="h-3.5 w-3.5 text-emerald-400" />
-            Verification & Troubleshooting Checklist:
-          </div>
-          <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-300 pl-1">
-            <li><strong>Organic Traffic:</strong> Visiting without query parameters (or standard search referrals) automatically logs as <span className="text-emerald-400 font-semibold">Organic • Residential Human</span>. No paid ad card will be displayed.</li>
-            <li><strong>Active API Key:</strong> Verify that <code className="text-emerald-300 font-mono">$apiKey</code> in your <code className="text-emerald-300 font-mono">index.php</code> matches your active account API key so events appear in your dashboard.</li>
-            <li><strong>Outbound cURL:</strong> Confirm your web host allows outbound HTTPS requests to the CleanTraffic API endpoint (<code className="text-emerald-300 font-mono">{effectiveEndpoint || "your-cleantraffic-instance"}</code>).</li>
-          </ul>
-        </div>
-      </div>
+      {/* ── STACK 4: WORDPRESS PLUGIN ── */}
+      {selectedStack === "wordpress" && (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0073AA]">
+                    <Layers className="h-4 w-4" />
+                  </div>
+                  <h3 className="text-lg font-bold text-[#0F172A]">WordPress & WooCommerce Dedicated Plugin</h3>
+                  <Badge className="bg-blue-100 text-blue-900 border-blue-200 text-[10px] font-bold">
+                    1-Click ZIP Package
+                  </Badge>
+                </div>
+                <p className="text-xs text-[#64748B] max-w-2xl leading-relaxed">
+                  Hooks into WordPress's native request lifecycle before themes and heavy page builders load. Protects all blog posts, landing pages, WooCommerce checkout flows, and <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px]">/wp-login.php</code>.
+                </p>
+              </div>
 
-      {/* Code Preview Box */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <FileCode className="h-4 w-4 text-[#0A5C48]" />
-            <span className="text-sm font-bold text-[#0F172A]">index.php Source Code</span>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-emerald-50 text-emerald-800 border-emerald-200">
-              Active Theme: {activeTheme.name}
-            </span>
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
-              showKey 
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                : "bg-slate-50 text-slate-600 border-slate-200"
-            }`}>
-              {showKey ? "Live Key Visible" : "Key Masked in Preview"}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowKey(!showKey)}
-              className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg font-semibold"
-            >
-              {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              {showKey ? "Mask in Preview" : "Reveal in Preview"}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleCopyCode}
-              className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] hover:text-[#0F172A] gap-1.5 rounded-lg shadow-xs font-semibold"
-            >
-              {copiedCode ? <Check className="h-3.5 w-3.5 text-[#0A5C48]" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedCode ? "Copied" : "Copy Code"}
-            </Button>
-          </div>
-        </div>
+              <Button
+                onClick={handleDownloadWordPressZip}
+                disabled={!apiKeyValue}
+                className="bg-[#0073AA] hover:bg-[#005A87] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shrink-0 shadow-xs"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Plugin ZIP
+              </Button>
+            </div>
 
-        <div className="bg-[#051C15] border border-[#0F382B] rounded-xl p-4 overflow-x-auto shadow-inner">
-          <pre className="font-mono text-xs text-[#C8E0D7] leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
-            {showKey 
-              ? phpIntegrationCode 
-              : phpIntegrationCode.replace(
-                  `$apiKey = '${apiKeyValue || 'ctc_your_api_key_here'}';`,
-                  `$apiKey = '${maskKey(apiKeyValue)}'; // Masked in preview. "Copy Code" & ZIP package export active key.`
-                )}
-          </pre>
+            {/* Step-by-Step WP Guide */}
+            <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-3">
+              <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                How to Install the WordPress Plugin:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">1</span>
+                  <div className="font-bold text-slate-900">Download ZIP</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Click the <strong>Download Plugin ZIP</strong> button above to download your pre-configured package.
+                  </p>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">2</span>
+                  <div className="font-bold text-slate-900">Upload to WP</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Log in to WordPress Admin &rarr; <strong>Plugins &rarr; Add New Plugin &rarr; Upload Plugin</strong>.
+                  </p>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
+                  <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">3</span>
+                  <div className="font-bold text-slate-900">Activate & Protect</div>
+                  <p className="text-slate-600 text-[11px] leading-relaxed">
+                    Click <strong>Install Now</strong> &rarr; <strong>Activate Plugin</strong>. Your API key is pre-injected; no extra setup required.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* WordPress Source Code Box */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode className="h-4 w-4 text-[#0073AA]" />
+                <span className="text-sm font-bold text-[#0F172A]">cleantraffic-shield.php Source Code</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-blue-50 text-blue-800 border-blue-200">
+                  Standard WP Plugin
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowKey(!showKey)}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg font-semibold"
+                >
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {showKey ? "Mask in Preview" : "Reveal in Preview"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyCurrentCode(wordPressPluginCode, "WordPress Plugin")}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedCode ? "Copied" : "Copy Plugin Code"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-[#051C15] border border-[#0F382B] rounded-xl p-4 overflow-x-auto shadow-inner">
+              <pre className="font-mono text-xs text-[#C8E0D7] leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                {showKey
+                  ? wordPressPluginCode
+                  : wordPressPluginCode.replace(
+                      `private $apiKey = '${apiKeyValue || "ctc_live_your_api_key_here"}';`,
+                      `private $apiKey = '${maskKey(apiKeyValue)}'; // Masked in preview`
+                    )}
+              </pre>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ── STACK 5: NODE.JS & NEXT.JS ── */}
+      {selectedStack === "nodejs" && (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-800">
+                  <Cpu className="h-4 w-4" />
+                </div>
+                <h3 className="text-lg font-bold text-[#0F172A]">Modern Jamstack & Container Runtimes</h3>
+                <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                  Vercel / Railway / Render / Fly.io
+                </Badge>
+              </div>
+              <p className="text-xs text-[#64748B] max-w-2xl leading-relaxed">
+                Plug CleanTraffic directly into your Next.js Edge Middleware or Express server to protect APIs, SSR applications, and Jamstack frontends before routes execute.
+              </p>
+            </div>
+
+            {/* Sub-Tabs: Next.js vs Express */}
+            <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+              <button
+                onClick={() => setNodeSubTab("nextjs")}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
+                  nodeSubTab === "nextjs"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:text-slate-900 bg-slate-100"
+                }`}
+              >
+                Next.js Middleware (middleware.ts)
+              </button>
+              <button
+                onClick={() => setNodeSubTab("express")}
+                className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${
+                  nodeSubTab === "express"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:text-slate-900 bg-slate-100"
+                }`}
+              >
+                Node.js / Express (middleware.js)
+              </button>
+            </div>
+          </div>
+
+          {/* Next.js View */}
+          {nodeSubTab === "nextjs" && (
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <FileCode className="h-4 w-4 text-slate-800" />
+                  <span className="text-sm font-bold text-[#0F172A]">middleware.ts (Root of Next.js Project)</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-100 text-slate-800 border-slate-200">
+                    Next.js 13 / 14 / 15
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyCurrentCode(nextJsMiddlewareCode, "Next.js Middleware")}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedCode ? "Copied" : "Copy middleware.ts"}
+                </Button>
+              </div>
+
+              <div className="bg-[#0B132B] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                  {nextJsMiddlewareCode}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Express View */}
+          {nodeSubTab === "express" && (
+            <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-4">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <FileCode className="h-4 w-4 text-slate-800" />
+                  <span className="text-sm font-bold text-[#0F172A]">cleantrafficMiddleware.js (Express Middleware)</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-slate-100 text-slate-800 border-slate-200">
+                    Node.js 18+ / Express
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCopyCurrentCode(nodeExpressMiddlewareCode, "Express Middleware")}
+                  className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#2D3B35] gap-1.5 rounded-lg shadow-xs font-semibold"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copiedCode ? "Copied" : "Copy Middleware"}
+                </Button>
+              </div>
+
+              <div className="bg-[#0B132B] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                  {nodeExpressMiddlewareCode}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── LIVE INTERACTIVE PREVIEW MODAL ── */}
       {previewTheme && (

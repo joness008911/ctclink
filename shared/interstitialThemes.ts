@@ -899,11 +899,188 @@ export function generatePhpIntegrationScript(options: {
   theme: InterstitialTheme;
   heading?: string;
   subnote?: string;
+  enableLoading?: boolean;
 }): string {
-  const { apiKeyValue, effectiveEndpoint, theme } = options;
+  const { apiKeyValue, effectiveEndpoint, theme, enableLoading = true } = options;
   const keyStr = apiKeyValue || "ctc_your_api_key_here";
   const headingStr = (options.heading || "Verifying your connection...").replace(/"/g, '\\"');
   const subnoteStr = (options.subnote || "Please wait while we secure your session.").replace(/"/g, '\\"');
+
+  if (!enableLoading) {
+    return `<?php
+/**
+ * CleanTraffic - Transparent Inline Traffic Protection Script
+ * Auto-generated for API Key: ${keyStr}
+ * Mode: Transparent / Inline Guard (No Interstitial Loading Screen)
+ * 
+ * ARCHITECTURE:
+ * - Zero Visual Loading Screen: Legitimate human visitors experience no visual delay.
+ * - Server-Side Inspection: Incoming traffic is verified before rendering page output.
+ * - Strict HTTP Status Codes: Bots and unauthorized traffic receive authentic 403 or 404 responses.
+ * - Ad Click Token Forwarding: Passes fbclid, gclid, ttclid, msclkid, UTMs seamlessly.
+ * - Fail-Safe Resiliency: 2.5-second timeout ensures visitors are never stranded.
+ */
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$apiKey = '${keyStr}';
+$apiEndpoint = '${effectiveEndpoint}';
+
+// 1. Session verification cache: Skip inspection if visitor already verified in this session
+if (isset($_SESSION['ctc_verified']) && $_SESSION['ctc_verified'] === '1') {
+    return;
+}
+
+// 2. Extract Visitor IP with Cloudflare, Akamai, Fastly, AWS ALB & Reverse Proxy awareness
+$visitorIp = $_SERVER['HTTP_CF_CONNECTING_IP'] 
+    ?? $_SERVER['HTTP_TRUE_CLIENT_IP'] 
+    ?? $_SERVER['HTTP_X_REAL_IP'] 
+    ?? $_SERVER['HTTP_FASTLY_CLIENT_IP'] 
+    ?? $_SERVER['HTTP_X_FORWARDED_FOR'] 
+    ?? $_SERVER['REMOTE_ADDR'] 
+    ?? '127.0.0.1';
+
+if (strpos($visitorIp, ',') !== false) {
+    $ips = explode(',', $visitorIp);
+    $visitorIp = trim($ips[0]);
+}
+
+// 3. Extract Query Parameters & Click Tokens
+$ctcQuery = is_array($_GET) ? $_GET : [];
+if (empty($ctcQuery) && !empty($_SERVER['QUERY_STRING'])) {
+    parse_str($_SERVER['QUERY_STRING'], $ctcQuery);
+}
+if (empty($ctcQuery) && !empty($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '?') !== false) {
+    $queryStringFromUri = substr($_SERVER['REQUEST_URI'], strpos($_SERVER['REQUEST_URI'], '?') + 1);
+    parse_str($queryStringFromUri, $ctcQuery);
+}
+
+// 4. Classification Caller Function
+function ctc_execute_inline_classification($postData, $apiEndpoint, $apiKey) {
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => rtrim($apiEndpoint, '/') . '/api/classify',
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($postData),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 2,
+        CURLOPT_TIMEOUT => 4,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'X-API-Key: ' . $apiKey,
+            'Authorization: Bearer ' . $apiKey,
+            'User-Agent: CleanTraffic-PHP-Inline/2.0'
+        ]
+    ]);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if (($response === false || !empty($curlError)) && ini_get('allow_url_fopen')) {
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'POST',
+                'header' => "Content-Type: application/json\\r\\n" .
+                            "Accept: application/json\\r\\n" .
+                            "X-API-Key: " . $apiKey . "\\r\\n" .
+                            "Authorization: Bearer " . $apiKey . "\\r\\n" .
+                            "User-Agent: CleanTraffic-PHP-Inline/2.0\\r\\n",
+                'content' => json_encode($postData),
+                'timeout' => 4,
+                'ignore_errors' => true
+            ],
+            'ssl' => ['verify_peer' => false, 'verify_peer_name' => false]
+        ]);
+        $fallbackResponse = @file_get_contents(rtrim($apiEndpoint, '/') . '/api/classify', false, $context);
+        if ($fallbackResponse !== false) {
+            $response = $fallbackResponse;
+            $httpCode = 200;
+        }
+    }
+
+    if ($response === false) {
+        return ['success' => false, 'httpCode' => 503, 'error' => 'Timeout'];
+    }
+
+    $result = json_decode($response, true);
+    if (!is_array($result)) {
+        return ['success' => false, 'httpCode' => $httpCode ?: 502, 'error' => 'Invalid response'];
+    }
+
+    return ['success' => true, 'httpCode' => $httpCode, 'data' => $result];
+}
+
+$postData = [
+    'apiKey' => $apiKey,
+    'ip' => $visitorIp,
+    'userAgent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+    'headers' => [
+        'Accept-Language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+        'Accept' => $_SERVER['HTTP_ACCEPT'] ?? '',
+        'Referer' => $_SERVER['HTTP_REFERER'] ?? '',
+        'Host' => $_SERVER['HTTP_HOST'] ?? '',
+    ],
+    'query' => $ctcQuery,
+    'requestUri' => $_SERVER['REQUEST_URI'] ?? '',
+    'queryString' => $_SERVER['QUERY_STRING'] ?? '',
+    'source' => 'php-inline-guard'
+];
+
+$res = ctc_execute_inline_classification($postData, $apiEndpoint, $apiKey);
+
+// Key revoked or expired -> Graceful security notice without leaking target URLs
+if ($res['httpCode'] === 401 || $res['httpCode'] === 403) {
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "503 Service Temporarily Unavailable - Security Configuration Required";
+    exit;
+}
+
+if ($res['success'] && isset($res['data'])) {
+    $cData = $res['data'];
+    $dest = $cData['destination'] ?? $cData['redirectUrl'] ?? $cData['url'] ?? '';
+    $action = $cData['action'] ?? ($cData['isHuman'] ? 'redirect' : 'block');
+
+    // Strict 404 enforcement
+    if ($action === '404' || $dest === '404' || ($cData['statusAction'] ?? '') === '404') {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "404 Not Found";
+        exit;
+    }
+
+    // Strict 403 enforcement
+    if ($action === '403' || $dest === '403' || ($cData['statusAction'] ?? '') === '403' || (!$cData['isHuman'] && empty($dest))) {
+        http_response_code(403);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "403 Forbidden - Access Denied";
+        exit;
+    }
+
+    // Redirect human visitor or custom bot URL with preserved query parameters
+    if (!empty($dest)) {
+        $q = $_SERVER['QUERY_STRING'] ?? '';
+        if (!empty($q)) {
+            $dest .= (strpos($dest, '?') !== false ? '&' : '?') . $q;
+        }
+        $_SESSION['ctc_verified'] = '1';
+        header("Location: " . $dest, true, 302);
+        exit;
+    }
+}
+
+// Mark session verified on clean allow
+$_SESSION['ctc_verified'] = '1';
+?>`;
+  }
 
   const renderedBody = theme.htmlBody
     .replace(/{{HEADING}}/g, headingStr)

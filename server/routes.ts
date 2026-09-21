@@ -781,6 +781,71 @@ Disallow: /assets/
 Disallow: /*`);
   });
 
+  // Client-Side Universal JavaScript Shield (for Shopify, Wix, Webflow, Squarespace)
+  app.get('/v1/protect.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    const host = req.protocol + '://' + req.get('host');
+    
+    res.send(`/**
+ * CleanTraffic Universal Client Shield
+ * Lightweight client-side bot detection & ad attribution for Shopify, Wix, Webflow & Squarespace
+ */
+(function() {
+  try {
+    var curScript = document.currentScript || document.querySelector('script[data-api-key]');
+    var apiKey = curScript ? curScript.getAttribute('data-api-key') : null;
+    if (!apiKey) {
+      console.warn('[CleanTraffic] Missing data-api-key attribute on protect.js script tag.');
+      return;
+    }
+
+    // Session cache to prevent redundant checks within the same user session
+    if (sessionStorage && sessionStorage.getItem('ctc_verified_' + apiKey) === '1') {
+      return;
+    }
+
+    var endpoint = '${host}';
+    var qs = window.location.search ? window.location.search.substring(1) : '';
+
+    var payload = {
+      apiKey: apiKey,
+      userAgent: navigator.userAgent || '',
+      queryString: qs,
+      referer: document.referrer || '',
+      url: window.location.href,
+      screenW: window.screen ? window.screen.width : null,
+      screenH: window.screen ? window.screen.height : null,
+      hasTouch: 'ontouchstart' in window || (navigator.maxTouchPoints > 0),
+      webdriver: Boolean(navigator.webdriver)
+    };
+
+    fetch(endpoint + '/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(verdict) {
+      if (verdict && verdict.action === 'redirect' && verdict.destination) {
+        window.location.replace(verdict.destination);
+      } else if (verdict && verdict.action === '403') {
+        document.documentElement.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#1e293b;"><h1 style="font-size:28px;margin-bottom:8px;">403 - Access Restricted</h1><p style="color:#64748b;font-size:15px;">Your connection does not meet security requirements.</p></div>';
+      } else {
+        if (sessionStorage) {
+          sessionStorage.setItem('ctc_verified_' + apiKey, '1');
+        }
+      }
+    })
+    .catch(function(err) {
+      // Fail-Safe: On network error, gracefully continue site operations
+    });
+  } catch(e) {}
+})();`);
+  });
+
   // Authentication middleware — admin sessions only (via token or session)
   const requireAuth = (req: any, res: any, next: any) => {
     const auth = getSessionOrToken(req);
@@ -4390,6 +4455,131 @@ Disallow: /*`);
 
   // ========== END AD PLATFORMS MANAGEMENT ==========
 
+  // Serve client-side JavaScript protection tag (/v1/protect.js)
+  app.get("/v1/protect.js", (req, res) => {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+
+    const protectJs = `(function() {
+  var currentScript = document.currentScript || (function() {
+    var scripts = document.getElementsByTagName('script');
+    for (var i = scripts.length - 1; i >= 0; i--) {
+      if (scripts[i].src && scripts[i].src.indexOf('/v1/protect.js') !== -1) return scripts[i];
+    }
+    return scripts[scripts.length - 1];
+  })();
+
+  if (!currentScript) return;
+  var apiKey = currentScript.getAttribute('data-api-key') || '';
+  var enableLoading = currentScript.getAttribute('data-loading') !== 'false';
+  var heading = currentScript.getAttribute('data-heading') || 'Verifying connection security...';
+  var subnote = currentScript.getAttribute('data-subnote') || 'Please wait while we secure your session.';
+  var originUrl = window.location.origin || (window.location.protocol + '//' + window.location.host);
+
+  if (sessionStorage.getItem('ctc_verified') === '1') return;
+
+  var overlay = null;
+  if (enableLoading) {
+    overlay = document.createElement('div');
+    overlay.id = 'ctc-protect-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0B0F19;color:#F8FAFC;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;';
+    overlay.innerHTML = '<div style="background:#111827;border:1px solid #1F2937;border-radius:16px;padding:36px 32px;max-width:440px;width:100%;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">' +
+      '<div style="width:48px;height:48px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#10B981;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' +
+      '</div>' +
+      '<h2 style="font-size:18px;font-weight:700;margin-bottom:8px;color:#FFFFFF;">' + heading + '</h2>' +
+      '<p style="font-size:13px;color:#94A3B8;margin-bottom:20px;line-height:1.5;">' + subnote + '</p>' +
+      '<div style="height:4px;width:100%;background:#1F2937;border-radius:2px;overflow:hidden;margin-bottom:12px;">' +
+      '<div style="height:100%;width:40%;background:#10B981;border-radius:2px;animation:ctc-sweep 1.5s infinite ease-in-out;"></div>' +
+      '</div>' +
+      '<div id="ctc-protect-status" style="font-size:12px;color:#64748B;font-family:monospace;">Verifying connection...</div>' +
+      '<div id="ctc-protect-retry" style="display:none;margin-top:14px;">' +
+      '<button type="button" onclick="location.reload()" style="padding:8px 16px;background:#10B981;color:#0B0F19;font-weight:600;border:none;border-radius:6px;cursor:pointer;font-size:12px;">Retry Verification</button>' +
+      '</div>' +
+      '</div>' +
+      '<style>@keyframes ctc-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}</style>';
+    document.documentElement.appendChild(overlay);
+  }
+
+  var scriptSrc = currentScript.src;
+  var apiBase = scriptSrc.substring(0, scriptSrc.indexOf('/v1/protect.js'));
+  if (!apiBase) apiBase = originUrl;
+
+  var qs = window.location.search ? window.location.search.substring(1) : '';
+  var payload = {
+    apiKey: apiKey,
+    userAgent: navigator.userAgent,
+    queryString: qs,
+    referer: document.referrer,
+    screenW: window.screen.width,
+    screenH: window.screen.height,
+    hasTouch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,
+    webdriver: Boolean(navigator.webdriver),
+    url: window.location.href
+  };
+
+  fetch(apiBase + '/api/classify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+    body: JSON.stringify(payload)
+  })
+  .then(function(res) {
+    if (res.status === 401 || res.status === 403) {
+      if (overlay) {
+        document.getElementById('ctc-protect-status').textContent = 'Security configuration error (API Key Expired/Revoked).';
+        document.getElementById('ctc-protect-retry').style.display = 'block';
+      }
+      return null;
+    }
+    return res.json();
+  })
+  .then(function(data) {
+    if (!data) return;
+
+    // Strict 404 enforcement
+    if (data.action === '404' || data.statusCode === 404 || data.statusAction === '404' || data.destination === '404') {
+      document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;">The requested resource was not found on this server.</p></div>';
+      return;
+    }
+
+    // Strict 403 enforcement
+    if (data.action === '403' || data.statusCode === 403 || data.statusAction === '403' || data.destination === '403') {
+      document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;">Access to this resource is denied.</p></div>';
+      return;
+    }
+
+    // Redirect human visitor or custom bot URL
+    if (data.destination) {
+      var dest = data.destination;
+      if (qs) {
+        dest += (dest.indexOf('?') !== -1 ? '&' : '?') + qs;
+      }
+      window.location.replace(dest);
+      return;
+    }
+
+    // Clean allow
+    sessionStorage.setItem('ctc_verified', '1');
+    if (overlay && overlay.parentNode) {
+      overlay.style.transition = 'opacity 0.25s ease';
+      overlay.style.opacity = '0';
+      setTimeout(function() {
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }, 250);
+    }
+  })
+  .catch(function() {
+    // Fail-safe pass-through on error
+    if (overlay && overlay.parentNode) {
+      overlay.parentNode.removeChild(overlay);
+    }
+  });
+})();`;
+
+    res.send(protectJs);
+  });
+
   // Get API keys (protected)
   app.get("/api/api-keys", requireAuth, async (req, res) => {
     try {
@@ -7124,19 +7314,21 @@ ${theme.scriptJs ? `<script>\n${theme.scriptJs}\n</script>` : ""}
         return res.status(401).json({ message: "User not found" });
       }
 
-      const { interstitialThemeId, interstitialHeading, interstitialSubnote } = req.body;
-      if (!interstitialThemeId) {
-        return res.status(400).json({ message: "interstitialThemeId is required" });
-      }
-
-      // Verify theme exists
-      const theme = await storage.getInterstitialTheme(interstitialThemeId);
-      if (!theme) {
-        return res.status(400).json({ message: "Selected theme does not exist" });
-      }
+      const { interstitialEnabled, interstitialThemeId, interstitialHeading, interstitialSubnote } = req.body;
 
       // Fetch or initialize user redirect settings
       const existing = await storage.getUserRedirectUrls(userId);
+
+      // Verify theme exists if specified
+      let themeIdToUse = existing?.interstitialThemeId || "clean_light";
+      if (interstitialThemeId) {
+        const theme = await storage.getInterstitialTheme(interstitialThemeId);
+        if (!theme) {
+          return res.status(400).json({ message: "Selected theme does not exist" });
+        }
+        themeIdToUse = theme.id;
+      }
+
       const updated = await storage.setUserRedirectUrls(userId, {
         humanUrl: existing?.humanUrl || "",
         botUrl: existing?.botUrl || "404",
@@ -7152,14 +7344,17 @@ ${theme.scriptJs ? `<script>\n${theme.scriptJs}\n</script>` : ""}
         allowSearchCrawlers: existing?.allowSearchCrawlers || "allow",
         blockAiCrawlers: existing?.blockAiCrawlers || "block",
         allowSocialPreviews: existing?.allowSocialPreviews || "allow",
-        interstitialThemeId: theme.id,
-        interstitialHeading: interstitialHeading ? String(interstitialHeading).trim() : "Verifying your connection...",
-        interstitialSubnote: interstitialSubnote ? String(interstitialSubnote).trim() : "Please wait while we secure your session.",
+        protectionMode: existing?.protectionMode || "hybrid",
+        activeAdPlatforms: existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x",
+        interstitialEnabled: interstitialEnabled !== undefined ? Boolean(interstitialEnabled) : (existing?.interstitialEnabled ?? true),
+        interstitialThemeId: themeIdToUse,
+        interstitialHeading: interstitialHeading ? String(interstitialHeading).trim() : (existing?.interstitialHeading || "Verifying your connection..."),
+        interstitialSubnote: interstitialSubnote ? String(interstitialSubnote).trim() : (existing?.interstitialSubnote || "Please wait while we secure your session."),
       });
 
       res.json({
         success: true,
-        message: "Interstitial loading theme updated successfully",
+        message: "Verification & interstitial settings updated successfully",
         redirectUrls: updated,
       });
     } catch (error: any) {

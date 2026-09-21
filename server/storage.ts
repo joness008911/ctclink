@@ -215,6 +215,7 @@ export interface IStorage {
     allowSocialPreviews?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
+    interstitialEnabled?: boolean;
     interstitialThemeId?: string;
     interstitialHeading?: string;
     interstitialSubnote?: string;
@@ -938,6 +939,7 @@ export class MemStorage implements IStorage {
     allowSocialPreviews?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
+    interstitialEnabled?: boolean;
     interstitialThemeId?: string;
     interstitialHeading?: string;
     interstitialSubnote?: string;
@@ -962,6 +964,7 @@ export class MemStorage implements IStorage {
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
+      interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),
       interstitialThemeId: urls.interstitialThemeId !== undefined ? urls.interstitialThemeId : (existing?.interstitialThemeId || "clean_light"),
       interstitialHeading: urls.interstitialHeading !== undefined ? urls.interstitialHeading : (existing?.interstitialHeading || "Verifying your connection..."),
       interstitialSubnote: urls.interstitialSubnote !== undefined ? urls.interstitialSubnote : (existing?.interstitialSubnote || "Please wait while we secure your session."),
@@ -1921,6 +1924,7 @@ export class DatabaseStorage {
     allowSocialPreviews?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
+    interstitialEnabled?: boolean;
     interstitialThemeId?: string;
     interstitialHeading?: string;
     interstitialSubnote?: string;
@@ -1945,6 +1949,7 @@ export class DatabaseStorage {
     if (urls.allowSocialPreviews !== undefined) updatePayload.allowSocialPreviews = urls.allowSocialPreviews;
     if (urls.protectionMode !== undefined) updatePayload.protectionMode = urls.protectionMode;
     if (urls.activeAdPlatforms !== undefined) updatePayload.activeAdPlatforms = urls.activeAdPlatforms;
+    if (urls.interstitialEnabled !== undefined) updatePayload.interstitialEnabled = urls.interstitialEnabled;
     if (urls.interstitialThemeId !== undefined) updatePayload.interstitialThemeId = urls.interstitialThemeId;
     if (urls.interstitialHeading !== undefined) updatePayload.interstitialHeading = urls.interstitialHeading;
     if (urls.interstitialSubnote !== undefined) updatePayload.interstitialSubnote = urls.interstitialSubnote;
@@ -1984,6 +1989,7 @@ export class DatabaseStorage {
           allowSocialPreviews: urls.allowSocialPreviews || "allow",
           protectionMode: urls.protectionMode || "hybrid",
           activeAdPlatforms: urls.activeAdPlatforms || "google,meta,tiktok,microsoft,x",
+          interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : true,
           interstitialThemeId: urls.interstitialThemeId || "clean_light",
           interstitialHeading: urls.interstitialHeading || "Verifying your connection...",
           interstitialSubnote: urls.interstitialSubnote || "Please wait while we secure your session.",

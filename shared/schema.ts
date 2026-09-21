@@ -174,6 +174,7 @@ export const userRedirectUrls = pgTable("user_redirect_urls", {
   allowSocialPreviews: text("allow_social_previews").default("allow"), // "allow" | "block" (default: allow link preview crawlers)
   protectionMode: text("protection_mode").default("hybrid"), // "website" | "ad_campaign" | "hybrid"
   activeAdPlatforms: text("active_ad_platforms").default("google,meta,tiktok,microsoft,x"), // comma-separated e.g. "google,meta"
+  interstitialEnabled: boolean("interstitial_enabled").default(true),
   interstitialThemeId: text("interstitial_theme_id").default("clean_light"),
   interstitialHeading: text("interstitial_heading").default("Verifying your connection..."),
   interstitialSubnote: text("interstitial_subnote").default("Please wait while we secure your session."),

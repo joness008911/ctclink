@@ -29,6 +29,8 @@ import {
   ShieldAlert,
   Sparkles,
   Share2,
+  ShoppingBag,
+  Boxes,
 } from "lucide-react";
 
 interface DocSection {
@@ -432,122 +434,407 @@ export default function Documentation() {
             </div>
 
             {/* Deployment Models */}
-            <div className="space-y-4 pt-2">
-              <h3 className="text-sm font-bold text-slate-900">Supported Deployment Modes</h3>
-
-              {/* Mode 1 */}
-              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-                    Mode A: Campaign & Funnel Redirector (Recommended for Ads)
+            <div className="space-y-6 pt-2">
+              {/* Universal 5-Stack Matrix */}
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-sm font-bold text-white">5 Supported Integration Stacks (100% Platform Coverage)</h3>
+                  </div>
+                  <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
+                    Universal Connectors
                   </span>
-                  <span className="text-[11px] text-slate-400 font-mono">Instant Interstitial</span>
                 </div>
-                <p className="text-xs text-slate-600 leading-relaxed">
-                  Drop the generated <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">index.php</code> into a specific folder in your web root, such as <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">public_html/promo/index.php</code>. Visitors immediately see a polished, zero-interaction "Verifying your connection..." security screen (&lt;15ms) while classification executes asynchronously in the background. Zero blank white screens.
-                </p>
-                <div className="bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto">
-                  https://yourdomain.com/promo/ &nbsp;➔ Instant Interstitial (&lt;15ms) &nbsp;➔ Background Async Check &nbsp;➔ Human forwarded to Target Page | Bot receives 404/403
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse font-sans">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 text-[11px] uppercase tracking-wider">
+                        <th className="py-2.5 px-3">Stack</th>
+                        <th className="py-2.5 px-3">Best For</th>
+                        <th className="py-2.5 px-3">Cloudflare Required?</th>
+                        <th className="py-2.5 px-3">Edge Latency</th>
+                        <th className="py-2.5 px-3">Setup Time</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                      <tr>
+                        <td className="py-2.5 px-3 font-bold text-emerald-400">1. Cloudflare Edge Worker</td>
+                        <td className="py-2.5 px-3">Shopify, Wix, Vercel, WordPress, VPS (using Cloudflare DNS)</td>
+                        <td className="py-2.5 px-3 text-emerald-300 font-semibold">Yes (DNS proxy)</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 15 ms</td>
+                        <td className="py-2.5 px-3">2 minutes</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 font-bold text-slate-200">2. 1-Line JavaScript Tag</td>
+                        <td className="py-2.5 px-3">Shopify, Wix, Webflow, Squarespace, Carrd (No Cloudflare)</td>
+                        <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">Async Client</td>
+                        <td className="py-2.5 px-3">1 minute</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 font-bold text-blue-400">3. PHP Drop-in (index.php)</td>
+                        <td className="py-2.5 px-3">cPanel, aaPanel, CyberPanel, Plesk, Apache, LiteSpeed, VPS</td>
+                        <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 20 ms</td>
+                        <td className="py-2.5 px-3">2 minutes</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 font-bold text-indigo-400">4. WordPress Plugin (.zip)</td>
+                        <td className="py-2.5 px-3">WordPress & WooCommerce (All versions 5.0 - 6.x)</td>
+                        <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 25 ms</td>
+                        <td className="py-2.5 px-3">1 minute</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2.5 px-3 font-bold text-purple-400">5. Next.js & Express</td>
+                        <td className="py-2.5 px-3">Vercel, Netlify, Railway, Render, Fly.io, Custom Node.js</td>
+                        <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
+                        <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 18 ms</td>
+                        <td className="py-2.5 px-3">3 minutes</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
-              {/* Mode 2 */}
-              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
-                    Mode B: Existing Application / WordPress Integration
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono">Inline Guard</span>
+              {/* Stack 1: Cloudflare Edge Worker */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-[#F6821F]" />
+                    <span className="text-xs font-bold text-[#F6821F] bg-orange-50 border border-orange-200 px-2.5 py-0.5 rounded-full">
+                      Stack 1: Cloudflare Edge Worker (Zero-Server Edge Interceptor)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">Any Host on Cloudflare</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  To protect an existing script or WordPress registration/login endpoint, include CleanTraffic at the top of your existing PHP file:
+                  If your domain's DNS runs through Cloudflare, deploy our lightweight Edge Worker to intercept bots at Cloudflare's 300+ data centers before traffic ever touches your origin host (whether your backend is Shopify, Wix, Vercel, or a bare-metal Linux server).
                 </p>
-                <div className="relative bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto">
+
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2 text-xs text-slate-600">
+                  <h4 className="font-bold text-slate-900">Cloudflare Worker Deployment Steps:</h4>
+                  <ol className="list-decimal pl-4 space-y-1">
+                    <li>Log in to your <strong>Cloudflare Dashboard</strong> &rarr; click <strong>Workers & Pages</strong> &rarr; click <strong>Create Worker</strong>.</li>
+                    <li>Click <strong>Quick Edit</strong> and replace the default script with your pre-configured worker code from your CleanTraffic dashboard.</li>
+                    <li>Click <strong>Save and Deploy</strong>.</li>
+                    <li>Go to the worker's <strong>Settings &rarr; Domains & Routes &rarr; Add Route</strong>:
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5 text-slate-500">
+                        <li>Route Pattern: <code className="bg-white px-1 py-0.5 rounded border border-slate-300 font-mono text-[11px] text-slate-800">*yourdomain.com/*</code></li>
+                        <li>Zone: Select your domain.</li>
+                      </ul>
+                    </li>
+                  </ol>
+                </div>
+
+                <div className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto">
                   <button
                     onClick={() =>
                       copyToClipboard(
-                        `<?php\n// CleanTraffic Inline Protection\nrequire_once __DIR__ . '/index.php';\n?>`,
-                        "php-inline"
+                        `export default {\n  async fetch(request, env, ctx) {\n    const url = new URL(request.url);\n    if (/\\.(css|js|png|jpg|svg|ico)$/i.test(url.pathname)) return fetch(request);\n    const clientIp = request.headers.get('cf-connecting-ip') || '127.0.0.1';\n    const res = await fetch('https://your-cleantraffic-instance.com/api/classify', {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ apiKey: 'YOUR_API_KEY', ip: clientIp, userAgent: request.headers.get('user-agent'), url: request.url })\n    });\n    const verdict = await res.json();\n    if (verdict.action === 'redirect' && verdict.destination) return Response.redirect(verdict.destination, 302);\n    if (verdict.action === '403') return new Response('Access Denied', { status: 403 });\n    return fetch(request);\n  }\n};`,
+                        "cf-worker-doc"
                       )
                     }
                     className="absolute top-2.5 right-2.5 p-1 text-slate-400 hover:text-white bg-slate-800/80 rounded border border-slate-700"
                   >
-                    {copiedCodeSnippet === "php-inline" ? (
+                    {copiedCodeSnippet === "cf-worker-doc" ? (
                       <Check className="w-3.5 h-3.5 text-emerald-400" />
                     ) : (
                       <Copy className="w-3.5 h-3.5" />
                     )}
                   </button>
-                  <pre>{`<?php
-// Include CleanTraffic inspection before rendering sensitive forms
-require_once __DIR__ . '/index.php';
-?>`}</pre>
+                  <pre>{`// Cloudflare Edge Worker Sample
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (/\\.(css|js|png|jpg|svg|ico)$/i.test(url.pathname)) return fetch(request);
+
+    const clientIp = request.headers.get('cf-connecting-ip') || '127.0.0.1';
+    const res = await fetch('https://your-cleantraffic-instance.com/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        apiKey: 'YOUR_API_KEY', 
+        ip: clientIp, 
+        userAgent: request.headers.get('user-agent'),
+        url: request.url 
+      })
+    });
+    const verdict = await res.json();
+    if (verdict.action === 'redirect' && verdict.destination) {
+      return Response.redirect(verdict.destination, 302);
+    }
+    return fetch(request);
+  }
+};`}</pre>
                 </div>
               </div>
 
-              {/* Mode C: cPanel, aaPanel & Server Hosts */}
+              {/* Stack 2: Shopify, Wix, Webflow & Squarespace */}
               <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
-                    Mode C: cPanel & aaPanel Deployment Instructions
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono">Web Host Guides</span>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <ShoppingBag className="w-4 h-4 text-emerald-700" />
+                    <span className="text-xs font-bold text-slate-900 bg-slate-100 border border-slate-200 px-2.5 py-0.5 rounded-full">
+                      Stack 2: Shopify, Wix, Webflow & Squarespace (1-Line JS Snippet)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">Closed SaaS Platforms</span>
                 </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-slate-600">
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-1.5">
-                    <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
-                      <Server className="w-3.5 h-3.5 text-slate-700" />
-                      cPanel Deployment Steps
-                    </h4>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  For stores and sites hosted on closed SaaS builders where backend PHP access is restricted and Cloudflare is not an option. Simply embed this 1-line tag into your site's global header:
+                </p>
+
+                <div className="relative bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto">
+                  <button
+                    onClick={() =>
+                      copyToClipboard(
+                        `<script src="https://your-cleantraffic-instance.com/v1/protect.js" data-api-key="YOUR_API_KEY" async></script>`,
+                        "js-tag-doc"
+                      )
+                    }
+                    className="absolute top-2.5 right-2.5 p-1 text-slate-400 hover:text-white bg-slate-800/80 rounded border border-slate-700"
+                  >
+                    {copiedCodeSnippet === "js-tag-doc" ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <pre>{`<!-- Paste inside <head> of your Shopify theme.liquid or Wix Custom Code -->
+<script src="https://your-cleantraffic-instance.com/v1/protect.js" data-api-key="YOUR_API_KEY" async></script>`}</pre>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+                    <h5 className="font-bold text-slate-900">Shopify Instructions:</h5>
+                    <p className="leading-relaxed">
+                      Go to <strong>Online Store &rarr; Themes &rarr; ... &rarr; Edit Code &rarr; layout/theme.liquid</strong>. Paste the tag immediately before the closing <code className="bg-white px-1 border rounded">&lt;/head&gt;</code> tag and save.
+                    </p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+                    <h5 className="font-bold text-slate-900">Wix Instructions:</h5>
+                    <p className="leading-relaxed">
+                      Open <strong>Settings &rarr; Custom Code &rarr; + Add Custom Code</strong> in Head. Select <strong>All Pages &rarr; Load once</strong>, paste the script tag, and click Apply.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stack 3: cPanel, aaPanel & PHP Drop-in */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Server className="w-4 h-4 text-emerald-700" />
+                    <span className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                      Stack 3: cPanel, aaPanel, CyberPanel & VPS (PHP Interstitial & Guard)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">Direct PHP Hosting</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Drop the pre-configured <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">index.php</code> into your campaign or domain root (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">public_html/promo/index.php</code>). Visitors see a high-performance verification loading splash in &lt;15ms while asynchronous classification executes in the background.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+                    <h5 className="font-bold text-slate-900">cPanel Deployment:</h5>
                     <ol className="list-decimal pl-4 space-y-1">
-                      <li>Log in to your <strong>cPanel</strong> account and open <strong>File Manager</strong>.</li>
-                      <li>Navigate to your website root: <code className="bg-white px-1 py-0.2 rounded border">public_html/</code> (for root domain) or create a subfolder (e.g. <code className="bg-white px-1 py-0.2 rounded border">public_html/campaign/</code>).</li>
-                      <li>Upload your pre-configured <code className="bg-white px-1 py-0.2 rounded border">index.php</code> downloaded from your CleanTraffic dashboard.</li>
-                      <li>Ensure file permissions are set to <code className="bg-white px-1 py-0.2 rounded border">0644</code>.</li>
+                      <li>Log in to <strong>cPanel</strong> &rarr; <strong>File Manager</strong>.</li>
+                      <li>Navigate to <code className="bg-white px-1 border rounded">public_html/</code> (or a campaign subfolder like <code className="bg-white px-1 border rounded">public_html/offer/</code>).</li>
+                      <li>Upload your pre-configured <code className="bg-white px-1 border rounded">index.php</code> and set permissions to <code className="bg-white px-1 border rounded">0644</code>.</li>
                     </ol>
                   </div>
 
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-1.5">
-                    <h4 className="font-bold text-slate-900 flex items-center gap-1.5">
-                      <Server className="w-3.5 h-3.5 text-slate-700" />
-                      aaPanel Deployment Steps
-                    </h4>
-                    <ol className="list-decimal pl-4 space-y-1">
-                      <li>Log in to <strong>aaPanel</strong> and click <strong>Website</strong> from the left sidebar.</li>
-                      <li>Click the site's directory path link (typically <code className="bg-white px-1 py-0.2 rounded border">/www/wwwroot/yourdomain.com</code>).</li>
-                      <li>Upload your customized <code className="bg-white px-1 py-0.2 rounded border">index.php</code> into the root or target campaign folder.</li>
-                      <li>In site settings, verify PHP-curl is enabled under PHP Extensions.</li>
-                    </ol>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+                    <h5 className="font-bold text-slate-900">Inline PHP Guard:</h5>
+                    <p className="leading-relaxed">
+                      To protect an existing script or form, require the CleanTraffic guard at the very top:
+                    </p>
+                    <code className="block bg-slate-900 text-emerald-300 p-2 rounded text-[11px] font-mono">
+                      &lt;?php require_once __DIR__ . '/index.php'; ?&gt;
+                    </code>
                   </div>
                 </div>
+              </div>
 
-                <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-lg p-3 text-xs text-[#166534] space-y-1">
-                  <span className="font-bold">Securing Naked Root Domain vs. Campaign Page:</span>
-                  <p className="leading-relaxed">
-                    If you place <code className="bg-white px-1 py-0.5 rounded border border-[#BBF7D0] font-mono">index.php</code> in your root (<code className="bg-white px-1 py-0.5 rounded border border-[#BBF7D0] font-mono">public_html/index.php</code>), every visitor hitting <code className="font-mono">https://domain.com</code> or <code className="font-mono">https://domain.com/</code> is evaluated at the front door before your page renders. If you only want to protect a specific marketing path (e.g. <code className="font-mono">/promo</code> or <code className="font-mono">/signup</code>), create that directory and place the script inside it.
+              {/* Stack 4: WordPress Dedicated Plugin */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-[#0073AA]" />
+                    <span className="text-xs font-bold text-[#0073AA] bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-full">
+                      Stack 4: WordPress & WooCommerce Dedicated Plugin (.zip)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">1-Click Upload</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  CleanTraffic provides a zero-configuration WordPress plugin that intercepts requests during the early <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px]">init</code> hook before themes and plugins load, protecting WooCommerce checkout pages and <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px]">/wp-login.php</code>.
+                </p>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-3.5 space-y-2 text-xs text-slate-600">
+                  <h5 className="font-bold text-slate-900">WordPress Installation Steps:</h5>
+                  <ol className="list-decimal pl-4 space-y-1">
+                    <li>Download your customized <code className="bg-white px-1 border rounded font-mono">cleantraffic-wordpress-plugin.zip</code> from the CleanTraffic dashboard under <strong>Integration &rarr; WordPress Plugin</strong>.</li>
+                    <li>Log in to your WordPress Admin &rarr; <strong>Plugins &rarr; Add New Plugin &rarr; Upload Plugin</strong>.</li>
+                    <li>Select the ZIP file and click <strong>Install Now</strong> &rarr; <strong>Activate Plugin</strong>.</li>
+                    <li>Done! CleanTraffic automatically guards your entire WordPress site using your authenticated API key.</li>
+                  </ol>
+                </div>
+              </div>
+
+              {/* Stack 5: Next.js & Express */}
+              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-purple-700" />
+                    <span className="text-xs font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full">
+                      Stack 5: Next.js Edge Middleware & Express (Vercel, Railway, Render)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">Modern Jamstack & PaaS</span>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Drop our <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">middleware.ts</code> into your Next.js project root (compatible with Next.js 13, 14, and 15 on Vercel) or mount our Express middleware on Railway or Render.
+                </p>
+
+                <div className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto">
+                  <button
+                    onClick={() =>
+                      copyToClipboard(
+                        `// middleware.ts (Next.js Root)\nimport { NextResponse } from 'next/server';\nimport type { NextRequest } from 'next/server';\n\nexport async function middleware(request: NextRequest) {\n  const ip = request.ip || request.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1';\n  const res = await fetch('https://your-cleantraffic-instance.com/api/classify', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ apiKey: process.env.CLEANTRAFFIC_API_KEY, ip, userAgent: request.headers.get('user-agent'), url: request.url })\n  });\n  const verdict = await res.json();\n  if (verdict.action === 'redirect' && verdict.destination) return NextResponse.redirect(new URL(verdict.destination, request.url));\n  return NextResponse.next();\n}`,
+                        "nextjs-middleware-doc"
+                      )
+                    }
+                    className="absolute top-2.5 right-2.5 p-1 text-slate-400 hover:text-white bg-slate-800/80 rounded border border-slate-700"
+                  >
+                    {copiedCodeSnippet === "nextjs-middleware-doc" ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                  <pre>{`// middleware.ts in Next.js project root (Vercel compatible)
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export async function middleware(request: NextRequest) {
+  const ip = request.ip || request.headers.get('x-forwarded-for')?.split(',')[0] || '127.0.0.1';
+  const res = await fetch('https://your-cleantraffic-instance.com/api/classify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: process.env.CLEANTRAFFIC_API_KEY,
+      ip,
+      userAgent: request.headers.get('user-agent'),
+      url: request.url
+    })
+  });
+  const verdict = await res.json();
+  if (verdict.action === 'redirect' && verdict.destination) {
+    return NextResponse.redirect(new URL(verdict.destination, request.url));
+  }
+  return NextResponse.next();
+}`}</pre>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Architecture & Behavior Guarantees: Loading, Status Codes & Error Handling ── */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-2xs">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-emerald-700" />
+                <h3 className="text-sm font-bold text-slate-900">
+                  Universal Protections: Loading Modes, HTTP 404/403 Codes &amp; Resiliency
+                </h3>
+              </div>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                CleanTraffic enforces consistent security behaviors across all 5 integration stacks (Cloudflare, 1-Line JS, PHP, WordPress, and Next.js/Express):
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-[#F7FAF8] border border-[#E0E9E4] p-3.5 rounded-lg space-y-1.5">
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-emerald-600" />
+                    Optional Loading Feature
+                  </div>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    Choose between <strong>Interstitial Loading Screen</strong> (instant &lt;15ms security splash with customizable themes and retry buttons) or <strong>Transparent Inline Guard</strong> (zero visual delay, direct server/edge inspection before rendering).
+                  </p>
+                </div>
+
+                <div className="bg-[#F7FAF8] border border-[#E0E9E4] p-3.5 rounded-lg space-y-1.5">
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                    Strict 404 &amp; 403 Status Codes
+                  </div>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    If your routing policy specifies an HTTP 404 or 403, all integrations return actual <code className="bg-white px-1 border rounded">404 Not Found</code> or <code className="bg-white px-1 border rounded">403 Forbidden</code> HTTP headers to automated crawlers and bots.
+                  </p>
+                </div>
+
+                <div className="bg-[#F7FAF8] border border-[#E0E9E4] p-3.5 rounded-lg space-y-1.5">
+                  <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                    <Lock className="w-3.5 h-3.5 text-blue-600" />
+                    Fail-Closed Key Protection
+                  </div>
+                  <p className="text-slate-600 leading-relaxed text-[11px]">
+                    If an API key is expired, invalid, or revoked by an administrator, the integration securely halts inspection without ever exposing protected target destinations or campaigns to unauthorized parties.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Verification Steps */}
-            <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-xl p-4 space-y-2">
-              <h3 className="text-xs font-bold text-emerald-900 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                How to Verify That Integration Is Working
-              </h3>
-              <ul className="text-xs text-emerald-950 space-y-1.5 pl-5 list-disc leading-relaxed">
-                <li>
-                  <strong>Check your Dashboard Overview:</strong> Open your dashboard at <span className="font-mono">/user</span> and refresh your integrated page. The <em>Total Evaluated</em> counter and live event stream will immediately log your visit.
-                </li>
-                <li>
-                  <strong>Diagnostic Parameter:</strong> Append <code className="bg-white px-1 rounded font-mono">?nocache=1</code> to your URL to bypass session caching and trigger an immediate fresh API lookup.
-                </li>
-                <li>
-                  <strong>Inspect Server Response Headers:</strong> CleanTraffic emits standard HTTP response headers indicating whether the evaluation was served from cache or live API.
-                </li>
-              </ul>
+            {/* Ad Attribution & Verification Testing Guide */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <h4 className="text-sm font-bold text-white">How to Test Paid Ad Attribution & Verify Live Integration</h4>
+                </div>
+                <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
+                  Live Token Engine
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                All 5 CleanTraffic integration connectors automatically parse, log, and forward advertising click tokens to your target offer page. When testing your integration, append these parameters:
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
+                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                  <span className="text-[10px] text-blue-400 font-sans font-bold uppercase tracking-wider block">Meta (Facebook & IG)</span>
+                  <div className="text-slate-200 select-all break-all text-[11px]">
+                    ?fbclid=test_token_123<br/>
+                    <span className="text-slate-400 text-[10px] font-sans">Alias: ?fbclickid=test_123</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                  <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase tracking-wider block">Google Ads</span>
+                  <div className="text-slate-200 select-all break-all text-[11px]">
+                    ?gclid=test_gclid_123<br/>
+                    <span className="text-slate-400 text-[10px] font-sans">iOS: ?gbraid=... | ?wbraid=...</span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                  <span className="text-[10px] text-purple-400 font-sans font-bold uppercase tracking-wider block">TikTok & Microsoft</span>
+                  <div className="text-slate-200 select-all break-all text-[11px]">
+                    ?ttclid=test_ttclid_123<br/>
+                    <span className="text-slate-400 text-[10px] font-sans">Bing: ?msclkid=test_msclk_123</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-800/60 border border-slate-700/60 rounded-lg p-3 text-xs space-y-1 text-slate-300">
+                <div className="font-semibold text-slate-200">Verification & Troubleshooting Checklist:</div>
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-400">
+                  <li><strong>Organic Traffic:</strong> Visiting without parameters records as <span className="text-emerald-400">Organic • Residential Human</span> in your live event stream.</li>
+                  <li><strong>Bypass Session Cache:</strong> Append <code className="text-emerald-300 font-mono">?nocache=1</code> to bypass local session caching and force a real-time re-classification.</li>
+                  <li><strong>Check Dashboard Stream:</strong> Open your CleanTraffic dashboard at <code className="text-emerald-300 font-mono">/user</code> to view the real-time event log with full IP intelligence, risk breakdown, and token attribution.</li>
+                </ul>
+              </div>
             </div>
           </section>
 

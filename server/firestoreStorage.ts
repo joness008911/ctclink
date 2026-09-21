@@ -1231,6 +1231,7 @@ export class FirestoreStorage implements IStorage {
     allowSocialPreviews?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
+    interstitialEnabled?: boolean;
     interstitialThemeId?: string;
     interstitialHeading?: string;
     interstitialSubnote?: string;
@@ -1256,6 +1257,7 @@ export class FirestoreStorage implements IStorage {
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
+      interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),
       interstitialThemeId: urls.interstitialThemeId !== undefined ? urls.interstitialThemeId : (existing?.interstitialThemeId || "clean_light"),
       interstitialHeading: urls.interstitialHeading !== undefined ? urls.interstitialHeading : (existing?.interstitialHeading || "Verifying your connection..."),
       interstitialSubnote: urls.interstitialSubnote !== undefined ? urls.interstitialSubnote : (existing?.interstitialSubnote || "Please wait while we secure your session."),
