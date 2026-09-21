@@ -25,12 +25,53 @@ import {
   Sparkles,
   Share2,
   AlertTriangle,
-  Clock
+  Clock,
+  Layers,
+  Megaphone,
+  Radio
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { COUNTRIES_LIST, getCountryFlag } from "@/lib/countries";
+
+export const SUPPORTED_AD_PLATFORMS = [
+  {
+    id: "google",
+    name: "Google Ads",
+    badge: "gclid / gbraid / wbraid",
+    description: "Search, Display, YouTube & Performance Max campaigns",
+    reviewers: "Google-Ads-Creatives, Googlebot, Feedfetcher",
+  },
+  {
+    id: "meta",
+    name: "Meta / Facebook Ads",
+    badge: "fbclid",
+    description: "Facebook, Instagram & Audience Network campaigns",
+    reviewers: "FacebookBot, facebot, Meta-ExternalAgent",
+  },
+  {
+    id: "tiktok",
+    name: "TikTok Ads",
+    badge: "ttclid",
+    description: "TikTok Ads Manager & Spark Ads campaigns",
+    reviewers: "Bytespider, TikTokBot",
+  },
+  {
+    id: "microsoft",
+    name: "Microsoft / Bing Ads",
+    badge: "msclkid",
+    description: "Bing Search, Microsoft Advertising & MSN Network",
+    reviewers: "Bingbot, adidxbot, MicrosoftPreview",
+  },
+  {
+    id: "x",
+    name: "X (Twitter) Ads",
+    badge: "twclid",
+    description: "X Ads Manager & Promoted Posts campaigns",
+    reviewers: "Twitterbot",
+  },
+];
 
 export function UserRoutingTab({
   isReadOnly = false,
@@ -47,6 +88,10 @@ export function UserRoutingTab({
 
   const isRestrictedByCompliance = complianceStatus === "flagged" || complianceStatus === "pending";
   const effectiveReadOnly = isReadOnly || isRestrictedByCompliance;
+
+  // Protection Mode & Ad Platform Scope States
+  const [protectionMode, setProtectionMode] = useState<"website" | "ads" | "hybrid">("hybrid");
+  const [activeAdPlatforms, setActiveAdPlatforms] = useState<string[]>(["google", "meta", "tiktok", "microsoft", "x"]);
 
   // Routing and Threat Mitigation Policy States
   const [blockVpn, setBlockVpn] = useState<"block" | "allow">("block");
@@ -78,6 +123,31 @@ export function UserRoutingTab({
     staleTime: 1000 * 60 * 10,
   });
 
+  // 1b. Fetch Dynamically Configured Ad Platforms from Backend
+  const { data: serverAdPlatforms } = useQuery<{
+    id: string;
+    name: string;
+    badge: string;
+    clickTokens: string[];
+    description: string;
+    reviewersCount: number;
+  }[]>({
+    queryKey: ["/api/ad-platforms"],
+  });
+
+  const supportedPlatforms = useMemo(() => {
+    if (serverAdPlatforms && serverAdPlatforms.length > 0) {
+      return serverAdPlatforms.map(sp => ({
+        id: sp.id,
+        name: sp.name,
+        badge: sp.badge,
+        description: sp.description,
+        reviewers: `${sp.reviewersCount} verified crawler${sp.reviewersCount === 1 ? '' : 's'}`
+      }));
+    }
+    return SUPPORTED_AD_PLATFORMS;
+  }, [serverAdPlatforms]);
+
   // 2. Fetch User's Saved Routing Rules from Backend
   const { data: redirectUrls, isLoading: isLoadingUrls } = useQuery<{
     humanUrl: string;
@@ -90,6 +160,8 @@ export function UserRoutingTab({
     allowSearchCrawlers?: "allow" | "block";
     blockAiCrawlers?: "block" | "allow";
     allowSocialPreviews?: "allow" | "block";
+    protectionMode?: "website" | "ads" | "hybrid";
+    activeAdPlatforms?: string;
   }>({
     queryKey: ["/api/user/redirect-urls"],
     refetchOnMount: true,
@@ -101,6 +173,18 @@ export function UserRoutingTab({
       setHumanUrl(redirectUrls.humanUrl || "");
       setBotUrl(redirectUrls.botUrl || "");
       setBlockVpn(redirectUrls.blockVpn || (redirectUrls.allowVpn ? "allow" : "block"));
+      if (redirectUrls.protectionMode) {
+        setProtectionMode(redirectUrls.protectionMode as any);
+      }
+      if (redirectUrls.activeAdPlatforms) {
+        const raw = redirectUrls.activeAdPlatforms.trim().toLowerCase();
+        if (raw === "all") {
+          setActiveAdPlatforms(["google", "meta", "tiktok", "microsoft", "x"]);
+        } else {
+          const parsed = raw.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+          if (parsed.length > 0) setActiveAdPlatforms(parsed);
+        }
+      }
       if (redirectUrls.allowedDevices) {
         setAllowedDevices(redirectUrls.allowedDevices);
       }
@@ -160,6 +244,8 @@ export function UserRoutingTab({
       allowSearchCrawlers: "allow" | "block";
       blockAiCrawlers: "block" | "allow";
       allowSocialPreviews: "allow" | "block";
+      protectionMode?: "website" | "ads" | "hybrid";
+      activeAdPlatforms?: string;
     }) => {
       const response = await apiRequest("PUT", "/api/user/redirect-urls", payload);
       return response.json();
@@ -269,6 +355,26 @@ export function UserRoutingTab({
       allowSearchCrawlers,
       blockAiCrawlers,
       allowSocialPreviews,
+      protectionMode,
+      activeAdPlatforms: activeAdPlatforms.join(","),
+    });
+  };
+
+  const toggleAdPlatform = (platformId: string) => {
+    setActiveAdPlatforms((prev) => {
+      if (prev.includes(platformId)) {
+        if (prev.length === 1) {
+          toast({
+            title: "At Least One Platform Required",
+            description: "You must keep at least one ad platform active when ad campaign protection is enabled.",
+            variant: "destructive",
+          });
+          return prev;
+        }
+        return prev.filter((p) => p !== platformId);
+      } else {
+        return [...prev, platformId];
+      }
     });
   };
 
@@ -331,6 +437,214 @@ export function UserRoutingTab({
           )}
         </div>
       )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          SECTION 0: PROTECTION MODE & CAMPAIGN SCOPE
+      ───────────────────────────────────────────────────────────── */}
+      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-6 shadow-xs">
+        <div className="flex items-center justify-between border-b border-[#E5EAE7] pb-3.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-[#EBF5F1] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
+              <Layers className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
+                Protection Scope & Campaign Targeting
+              </h3>
+              <p className="text-xs text-[#64748B]">
+                Specify whether you are protecting direct website pages, paid advertising campaigns, or both
+              </p>
+            </div>
+          </div>
+          <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#0A5C48] bg-[#EBF5F1] border border-[#CCE5DB] px-2.5 py-1 rounded-full">
+            <Radio className="h-3 w-3 animate-pulse text-[#0A5C48]" />
+            Active Mode: <strong className="capitalize">{protectionMode}</strong>
+          </span>
+        </div>
+
+        {/* Protection Mode Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Option 1: Regular Website */}
+          <div
+            onClick={() => !effectiveReadOnly && setProtectionMode("website")}
+            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+              protectionMode === "website"
+                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
+                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
+            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+                  <Globe className="h-4 w-4" />
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
+                  Organic / Direct
+                </span>
+              </div>
+              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
+                Regular Website Protection
+              </h4>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                For standard landing pages, login portals, signup pages, or content. Ad bot reviewer bypasses are turned off to prevent scrapers.
+              </p>
+            </div>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">Ad Bot Exemption:</span>
+              <span className="font-bold text-rose-600">Disabled</span>
+            </div>
+          </div>
+
+          {/* Option 2: Paid Ads */}
+          <div
+            onClick={() => !effectiveReadOnly && setProtectionMode("ads")}
+            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+              protectionMode === "ads"
+                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
+                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
+            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
+                  <Megaphone className="h-4 w-4" />
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  Paid Campaigns Only
+                </span>
+              </div>
+              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
+                Paid Ads Campaign Protection
+              </h4>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                Dedicated campaign security. Shields your ad budget from competitor click fraud while verifying compliance bots so ads get approved.
+              </p>
+            </div>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">Reviewer Bypass:</span>
+              <span className="font-bold text-emerald-600">Strict Scoped</span>
+            </div>
+          </div>
+
+          {/* Option 3: Hybrid (Default) */}
+          <div
+            onClick={() => !effectiveReadOnly && setProtectionMode("hybrid")}
+            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+              protectionMode === "hybrid"
+                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
+                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
+            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
+                  <Layers className="h-4 w-4" />
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Recommended
+                </span>
+              </div>
+              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
+                Hybrid (Website & Ads)
+              </h4>
+              <p className="text-[11px] text-[#64748B] leading-relaxed">
+                All-in-one protection. Safely handles organic site visitors and paid ad clicks under the same tracking script without configuration clashes.
+              </p>
+            </div>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">Smart Adaptation:</span>
+              <span className="font-bold text-emerald-600">Universal</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Conditional Platform Scope Selection */}
+        {protectionMode !== "website" && (
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-[#E5EAE7] pt-4">
+              <div>
+                <Label className="text-xs font-bold text-[#2D3B35]">
+                  Active Advertising Platforms
+                </Label>
+                <p className="text-[11px] text-[#64748B]">
+                  Select where you run ads. Legitimate compliance bots from these platforms are recognized; spoofed or unauthorized bots are blocked.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => !effectiveReadOnly && setActiveAdPlatforms(supportedPlatforms.map(p => p.id))}
+                  className="h-7 text-[10px] font-semibold text-[#0A5C48] border-[#CCE5DB] hover:bg-[#EBF5F1]"
+                  disabled={effectiveReadOnly}
+                >
+                  Select All
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => !effectiveReadOnly && setActiveAdPlatforms(["google"])}
+                  className="h-7 text-[10px] font-semibold text-slate-600 border-slate-200 hover:bg-slate-50"
+                  disabled={effectiveReadOnly}
+                >
+                  Google Only
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {supportedPlatforms.map((platform) => {
+                const isSelected = activeAdPlatforms.includes(platform.id);
+                return (
+                  <div
+                    key={platform.id}
+                    onClick={() => !effectiveReadOnly && toggleAdPlatform(platform.id)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+                      isSelected
+                        ? "bg-[#F7FAF8] border-[#0A5C48] shadow-xs"
+                        : "bg-white border-[#E5EAE7] opacity-65 hover:opacity-100"
+                    } ${effectiveReadOnly ? "pointer-events-none" : ""}`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                            isSelected ? "bg-[#0A5C48] border-[#0A5C48] text-white" : "border-[#D5DFD9] bg-white"
+                          }`}>
+                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                          </div>
+                          <span className="text-xs font-bold text-[#0F172A]">
+                            {platform.name}
+                          </span>
+                        </div>
+                        <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
+                          {platform.badge}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#64748B] leading-snug mb-2">
+                        {platform.description}
+                      </p>
+                    </div>
+                    <div className="pt-2 border-t border-slate-100/80 text-[10px] text-slate-500">
+                      <span className="font-semibold text-slate-700">Verified Crawlers:</span> {platform.reviewers}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg flex items-start gap-2.5 text-[11px] text-emerald-900">
+              <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Strict Platform Boundary Active:</span>
+                {" "}If you only run on Google Ads and deselect Meta or TikTok, bots claiming to be FacebookBot or Bytespider will <strong className="text-emerald-950">NOT</strong> be exempted and will be treated according to your standard bot protection rules.
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ─────────────────────────────────────────────────────────────
           SECTION 1: BLOCKING CONTROLS (VPN & PROXIES)

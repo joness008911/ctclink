@@ -161,10 +161,15 @@ import {
   checkRequestVelocity,
   evaluateClientHardwareTokens,
 } from "./crawlerDetection";
-import {
-  evaluateAdIntelligence,
-  detectAdClickTokens,
-  type AdIntelligenceResult,
+import { 
+  extractAdClickInfo, 
+  verifyAdReviewer, 
+  initAdIntelligence,
+  getSerializableAdPlatforms,
+  saveAdPlatforms,
+  resetAdPlatforms,
+  testAdVerification,
+  type SerializableAdPlatformConfig
 } from "./adIntelligence";
 
 // ── Rate limiters ──────────────────────────────────────────────────────────
@@ -445,6 +450,8 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
       ip,
       location: 'Localhost / Internal Network',
       isp: 'Local Development ISP',
+      asn: '',
+      as: '',
       country_code: 'US',
       country_name: 'United States',
       city_name: 'Localhost',
@@ -506,6 +513,8 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
         ip,
         location: data.city_name && data.country_name ? `${data.city_name}, ${data.country_name}` : (data.country_name || 'Unknown'),
         isp: data.as || data.isp || 'Unknown',
+        asn: data.asn || '',
+        as: data.as || '',
         country_code: data.country_code || '',
         country_name: data.country_name || 'Unknown',
         city_name: data.city_name || 'Unknown',
@@ -609,6 +618,9 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
 export async function registerRoutes(app: Express): Promise<Server> {
   // Initialize proactive IP2Location health probe and background checking
   ip2LocationHealth.init(getEffectiveIp2GeoKey);
+
+  // Initialize Ad Intelligence rules and platform configuration from persistent storage
+  void initAdIntelligence(storage);
 
   // Trust exactly one reverse-proxy hop (Replit's ingress).
   // Using `true` would trust any X-Forwarded-For value, allowing clients to
@@ -2399,7 +2411,9 @@ Disallow: /*`);
         blockTor: "block",
         fingerprintActivate: "enabled",
         wildcardSubdomains: "disabled",
-        allowVpn: false
+        allowVpn: false,
+        protectionMode: "hybrid",
+        activeAdPlatforms: "google,meta,tiktok,microsoft,x"
       });
     } catch (error) {
       console.error("Get user redirect URLs error:", error);
@@ -2498,6 +2512,8 @@ Disallow: /*`);
         allowSearchCrawlers,
         blockAiCrawlers,
         allowSocialPreviews,
+        protectionMode,
+        activeAdPlatforms,
         interstitialThemeId,
         interstitialHeading,
         interstitialSubnote
@@ -2608,8 +2624,21 @@ Disallow: /*`);
       const formattedBlockAiCrawlers = blockAiCrawlers === "allow" ? "allow" : "block";
       const formattedAllowSocialPreviews = allowSocialPreviews === "block" ? "block" : "allow";
 
+      const validProtectionModes = ["website", "ads", "hybrid"];
+      const formattedProtectionMode = validProtectionModes.includes(protectionMode) ? protectionMode : "hybrid";
+
+      let formattedActiveAdPlatforms = "google,meta,tiktok,microsoft,x";
+      if (typeof activeAdPlatforms === 'string') {
+        const trimmed = activeAdPlatforms.trim().toLowerCase();
+        if (trimmed) formattedActiveAdPlatforms = trimmed;
+      } else if (Array.isArray(activeAdPlatforms)) {
+        if (activeAdPlatforms.length > 0) {
+          formattedActiveAdPlatforms = activeAdPlatforms.map((p: string) => String(p).trim().toLowerCase()).filter(Boolean).join(',');
+        }
+      }
+
       // Log URL update for compliance audit trail
-      console.log(`[COMPLIANCE] User ${userId} updated routing rules: human=${parsedHuman.hostname} bot=${normalizedBotUrl} allowedCountries=${formattedAllowedCountries} allowedDevices=${formattedAllowedDevices} desktopOs=${formattedDesktopOsFilter} blockVpn=${effectiveBlockVpn} searchCrawlers=${formattedAllowSearchCrawlers} aiCrawlers=${formattedBlockAiCrawlers} socialPreviews=${formattedAllowSocialPreviews}`);
+      console.log(`[COMPLIANCE] User ${userId} updated routing rules: human=${parsedHuman.hostname} bot=${normalizedBotUrl} allowedCountries=${formattedAllowedCountries} allowedDevices=${formattedAllowedDevices} desktopOs=${formattedDesktopOsFilter} blockVpn=${effectiveBlockVpn} searchCrawlers=${formattedAllowSearchCrawlers} aiCrawlers=${formattedBlockAiCrawlers} socialPreviews=${formattedAllowSocialPreviews} mode=${formattedProtectionMode} platforms=${formattedActiveAdPlatforms}`);
 
       const updated = await storage.setUserRedirectUrls(userId, { 
         humanUrl, 
@@ -2626,6 +2655,8 @@ Disallow: /*`);
         allowSearchCrawlers: formattedAllowSearchCrawlers,
         blockAiCrawlers: formattedBlockAiCrawlers,
         allowSocialPreviews: formattedAllowSocialPreviews,
+        protectionMode: formattedProtectionMode,
+        activeAdPlatforms: formattedActiveAdPlatforms,
         interstitialThemeId: typeof interstitialThemeId === "string" ? interstitialThemeId.trim() : undefined,
         interstitialHeading: typeof interstitialHeading === "string" ? interstitialHeading.trim() : undefined,
         interstitialSubnote: typeof interstitialSubnote === "string" ? interstitialSubnote.trim() : undefined,
@@ -2671,6 +2702,23 @@ Disallow: /*`);
         browser: c.browser,
         deviceType: c.deviceType,
         timestamp: c.timestamp,
+        adNetwork: c.adNetwork || null,
+        clickToken: c.clickToken || null,
+        clickId: c.clickId || null,
+        trafficType: c.trafficType || (c.visitorType === 'Human' ? (c.adNetwork ? 'ad_click' : 'organic') : 'bot'),
+        isVerifiedReviewer: Boolean(c.isVerifiedReviewer),
+        reviewerPlatform: c.reviewerPlatform || null,
+        adTraffic: {
+          isAdClick: Boolean(c.adNetwork || c.clickToken || c.trafficType === 'ad_click'),
+          platform: c.adNetwork || null,
+          platformName: c.adNetwork || null,
+          clickToken: c.clickToken || null,
+          clickId: c.clickId || null,
+          trafficType: c.trafficType || (c.visitorType === 'Human' ? (c.adNetwork ? 'ad_click' : 'organic') : 'bot'),
+          isVerifiedReviewer: Boolean(c.isVerifiedReviewer),
+          isSpoofed: c.trafficType === 'spoofed_ad_bot' || (c.detectionMethod || '').toLowerCase().includes('spoofed ad'),
+          reviewerPlatform: c.reviewerPlatform || null,
+        },
       }));
       
       res.json(formattedClassifications);
@@ -4219,6 +4267,129 @@ Disallow: /*`);
   
   // ========== END WHITE-LABEL DOMAIN SETTINGS ==========
 
+  // ========== AD PLATFORMS & INTELLIGENCE MANAGEMENT (Admin) ==========
+
+  // 1. Get all supported ad platforms & intelligence rules (Admin)
+  app.get("/api/interface/ad-platforms", requireAuth, async (req, res) => {
+    try {
+      const platforms = getSerializableAdPlatforms();
+      const totalBots = platforms.reduce((acc, p) => acc + (p.crawlerPatterns?.length || 0), 0);
+      const totalTokens = platforms.reduce((acc, p) => acc + (p.clickTokens?.length || 0), 0);
+      const totalAsns = platforms.reduce((acc, p) => acc + (p.asns?.length || 0), 0);
+      res.json({
+        platforms,
+        stats: {
+          totalPlatforms: platforms.length,
+          activePlatforms: platforms.filter(p => p.enabled !== false).length,
+          totalBotPatterns: totalBots,
+          totalClickTokens: totalTokens,
+          totalVerifiedAsns: totalAsns,
+        }
+      });
+    } catch (error: any) {
+      console.error("Get ad platforms error:", error);
+      res.status(500).json({ message: "Failed to retrieve ad platforms", error: error?.message });
+    }
+  });
+
+  // 2. Save / update ad platforms (Admin)
+  app.post("/api/interface/ad-platforms", requireAuth, async (req, res) => {
+    try {
+      const { platforms } = req.body;
+      if (!Array.isArray(platforms)) {
+        return res.status(400).json({ message: "Platforms array is required" });
+      }
+      await saveAdPlatforms(storage, platforms);
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "ad_platforms.updated",
+        metadata: { platformCount: platforms.length },
+      });
+
+      res.json({
+        success: true,
+        message: "Ad platforms configuration updated successfully",
+        platforms: getSerializableAdPlatforms(),
+      });
+    } catch (error: any) {
+      console.error("Update ad platforms error:", error);
+      res.status(400).json({ message: error?.message || "Failed to update ad platforms" });
+    }
+  });
+
+  // 3. Reset ad platforms to factory defaults (Admin)
+  app.post("/api/interface/ad-platforms/reset", requireAuth, async (req, res) => {
+    try {
+      await resetAdPlatforms(storage);
+
+      void auditLog({
+        actorId: (req as any).session?.userId,
+        actorType: "admin",
+        action: "ad_platforms.reset_defaults",
+      });
+
+      res.json({
+        success: true,
+        message: "Ad platforms reset to factory defaults successfully",
+        platforms: getSerializableAdPlatforms(),
+      });
+    } catch (error: any) {
+      console.error("Reset ad platforms error:", error);
+      res.status(500).json({ message: error?.message || "Failed to reset ad platforms" });
+    }
+  });
+
+  // 4. Test Verification Sandbox (Admin)
+  app.post("/api/interface/ad-platforms/test", requireAuth, async (req, res) => {
+    try {
+      const { ip, userAgent, asn, asnOrg, urlOrQuery, activePlatforms } = req.body;
+      if (!ip || typeof ip !== 'string') {
+        return res.status(400).json({ message: "IP address is required for verification testing" });
+      }
+
+      const result = await testAdVerification(
+        ip.trim(),
+        typeof userAgent === 'string' ? userAgent.trim() : '',
+        asn ? Number(asn) : undefined,
+        typeof asnOrg === 'string' ? asnOrg.trim() : undefined,
+        urlOrQuery,
+        Array.isArray(activePlatforms) ? activePlatforms : undefined
+      );
+
+      res.json({
+        success: true,
+        ...result
+      });
+    } catch (error: any) {
+      console.error("Test ad verification error:", error);
+      res.status(500).json({ message: error?.message || "Failed to execute verification test" });
+    }
+  });
+
+  // 5. Public / Client-Accessible Supported Ad Platforms
+  app.get("/api/ad-platforms", async (req, res) => {
+    try {
+      const all = getSerializableAdPlatforms();
+      const active = all
+        .filter(p => p.enabled !== false)
+        .map(p => ({
+          id: p.id,
+          name: p.name,
+          badge: p.clickTokens.slice(0, 3).join(' / ') || p.id,
+          clickTokens: p.clickTokens,
+          description: p.description || `${p.name} Campaign and Review Bot Tracking`,
+          reviewersCount: p.crawlerPatterns.length,
+        }));
+      res.json(active);
+    } catch (error) {
+      res.json([]);
+    }
+  });
+
+  // ========== END AD PLATFORMS MANAGEMENT ==========
+
   // Get API keys (protected)
   app.get("/api/api-keys", requireAuth, async (req, res) => {
     try {
@@ -4418,7 +4589,7 @@ Disallow: /*`);
     const queryKey = (req.query?.api_key || req.query?.apiKey) as string | undefined;
     if (queryKey?.trim()) return queryKey.trim();
     const queryKeys = Object.keys(req.query || {});
-    if (queryKeys.length > 0 && queryKeys[0] && !queryKeys[0].includes('=')) {
+    if (queryKeys.length > 0 && queryKeys[0] && (queryKeys[0].startsWith('ctc_') || queryKeys[0].length >= 32)) {
       return queryKeys[0].trim();
     }
     return '';
@@ -4910,6 +5081,17 @@ Disallow: /*`);
       // Check user agent from request body (POST) or headers
       const userAgent = req.body?.userAgent || req.headers['user-agent'] || '';
       
+      // Extract query parameters & referer for ad token & campaign detection
+      let rawQueryParams = req.body?.query || req.query || {};
+      if ((!rawQueryParams || (typeof rawQueryParams === 'object' && Object.keys(rawQueryParams).length === 0)) && (req.body?.requestUri || req.body?.queryString)) {
+        rawQueryParams = req.body.queryString || req.body.requestUri;
+      }
+      const requestReferer = req.body?.headers?.['Referer'] || req.body?.headers?.['referer'] || req.headers?.['referer'] || '';
+      const adClickInfo = extractAdClickInfo(rawQueryParams, typeof requestReferer === 'string' ? requestReferer : '');
+      if (adClickInfo.isAdClick) {
+        console.log(`🎯 [AD_CLICK_DETECTED] Platform: ${adClickInfo.platformName || adClickInfo.platform} | Token: ${adClickInfo.clickToken}=${adClickInfo.clickId || ''}`);
+      }
+
       // Extract email from request body (POST) or query parameters (GET)
       const email = req.body?.email || req.query.email || req.query.e || null;
       
@@ -4942,6 +5124,8 @@ Disallow: /*`);
       let ownerAllowSearchCrawlers: string = "allow";
       let ownerBlockAiCrawlers: string = "block";
       let ownerAllowSocialPreviews: string = "allow";
+      let ownerProtectionMode: string = "hybrid";
+      let ownerActiveAdPlatforms: string[] = ["google", "meta", "tiktok", "microsoft", "x"];
 
       if (apiKeyId) {
         try {
@@ -4973,6 +5157,17 @@ Disallow: /*`);
               ownerAllowSearchCrawlers = redirectUrls.allowSearchCrawlers || "allow";
               ownerBlockAiCrawlers = redirectUrls.blockAiCrawlers || "block";
               ownerAllowSocialPreviews = redirectUrls.allowSocialPreviews || "allow";
+              ownerProtectionMode = redirectUrls.protectionMode || "hybrid";
+              if (redirectUrls.activeAdPlatforms && redirectUrls.activeAdPlatforms.trim()) {
+                if (redirectUrls.activeAdPlatforms.trim().toLowerCase() === "all") {
+                  ownerActiveAdPlatforms = ["google", "meta", "tiktok", "microsoft", "x"];
+                } else {
+                  ownerActiveAdPlatforms = redirectUrls.activeAdPlatforms
+                    .split(',')
+                    .map((p: string) => p.trim().toLowerCase())
+                    .filter(Boolean);
+                }
+              }
             }
           }
         } catch (urlErr) {
@@ -4985,20 +5180,8 @@ Disallow: /*`);
       let visitorType = 'Human';
       let detectionMethod = 'IP Analysis';
       let blockReason = '';
-      let adIntel: AdIntelligenceResult = {
-        isPaidAdClick: false,
-        adNetwork: null,
-        adClickId: null,
-        adParam: null,
-        isClaimingAdReviewer: false,
-        reviewerName: null,
-        reviewerPlatform: null,
-        isVerifiedAdReviewer: false,
-        isImposterReviewer: false,
-        verificationMethod: 'None',
-        isExemptFromHeadless: false,
-        isExemptFromGeoDeviceRules: false,
-      };
+      let isVerifiedAdReviewer = false;
+      let adReviewerDetails: any = null;
 
       try {
         // TIER 0: RATE LIMITS & SUBSCRIPTION STATUS
@@ -5013,40 +5196,50 @@ Disallow: /*`);
           blockReason = 'Account limit reached or subscription expired';
           console.log(`🚫 BLOCKED (Tier 0 - Limit Reached): ${clientIp}`);
         }
-        
-        // TIER 1A: AD INTELLIGENCE & AD REVIEWER AUDIT (Zero-Latency ASN + Cached Reverse DNS)
-        const cachedGeoForAd = ip2geoCache.get(clientIp);
-        const effectiveIspForAd = cachedGeoForAd?.isp || req.body?.isp || null;
-        adIntel = await evaluateAdIntelligence(
-          clientIp,
-          userAgent,
-          effectiveIspForAd,
-          req.query || {},
-          req.body || {}
-        );
 
-        let isAllowedCrawler = false;
+        // TIER 0.5: AD INTELLIGENCE & COMPLIANCE REVIEWER PRE-EVALUATION
+        const isAdModeActive = ownerProtectionMode !== "website";
 
-        // Check if visitor claims to be an official Ad Reviewer / Crawler
-        if (visitorType !== 'Bot' && adIntel.isClaimingAdReviewer) {
-          if (adIntel.isImposterReviewer) {
-            // FAKE AD REVIEWER (e.g. Scraper sending User-Agent: AdsBot-Google from Hetzner/DigitalOcean or failing rDNS)
-            visitorType = 'Bot';
-            detectionMethod = 'Spoofed Ad Crawler (Impersonation)';
-            blockReason = adIntel.verificationFailureReason || `Spoofed ${adIntel.reviewerName || 'Ad Reviewer'} detected`;
-            console.log(`🚫 BLOCKED (Tier 1 - Spoofed Ad Reviewer): ${clientIp} - ${adIntel.reviewerName} failed ASN/rDNS audit`);
-          } else if (adIntel.isVerifiedAdReviewer) {
-            // VERIFIED OFFICIAL AD REVIEWER (Authentic Google AdsBot, Meta Reviewer, TikTok, Microsoft AdsBot)
-            visitorType = 'Human';
-            detectionMethod = `${adIntel.reviewerName || 'Verified Ad Reviewer'} (${adIntel.verificationMethod === 'Cached_rDNS' ? 'Cached rDNS' : 'Cryptographic rDNS + ASN'})`;
-            isAllowedCrawler = true;
-            console.log(`✅ ALLOWED (Official Ad Compliance Reviewer): ${clientIp} - ${adIntel.reviewerName} verified via ${adIntel.verificationMethod}`);
+        if (visitorType !== 'Bot' && isAdModeActive) {
+          // Pre-screen using cached Geo/ASN if available for instant resolution
+          const preCachedGeo = ip2geoCache.get(clientIp);
+          let candidateAsn: number | undefined = undefined;
+          let candidateAsnOrg: string | undefined = undefined;
+          if (preCachedGeo) {
+            if (preCachedGeo.asn) candidateAsn = parseInt(String(preCachedGeo.asn).replace(/\D/g, ''), 10) || undefined;
+            candidateAsnOrg = preCachedGeo.isp || preCachedGeo.as || undefined;
+          }
+
+          const adReviewerCheck = await verifyAdReviewer(
+            clientIp,
+            userAgent,
+            candidateAsn,
+            candidateAsnOrg,
+            ownerActiveAdPlatforms
+          );
+
+          if (adReviewerCheck.isReviewer) {
+            adReviewerDetails = adReviewerCheck;
+            if (adReviewerCheck.isSpoofed) {
+              visitorType = 'Bot';
+              detectionMethod = 'Spoofed Ad Crawler Impersonation';
+              blockReason = adReviewerCheck.reason;
+              console.log(`🚫 BLOCKED (Ad Reviewer Impersonation): ${clientIp} - ${adReviewerCheck.reason}`);
+            } else if (adReviewerCheck.isVerified && adReviewerCheck.allowedByScope) {
+              visitorType = 'Human';
+              detectionMethod = `Verified Ad Reviewer (${adReviewerCheck.platformName || adReviewerCheck.platform})`;
+              isVerifiedAdReviewer = true;
+              console.log(`🛡️ [AD_COMPLIANCE_APPROVED] ${adReviewerCheck.platformName} reviewer verified for ${clientIp} - Bypassing restrictive filters for campaign approval.`);
+            } else if (!adReviewerCheck.allowedByScope) {
+              console.log(`ℹ️ [AD_REVIEWER_OUT_OF_SCOPE] ${clientIp} claims ${adReviewerCheck.platformName || adReviewerCheck.platform} but platform is not active in user campaign settings.`);
+            }
           }
         }
-
+        
         // TIER 1: MONPERRUS CRAWLER DATABASE & BAD BOT SIGNATURES (Pre-database check)
         const crawlerCheck = checkCrawlerUserAgent(userAgent);
-        if (visitorType !== 'Bot' && !isAllowedCrawler && crawlerCheck.isBot) {
+        let isAllowedCrawler = isVerifiedAdReviewer;
+        if (visitorType !== 'Bot' && !isVerifiedAdReviewer && crawlerCheck.isBot) {
           if (crawlerCheck.crawlerType === 'search_engine') {
             if (ownerAllowSearchCrawlers === 'allow') {
               visitorType = 'Human';
@@ -5093,7 +5286,7 @@ Disallow: /*`);
 
         // TIER 1B: HIGH-FREQUENCY REQUEST VELOCITY ANOMALY (Intercepts automated scrapers on clean residential IPs)
         const velocityCheck = checkRequestVelocity(clientIp);
-        if (visitorType !== 'Bot' && !isAllowedCrawler && velocityCheck.isVelocityExceeded) {
+        if (visitorType !== 'Bot' && !isVerifiedAdReviewer && velocityCheck.isVelocityExceeded) {
           visitorType = 'Bot';
           detectionMethod = 'High-Frequency Request Velocity';
           blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP';
@@ -5101,7 +5294,7 @@ Disallow: /*`);
         }
 
         // Check header anomalies & Client Hints (Sec-CH-UA) consistency
-        if (visitorType !== 'Bot' && !isAllowedCrawler) {
+        if (visitorType !== 'Bot' && !isVerifiedAdReviewer) {
           const isApiForwarded = Boolean(req.body?.userAgent || req.body?.ip);
           const effectiveHeaders = isApiForwarded
             ? {
@@ -5130,8 +5323,7 @@ Disallow: /*`);
 
         // TIER 1C: ACTIVE CLIENT-SIDE HARDWARE & HEADLESS INTEGRITY CHECK
         // If the interstitial verification gateway passes forward hardware/DOM verification tokens (e.g. from ?ctc_verify=1)
-        // Exempt verified ad compliance reviewers (e.g. Google AdsBot, Meta review bots that run headless Chrome)
-        if (visitorType !== 'Bot' && !adIntel.isExemptFromHeadless) {
+        if (visitorType !== 'Bot' && !isVerifiedAdReviewer) {
           const clientTokens = req.body?.clientTokens || req.body?.tokens || req.body?.hardwareTokens || null;
           if (clientTokens) {
             const hwCheck = evaluateClientHardwareTokens(clientTokens, userAgent);
@@ -5168,7 +5360,7 @@ Disallow: /*`);
 
         // TIER 2: USER DEVICE & OS ROUTING RULES (100% Local evaluation from User-Agent - ZERO external IP2 calls)
         // Note: Allowed crawlers & search indexers bypass interactive device filters so indexing works reliably
-        if (visitorType !== 'Bot' && !isAllowedCrawler && ownerAllowedDevices && ownerAllowedDevices !== 'all') {
+        if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ownerAllowedDevices && ownerAllowedDevices !== 'all') {
           const lowerDevice = (deviceType || '').toLowerCase();
           if (ownerAllowedDevices === 'desktop') {
             if (lowerDevice !== 'desktop') {
@@ -5252,9 +5444,33 @@ Disallow: /*`);
           const ispName = classificationData.isp || '';
           const usageType = classificationData.usage_type || '';
 
+          // TIER 3.0: AD REVIEWER RE-EVALUATION WITH CONFIRMED ASN
+          if (isAdModeActive && !isVerifiedAdReviewer && adReviewerDetails?.isReviewer && !adReviewerDetails?.isSpoofed) {
+            const rawAsnNum = classificationData.asn ? parseInt(String(classificationData.asn).replace(/\D/g, ''), 10) : undefined;
+            const verifiedWithAsn = await verifyAdReviewer(
+              clientIp,
+              userAgent,
+              rawAsnNum,
+              classificationData.isp || classificationData.as || undefined,
+              ownerActiveAdPlatforms
+            );
+            if (verifiedWithAsn.isVerified && verifiedWithAsn.allowedByScope) {
+              visitorType = 'Human';
+              detectionMethod = `Verified Ad Reviewer (${verifiedWithAsn.platformName || verifiedWithAsn.platform})`;
+              isVerifiedAdReviewer = true;
+              isAllowedCrawler = true;
+              console.log(`🛡️ [AD_COMPLIANCE_APPROVED_ASN] ${verifiedWithAsn.platformName} reviewer verified via ASN for ${clientIp}`);
+            } else if (verifiedWithAsn.isSpoofed) {
+              visitorType = 'Bot';
+              detectionMethod = 'Spoofed Ad Crawler Impersonation';
+              blockReason = verifiedWithAsn.reason;
+              console.log(`🚫 BLOCKED (Ad Reviewer Impersonation via ASN): ${clientIp} - ${verifiedWithAsn.reason}`);
+            }
+          }
+
           // TIER 3A: USER GEO-FENCING RULES (User-defined allowed countries evaluated first)
-          // Note: Allowed search crawlers & social preview bots are exempted from localized geo-fencing so global SEO/sharing works
-          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerAllowedCountries.length > 0) {
+          // Note: Allowed search crawlers, social preview bots & verified ad reviewers are exempted from localized geo-fencing
+          if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ownerAllowedCountries.length > 0) {
             if (countryCode && ownerAllowedCountries.includes(countryCode)) {
               // Country is explicitly permitted by user
               console.log(`✅ GEO-FENCING PASS: ${clientIp} country ${countryCode} is in user's allowed list [${ownerAllowedCountries.join(', ')}]`);
@@ -5265,7 +5481,7 @@ Disallow: /*`);
               blockReason = `Country ${countryCode || 'Unknown'} is not in your allowed countries (${ownerAllowedCountries.join(', ')})`;
               console.log(`🚫 BLOCKED (Tier 3A - User Geo-Fencing): ${clientIp} (${countryCode || 'Unknown'}) not in [${ownerAllowedCountries.join(', ')}]`);
             }
-          } else if (visitorType !== 'Bot' && !isAllowedCrawler) {
+          } else if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer) {
             // Fallback to system-wide country whitelist if configured
             const systemCountryWhitelist = await storage.getCountryWhitelist();
             const enabledCountries = systemCountryWhitelist.filter(c => c.enabled !== false);
@@ -5296,14 +5512,14 @@ Disallow: /*`);
             proxyDetailsForDch.is_consumer_privacy_network
           );
 
-          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && datacenterAsnCheck.isDatacenter) {
+          if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && datacenterAsnCheck.isDatacenter) {
             visitorType = 'Bot';
             detectionMethod = 'Datacenter Cloud ASN';
             blockReason = `Cloud/Datacenter provider detected: ${datacenterAsnCheck.provider}`;
             console.log(`🚫 BLOCKED (Tier 3B - Datacenter ASN): ${clientIp} - ${datacenterAsnCheck.provider}`);
           }
 
-          if (visitorType !== 'Bot' && !isAllowedCrawler && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && (usageType === 'DCH' || classificationData.proxy_data?.is_data_center)) {
+          if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ownerBlockDatacenter !== 'allow' && !(ownerAllowVpn && isKnownVpnCandidate) && (usageType === 'DCH' || classificationData.proxy_data?.is_data_center)) {
             visitorType = 'Bot';
             detectionMethod = 'Datacenter Hosting (DCH)';
             blockReason = 'Datacenter hosting facility IP detected';
@@ -5311,7 +5527,7 @@ Disallow: /*`);
           }
 
           // TIER 3C: SEARCH ENGINE SPIDER (SES) USAGE TYPE PRE-SCREENING
-          if (visitorType !== 'Bot' && !isAllowedCrawler && (usageType === 'SES' || usageType.includes('SES'))) {
+          if (visitorType !== 'Bot' && usageType === 'SES') {
             if (ownerAllowSearchCrawlers === 'allow') {
               visitorType = 'Human';
               detectionMethod = 'Verified Search Indexer (SES)';
@@ -5325,7 +5541,7 @@ Disallow: /*`);
           }
 
           // TIER 3D: SYSTEM-WIDE ISP BLACKLIST
-          if (visitorType !== 'Bot' && !isAllowedCrawler && ispName && ispName !== 'Unknown') {
+          if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ispName && ispName !== 'Unknown') {
             const isBlacklisted = await storage.isIspBlacklisted(ispName);
             if (isBlacklisted) {
               visitorType = 'Bot';
@@ -5354,7 +5570,7 @@ Disallow: /*`);
             proxyDetails.is_bogon
           );
 
-          if (visitorType !== 'Bot' && !isAllowedCrawler && isDetectedAsProxyOrVpn) {
+          if (visitorType !== 'Bot' && !isVerifiedAdReviewer && isDetectedAsProxyOrVpn) {
             const isApiForwarded = Boolean(req.body?.userAgent || req.body?.ip);
             const effectiveHeaders: Record<string, any> = isApiForwarded
               ? {
@@ -5479,13 +5695,14 @@ Disallow: /*`);
       if (!isSimulation) {
         (async () => {
           try {
-            const effectiveDetection = classificationData.detection_method || detectionMethod || (adIntel.isPaidAdClick ? `${adIntel.adNetwork || 'Paid Ad'} Click` : 'IP Analysis');
-            let effectiveConnection = classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter');
-            if (adIntel.isPaidAdClick) {
-              effectiveConnection = `${effectiveConnection} • ${adIntel.adNetwork || 'Paid Ad'}`;
-            } else if (adIntel.isVerifiedAdReviewer) {
-              effectiveConnection = `Official Ad Reviewer (${adIntel.reviewerPlatform || 'Verified'})`;
-            }
+            const isSpoofedBot = Boolean(adReviewerDetails?.isReviewer && adReviewerDetails?.isSpoofed);
+            const trafficType = adClickInfo.isAdClick 
+              ? 'ad_click' 
+              : isVerifiedAdReviewer 
+              ? 'ad_reviewer' 
+              : isSpoofedBot 
+              ? 'spoofed_ad_bot' 
+              : (visitorType === 'Human' ? 'organic' : 'bot');
 
             const classification = await storage.createClassification({
               ipAddress: clientIp,
@@ -5498,9 +5715,15 @@ Disallow: /*`);
               deviceType: classificationData.device_type || deviceType,
               visitorType: visitorType,
               isp: classificationData.isp || 'Unknown',
-              detectionMethod: effectiveDetection,
-              connectionType: effectiveConnection,
+              detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
+              connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
               apiKeyId: apiKeyId, // Track which API key made this request
+              adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
+              clickToken: adClickInfo.clickToken || null,
+              clickId: adClickInfo.clickId || null,
+              trafficType: trafficType,
+              isVerifiedReviewer: isVerifiedAdReviewer,
+              reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
             });
             
             // Broadcast live to connected dashboard clients for this specific API key
@@ -5512,19 +5735,34 @@ Disallow: /*`);
                   : new Date().toISOString(),
                 ipAddress: clientIp,
                 visitorType: visitorType as 'Human' | 'Bot',
-                detectionMethod: effectiveDetection,
+                detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
                 country: classificationData.country_name || 'Unknown',
                 isp: classificationData.isp || 'Unknown',
                 action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
-                connectionType: effectiveConnection,
+                connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
                 usageType: classificationData.usage_type || '',
                 riskScore: classificationData.risk_score,
-                adNetwork: adIntel.adNetwork || (adIntel.isVerifiedAdReviewer ? `${adIntel.reviewerName} (Ad Reviewer)` : null),
-                adClickId: adIntel.adClickId || null,
-                isAdTraffic: Boolean(adIntel.isPaidAdClick || adIntel.isVerifiedAdReviewer),
+                trafficType: trafficType,
+                adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
+                clickToken: adClickInfo.clickToken || null,
+                clickId: adClickInfo.clickId || null,
+                isVerifiedReviewer: isVerifiedAdReviewer,
+                reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
+                adTraffic: {
+                  isAdClick: adClickInfo.isAdClick,
+                  platform: adClickInfo.platform,
+                  platformName: adClickInfo.platformName,
+                  clickToken: adClickInfo.clickToken,
+                  clickId: adClickInfo.clickId,
+                  trafficType: trafficType,
+                  isReviewer: Boolean(adReviewerDetails?.isReviewer),
+                  isVerifiedReviewer: isVerifiedAdReviewer,
+                  isSpoofed: isSpoofedBot,
+                  reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
+                },
               });
             }
-            console.log(`📝 Logged classification for IP ${clientIp} (${visitorType}) [Ad: ${adIntel.adNetwork || (adIntel.isVerifiedAdReviewer ? 'Reviewer' : 'None')}] under API key ID ${apiKeyId || 'global'}`);
+            console.log(`📝 Logged classification for IP ${clientIp} (${visitorType}) under API key ID ${apiKeyId || 'global'}`);
           } catch (logErr) {
             console.error("Error writing classification log:", logErr);
           }
@@ -5538,7 +5776,6 @@ Disallow: /*`);
   API Key ID:              ${apiKeyId || '[None / Global]'}
   Account Owner:           ${ownerUser ? `${ownerUser.username} (${ownerUser.id})` : '[Unassigned / Not Found]'}
   Detected Visitor Type:   ${isHumanVisitor ? 'Human' : 'Bot'}
-  Ad Traffic Detected:     ${adIntel.isPaidAdClick ? `YES - ${adIntel.adNetwork} (Click ID: ${adIntel.adClickId})` : (adIntel.isVerifiedAdReviewer ? `YES - ${adIntel.reviewerName}` : 'No')}
   Triggering Condition:    ${blockReason ? `Blocked by: ${blockReason}` : (detectionMethod || classificationData.detection_method || 'Clean Traffic Passed')}
   Detection Method:        ${detectionMethod || classificationData.detection_method || 'IP Analysis'}
   Dashboard Human URL:     ${configuredHumanUrl || '[Not set by user]'}
@@ -5571,15 +5808,6 @@ Disallow: /*`);
         connection_type: classificationData.connection_type || (isHumanVisitor ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
         risk_score: classificationData.risk_score ?? (isHumanVisitor ? 8 : 80),
         threat_level: classificationData.threat_level || (isHumanVisitor ? 'low' : 'medium'),
-        adNetwork: adIntel.adNetwork || null,
-        ad_network: adIntel.adNetwork || null,
-        adClickId: adIntel.adClickId || null,
-        ad_click_id: adIntel.adClickId || null,
-        isPaidAdClick: adIntel.isPaidAdClick,
-        is_paid_ad_click: adIntel.isPaidAdClick,
-        isAdReviewer: adIntel.isVerifiedAdReviewer,
-        is_ad_reviewer: adIntel.isVerifiedAdReviewer,
-        adParam: adIntel.adParam || null,
         redirectUrl: effectiveRedirectUrl || null,
         redirect_url: effectiveRedirectUrl || null,
         destination: effectiveRedirectUrl || null,
@@ -5592,6 +5820,20 @@ Disallow: /*`);
         redirectVersion: redirectVersion,
         configured: Boolean(effectiveRedirectUrl),
         isSimulation: isSimulation,
+        adTraffic: {
+          isAdClick: adClickInfo.isAdClick,
+          platform: adClickInfo.platform,
+          platformName: adClickInfo.platformName,
+          clickToken: adClickInfo.clickToken,
+          clickId: adClickInfo.clickId,
+          utmSource: adClickInfo.utmSource || null,
+          utmMedium: adClickInfo.utmMedium || null,
+          utmCampaign: adClickInfo.utmCampaign || null,
+          isReviewer: Boolean(adReviewerDetails?.isReviewer),
+          isVerifiedReviewer: isVerifiedAdReviewer,
+          reviewerPlatform: adReviewerDetails?.platform || null,
+          reviewerVerificationMethod: adReviewerDetails?.verificationMethod || null,
+        },
         status: "success"
       };
       

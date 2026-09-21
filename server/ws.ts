@@ -38,9 +38,13 @@ export interface SecurityEventPayload {
   connectionType?: string;
   usageType?: string;
   riskScore?: number;
+  trafficType?: string;
   adNetwork?: string | null;
-  adClickId?: string | null;
-  isAdTraffic?: boolean;
+  clickToken?: string | null;
+  clickId?: string | null;
+  isVerifiedReviewer?: boolean;
+  reviewerPlatform?: string | null;
+  adTraffic?: any;
 }
 
 // Map: apiKeyId → set of open WebSocket connections for that key's owner(s)

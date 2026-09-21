@@ -32,7 +32,8 @@ import {
   Sparkles,
   Activity,
   ArrowRight,
-  Palette
+  Palette,
+  Target
 } from "lucide-react";
 import ClassificationTable from "@/components/classification-table";
 import DetectionRules from "@/components/detection-rules";
@@ -47,6 +48,7 @@ import ClientUserManagement from "@/components/client-user-management";
 import WhitelabelDomainSettings from "@/components/whitelabel-domain-settings";
 import EmailManagement from "@/components/email-management";
 import ThemeManagement from "@/components/theme-management";
+import AdIntelligenceManagement from "@/components/ad-intelligence-management";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -249,6 +251,7 @@ export default function Dashboard() {
         { id: "isp-whitelist", label: "ISP Whitelist", icon: ShieldCheck, testId: "tab-isp-whitelist" },
         { id: "isp-blacklist", label: "ISP Blacklist", icon: ShieldAlert, testId: "tab-isp-blacklist" },
         { id: "ip-whitelist", label: "Client IP Whitelist", icon: Lock, testId: "tab-ip-whitelist" },
+        { id: "ad-platforms", label: "Ad Platforms & Bots", icon: Target, testId: "tab-ad-platforms" },
       ],
     },
     {
@@ -688,6 +691,10 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            <TabsContent value="ad-platforms" className="mt-0 space-y-6">
+              <AdIntelligenceManagement />
             </TabsContent>
 
             <TabsContent value="email" className="mt-0 space-y-6">

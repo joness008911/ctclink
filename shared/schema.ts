@@ -24,6 +24,12 @@ export const classifications = pgTable("classifications", {
   browser: text("browser"),
   deviceType: text("device_type"),
   apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }), // Link to which API key was used
+  adNetwork: text("ad_network"),
+  clickToken: text("click_token"),
+  clickId: text("click_id"),
+  trafficType: text("traffic_type"),
+  isVerifiedReviewer: boolean("is_verified_reviewer").default(false),
+  reviewerPlatform: text("reviewer_platform"),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
@@ -166,6 +172,8 @@ export const userRedirectUrls = pgTable("user_redirect_urls", {
   allowSearchCrawlers: text("allow_search_crawlers").default("allow"), // "allow" | "block" (default: allow so SEO and indexing are preserved)
   blockAiCrawlers: text("block_ai_crawlers").default("block"), // "block" | "allow" (default: block AI training scrapers)
   allowSocialPreviews: text("allow_social_previews").default("allow"), // "allow" | "block" (default: allow link preview crawlers)
+  protectionMode: text("protection_mode").default("hybrid"), // "website" | "ad_campaign" | "hybrid"
+  activeAdPlatforms: text("active_ad_platforms").default("google,meta,tiktok,microsoft,x"), // comma-separated e.g. "google,meta"
   interstitialThemeId: text("interstitial_theme_id").default("clean_light"),
   interstitialHeading: text("interstitial_heading").default("Verifying your connection..."),
   interstitialSubnote: text("interstitial_subnote").default("Please wait while we secure your session."),

@@ -66,11 +66,50 @@ export function VisitorDetailsDrawer({
   const isResidentialProxyPool = detectionMethod.toLowerCase().includes("residential proxy") || detectionMethod.toLowerCase().includes("scraping pool");
   const isConsumerPrivacy = detectionMethod.toLowerCase().includes("consumer privacy") || detectionMethod.toLowerCase().includes("relay");
   const isVerifiedConsumerVpn = detectionMethod.toLowerCase().includes("verified consumer vpn") || detectionMethod.toLowerCase().includes("clean consumer vpn");
+  const isSpoofed = Boolean(
+    visitor.trafficType === "spoofed_ad_bot" ||
+    visitor.adTraffic?.isSpoofed ||
+    detectionMethod.toLowerCase().includes("spoofed ad") ||
+    detectionMethod.toLowerCase().includes("impersonation")
+  );
+  const isVerifiedReviewer = Boolean(
+    visitor.isVerifiedReviewer || 
+    visitor.adTraffic?.isVerifiedReviewer || 
+    detectionMethod.toLowerCase().includes("verified ad compliance") || 
+    detectionMethod.toLowerCase().includes("ad reviewer") ||
+    detectionMethod.toLowerCase().includes("ad compliance")
+  );
+  const isAdClick = Boolean(
+    visitor.trafficType === "ad_click" ||
+    visitor.adTraffic?.isAdClick ||
+    visitor.adNetwork || 
+    visitor.adTraffic?.adNetwork || 
+    visitor.clickToken || 
+    visitor.clickId ||
+    visitor.gclid || 
+    visitor.fbclid || 
+    visitor.ttclid || 
+    visitor.msclkid || 
+    visitor.twclid
+  );
+  const isPaidAdTraffic = isAdClick && !isVerifiedReviewer && !isSpoofed;
   const isPolicyFilter = isDeviceRestricted || isOsRestricted || isGeoRestricted;
 
   // Accurate Verdict Title
   const getVerdictTitle = () => {
+    if (isSpoofed) {
+      const platform = visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Ad Network";
+      return `Verdict: 🚨 Spoofed Ad Crawler Deflected (Forged ${platform} Bot)`;
+    }
+    if (isVerifiedReviewer) {
+      const platform = visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Ad Network";
+      return `Verdict: Verified Compliance Reviewer (${platform} Ad Bot)`;
+    }
     if (isHuman) {
+      if (isAdClick) {
+        const net = visitor.adNetwork || visitor.adTraffic?.adNetwork || "Ad Campaign";
+        return `Verdict: Verified Human Visitor (${net} Click)`;
+      }
       if (isConsumerPrivacy) {
         return "Verdict: Verified Consumer Privacy Network (Apple Relay / Privacy VPN)";
       }
@@ -120,6 +159,8 @@ export function VisitorDetailsDrawer({
 
   // Accurate, Contextually Calculated Risk Score (Scale: 0-100)
   const calculateRiskScore = (): number => {
+    if (isSpoofed) return 99; // Extreme threat: impersonating official ad reviewer
+    if (isVerifiedReviewer) return 0; // Completely safe official ad bot
     if (visitor.riskScore !== undefined && visitor.riskScore !== null) {
       return visitor.riskScore;
     }
@@ -159,7 +200,29 @@ export function VisitorDetailsDrawer({
 
   // Explicit, Accurate Telemetry Signals based on exact visitor classification
   const getExplicitTelemetrySignals = (): string[] => {
+    if (isVerifiedReviewer) {
+      const platform = visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Ad Network";
+      return [
+        `Verified Ad Compliance Crawler (${platform})`,
+        "Ad Intelligence Pre-Evaluation Match (Tier 0.5)",
+        "Reverse DNS & Carrier ASN Whitelist Match",
+        "Safe Reviewer Exemption Active",
+        "Target Landing Page Served (Campaign Approval Secured)"
+      ];
+    }
     if (isHuman) {
+      if (isAdClick) {
+        const net = visitor.adNetwork || visitor.adTraffic?.adNetwork || "Ad Campaign";
+        const token = visitor.clickToken || visitor.gclid || visitor.fbclid || visitor.ttclid || visitor.msclkid || visitor.twclid;
+        return [
+          `Paid Ad Click: ${net}`,
+          token ? `Click Token: ${token.substring(0, 16)}...` : "Active Campaign Token",
+          `Residential ISP (${visitor.isp || "Verified Carrier"})`,
+          `Genuine ${visitor.browser || "Browser"} Engine`,
+          "Valid Hardware & TLS Fingerprint",
+          "Clean IP Reputation"
+        ];
+      }
       if (isConsumerPrivacy || isVerifiedConsumerVpn) {
         return [
           `Consumer Privacy Network (${visitor.isp || "Privacy Provider"})`,
@@ -306,7 +369,19 @@ export function VisitorDetailsDrawer({
 
   // Explicit, Accurate Defense Narrative
   const getDefenseNarrative = () => {
+    if (isSpoofed) {
+      const platform = visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Ad Network";
+      return `CRITICAL SECURITY ALERT: This visitor forged its User-Agent header claiming to be an official ${platform} ad review bot. However, deep reverse DNS verification and Autonomous System (ASN) checks failed. This connection was confirmed as an impersonating crawler or ad spy tool and was safely deflected to prevent competitive offer scraping.`;
+    }
+    if (isVerifiedReviewer) {
+      const platform = visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Ad Network";
+      return `This visitor was authenticated as an official ${platform} ad compliance reviewer. To ensure your campaigns stay approved and never receive policy strikes, the Ad Intelligence Engine safely routed this crawler directly to your landing page.`;
+    }
     if (isHuman) {
+      if (isAdClick) {
+        const net = visitor.adNetwork || visitor.adTraffic?.adNetwork || "Ad Network";
+        return `This visitor is an authentic human user arriving through a live ${net} ad campaign. Passed all hardware verification, ISP validation, and bot checks. Routed directly to your Target Offer.`;
+      }
       return "This visitor exhibited authentic hardware fingerprinting, genuine residential ASN routing, and passed all multi-layer heuristic security checks. The traffic was routed directly to your configured Target Offer URL.";
     }
     if (isDeviceRestricted) {
@@ -535,6 +610,104 @@ export function VisitorDetailsDrawer({
                   </div>
                 </div>
               </div>
+
+              {/* Ad Campaign Attribution & Intelligence Card (Strictly for Paid Ads, Reviewers, or Spoofed Bots) */}
+              {(isPaidAdTraffic || isVerifiedReviewer || isSpoofed) && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                    <span>Ad Attribution & Compliance</span>
+                    {isSpoofed ? (
+                      <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded border border-rose-300 animate-pulse">
+                        🚨 FORGED REVIEWER DETECTED
+                      </span>
+                    ) : isVerifiedReviewer ? (
+                      <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                        🛡️ OFFICIAL COMPLIANCE BOT
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                        🎯 PAID CAMPAIGN TRAFFIC
+                      </span>
+                    )}
+                  </h3>
+                  <div className={`p-4 rounded-xl border ${
+                    isSpoofed 
+                      ? "bg-rose-50/70 border-rose-200" 
+                      : isVerifiedReviewer 
+                      ? "bg-indigo-50/60 border-indigo-200" 
+                      : "bg-blue-50/60 border-blue-200"
+                  } space-y-3 text-xs`}>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase block">AD PLATFORM</span>
+                        <span className="font-bold text-slate-900 mt-0.5 block">
+                          {visitor.adNetwork || visitor.adTraffic?.platformName || visitor.reviewerPlatform || visitor.adTraffic?.reviewerPlatform || "Paid Ad Network"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase block">TRACKING TOKEN</span>
+                        <span className="font-mono font-bold text-slate-900 mt-0.5 block">
+                          {visitor.clickToken || visitor.adTraffic?.clickToken || (visitor.gclid ? "gclid" : visitor.fbclid ? "fbclid" : visitor.ttclid ? "ttclid" : visitor.msclkid ? "msclkid" : visitor.twclid ? "twclid" : "—")}
+                        </span>
+                      </div>
+                    </div>
+
+                    {(visitor.clickId || visitor.adTraffic?.clickId) && (
+                      <div className="pt-2 border-t border-slate-200/60">
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase block">CLICK IDENTIFIER (ID)</span>
+                        <div className="flex items-center justify-between gap-2 mt-1 bg-white p-2 rounded-lg border border-slate-200">
+                          <span className="font-mono text-slate-800 text-[11px] truncate select-all">
+                            {visitor.clickId || visitor.adTraffic?.clickId}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="text-[11px] leading-relaxed text-slate-600 pt-0.5">
+                      {isSpoofed ? (
+                        <p className="text-rose-800 font-medium">
+                          <strong>High Security Alert:</strong> This crawler claimed to be an official ad compliance bot, but failed reverse DNS and ASN validation. Deflected to protect your campaign funnel.
+                        </p>
+                      ) : isVerifiedReviewer ? (
+                        <p className="text-indigo-900 font-medium">
+                          <strong>Policy Safe:</strong> Authenticated as an official ad compliance crawler. Allowed transparent inspection to prevent account bans or campaign disapproval.
+                        </p>
+                      ) : (
+                        <p className="text-blue-900 font-medium">
+                          <strong>Validated Paid Click:</strong> Arrived with an authentic campaign click token. Successfully attributed to {visitor.adNetwork || "ad campaign"} and routed directly to your offer.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Organic / Direct Traffic Card (Displayed exclusively for natural human visitors without ad tokens) */}
+              {isHuman && !isPaidAdTraffic && !isVerifiedReviewer && !isSpoofed && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                    <span>Traffic Channel & Source</span>
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/80">
+                      🌱 ORGANIC / DIRECT VISITOR
+                    </span>
+                  </h3>
+                  <div className="p-4 rounded-xl border bg-emerald-50/40 border-emerald-200/70 space-y-2.5 text-xs">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase block">ACQUISITION CHANNEL</span>
+                        <span className="font-bold text-slate-900 mt-0.5 block">Direct / Organic</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-semibold uppercase block">CAMPAIGN TYPE</span>
+                        <span className="font-semibold text-slate-700 mt-0.5 block">Unpaid Natural Traffic</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-slate-600 pt-1.5 border-t border-emerald-200/60">
+                      This visitor arrived without paid advertising click tokens. Verified as an authentic residential user and forwarded to your human destination.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Quick Summary Tags */}
               <div className="space-y-2">

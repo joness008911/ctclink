@@ -1,452 +1,658 @@
+import dns from 'dns';
+import type { IStorage } from './storage';
+
 /**
- * Zero-Latency Ad Intelligence & Ad Reviewer Verification Engine
- * Provides:
- *  1. Auto-detection of paid ad click tokens (gclid, fbclid, ttclid, msclkid, twclid, etc.)
- *  2. Official Ad Reviewer & Preview Crawler Registry (Google AdsBot, Meta Facebot, TikTok, Microsoft, X)
- *  3. Two-Tier Anti-Spoofing Architecture (Fast In-Memory ASN Pre-Screen -> Cached Reverse DNS)
- *  4. Headless Browser Smart Exemption for verified ad crawlers
- *  5. Strict 50ms timeout guard & 24-hour in-memory LRU cache
+ * Serializable Ad Platform Configuration (for DB storage and Admin API)
  */
-
-import { promises as dnsPromises } from "dns";
-
-export interface AdClickInfo {
-  isPaidAdClick: boolean;
-  adNetwork: 'Google Ads' | 'Meta Ads' | 'TikTok Ads' | 'Microsoft Ads' | 'X (Twitter) Ads' | 'PPC Campaign' | null;
-  clickId: string | null;
-  clickParam: string | null;
-}
-
-export interface AdReviewerPattern {
+export interface SerializableAdPlatformConfig {
+  id: string;
   name: string;
-  pattern: RegExp;
-  platform: 'Google' | 'Meta' | 'TikTok' | 'Microsoft' | 'X' | 'Apple' | 'LinkedIn';
-  expectedHostSuffixes: string[];
-  expectedAsnKeywords: string[];
+  enabled: boolean;
+  clickTokens: string[];
+  crawlerPatterns: string[];
+  asns: number[];
+  asnKeywords: string[];
+  validHostnameRegex?: string;
+  description?: string;
 }
 
-// Official Ad Reviewers, Compliance Auditors & Social Preview Scrapers
-export const AD_REVIEWER_REGISTRY: AdReviewerPattern[] = [
-  // Google Ads
+/**
+ * Runtime Ad Platform Definition with compiled RegExps
+ */
+export interface AdPlatformConfig {
+  id: string;
+  name: string;
+  enabled?: boolean;
+  clickTokens: string[];
+  crawlerPatterns: RegExp[];
+  asns: number[];
+  asnKeywords: string[];
+  validHostnameRegex?: RegExp;
+  description?: string;
+}
+
+/**
+ * Factory Default Supported Ad Platforms
+ */
+export const DEFAULT_AD_PLATFORMS_DATA: SerializableAdPlatformConfig[] = [
   {
-    name: "Google AdsBot",
-    pattern: /adsbot-google-mobile|adsbot-google|google-inspectiontool/i,
-    platform: "Google",
-    expectedHostSuffixes: [".googlebot.com", ".google.com"],
-    expectedAsnKeywords: ["google", "as15169", "alphabet"]
+    id: 'google',
+    name: 'Google Ads',
+    enabled: true,
+    clickTokens: ['gclid', 'wbraid', 'gbraid', 'gclickid', 'google_click_id'],
+    crawlerPatterns: [
+      'adsbot-google',
+      'adsbot-google-mobile',
+      'mediapartners-google',
+      'google-inspectiontool',
+      'googlebot',
+    ],
+    asns: [15169, 19527, 36040, 43515],
+    asnKeywords: ['google', 'googlebot'],
+    validHostnameRegex: '\\.(googlebot|google)\\.com$',
+    description: 'Search, Display, YouTube, Performance Max & Shopping campaigns',
   },
   {
-    name: "Google AdSense / Mediapartners",
-    pattern: /mediapartners-google/i,
-    platform: "Google",
-    expectedHostSuffixes: [".googlebot.com", ".google.com"],
-    expectedAsnKeywords: ["google", "as15169", "alphabet"]
+    id: 'meta',
+    name: 'Meta Ads',
+    enabled: true,
+    clickTokens: ['fbclid', 'fbclickid', 'fb_click_id', 'fb_clickid', 'fbc_id'],
+    crawlerPatterns: [
+      'facebookexternalhit',
+      'facebot',
+      'meta-externalagent',
+      'facebookcatalog',
+    ],
+    asns: [32934, 63293],
+    asnKeywords: ['facebook', 'meta platforms'],
+    validHostnameRegex: '\\.fbsv\\.net$',
+    description: 'Facebook, Instagram & Meta Audience Network campaigns',
   },
-  // Meta (Facebook / Instagram / Threads)
   {
-    name: "Meta Ad Reviewer & Preview Scraper",
-    pattern: /facebookexternalhit|facebot|meta-externalagent/i,
-    platform: "Meta",
-    expectedHostSuffixes: [".fbsv.net", ".facebook.com", ".meta.com"],
-    expectedAsnKeywords: ["facebook", "meta", "as32934", "as63293"]
+    id: 'tiktok',
+    name: 'TikTok Ads',
+    enabled: true,
+    clickTokens: ['ttclid', 'ttclickid', 'tt_click_id'],
+    crawlerPatterns: [
+      'tiktokbot',
+      'bytespider',
+      'tiktokspider',
+    ],
+    asns: [138699, 396986],
+    asnKeywords: ['bytedance', 'tiktok'],
+    description: 'TikTok Ads Manager & Spark Ads campaigns',
   },
-  // TikTok / ByteDance
   {
-    name: "TikTok Ad Crawler",
-    pattern: /tiktokbot|bytespider/i,
-    platform: "TikTok",
-    expectedHostSuffixes: [".bytedance.com", ".tiktok.com"],
-    expectedAsnKeywords: ["bytedance", "tiktok", "as138699", "as49981"]
+    id: 'microsoft',
+    name: 'Microsoft Ads',
+    enabled: true,
+    clickTokens: ['msclkid', 'msclickid', 'ms_click_id'],
+    crawlerPatterns: [
+      'adidxbot',
+      'bingbot',
+      'bingpreview',
+    ],
+    asns: [8075],
+    asnKeywords: ['microsoft'],
+    validHostnameRegex: '\\.(search\\.msn|bing)\\.com$',
+    description: 'Bing Search, Microsoft Advertising & MSN Network',
   },
-  // Microsoft / Bing Ads
   {
-    name: "Microsoft AdsBot (adidxbot)",
-    pattern: /adidxbot|bingpreview/i,
-    platform: "Microsoft",
-    expectedHostSuffixes: [".search.msn.com", ".bing.com"],
-    expectedAsnKeywords: ["microsoft", "as8075", "msft"]
+    id: 'x',
+    name: 'X (Twitter) Ads',
+    enabled: true,
+    clickTokens: ['twclid', 'xclid', 'twclickid', 'tw_click_id'],
+    crawlerPatterns: [
+      'twitterbot',
+    ],
+    asns: [13414],
+    asnKeywords: ['twitter', 'x corp'],
+    description: 'X Ads Manager & Promoted Posts campaigns',
   },
-  // X (Twitter)
-  {
-    name: "X (Twitter) Ad & Link Preview Bot",
-    pattern: /twitterbot/i,
-    platform: "X",
-    expectedHostSuffixes: [".twttr.com", ".twitter.com"],
-    expectedAsnKeywords: ["twitter", "x corp", "as13414"]
-  },
-  // Apple
-  {
-    name: "Applebot Preview Crawler",
-    pattern: /applebot/i,
-    platform: "Apple",
-    expectedHostSuffixes: [".applebot.apple.com", ".apple.com"],
-    expectedAsnKeywords: ["apple", "as714"]
-  },
-  // LinkedIn
-  {
-    name: "LinkedInBot Ad & Preview Scraper",
-    pattern: /linkedinbot/i,
-    platform: "LinkedIn",
-    expectedHostSuffixes: [".linkedin.com"],
-    expectedAsnKeywords: ["linkedin", "as14413", "microsoft"]
-  }
 ];
 
-// In-memory 24-hour verification cache (IP -> Verification Record)
-interface CachedVerification {
-  verified: boolean;
-  platform: string;
-  hostname?: string;
-  expiresAt: number;
+/**
+ * Safely compile string patterns into RegExps
+ */
+function compilePlatform(raw: SerializableAdPlatformConfig): AdPlatformConfig {
+  const crawlerPatterns: RegExp[] = [];
+  for (const p of raw.crawlerPatterns || []) {
+    if (!p || !p.trim()) continue;
+    try {
+      crawlerPatterns.push(new RegExp(p.trim(), 'i'));
+    } catch (err) {
+      console.warn(`[AdIntelligence] Invalid crawler regex pattern "${p}" for ${raw.id}:`, err);
+    }
+  }
+
+  let validHostnameRegex: RegExp | undefined = undefined;
+  if (raw.validHostnameRegex && raw.validHostnameRegex.trim()) {
+    try {
+      validHostnameRegex = new RegExp(raw.validHostnameRegex.trim(), 'i');
+    } catch (err) {
+      console.warn(`[AdIntelligence] Invalid hostname regex "${raw.validHostnameRegex}" for ${raw.id}:`, err);
+    }
+  }
+
+  return {
+    id: raw.id.toLowerCase().trim(),
+    name: raw.name.trim(),
+    enabled: raw.enabled !== false,
+    clickTokens: (raw.clickTokens || []).map((t) => t.toLowerCase().trim()).filter(Boolean),
+    crawlerPatterns,
+    asns: (raw.asns || []).map((n) => Number(n)).filter((n) => !isNaN(n) && n > 0),
+    asnKeywords: (raw.asnKeywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean),
+    validHostnameRegex,
+    description: raw.description,
+  };
 }
-const VERIFIED_BOT_CACHE = new Map<string, CachedVerification>();
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const MAX_CACHE_SIZE = 10000;
 
 /**
- * Automatically extracts and identifies paid ad click parameters from request query strings,
- * POST body payloads, or landing page URLs.
+ * In-Memory Map of Loaded Ad Platforms
  */
-export function detectAdClickTokens(
-  reqQuery: Record<string, any> = {},
-  reqBody: Record<string, any> = {},
-  urlOrReferer?: string
-): AdClickInfo {
-  // 1. Check direct query parameters
-  const getParam = (key: string): string | null => {
-    const val = reqQuery[key] ?? reqQuery[key.toLowerCase()] ?? reqBody[key] ?? reqBody[key.toLowerCase()];
-    if (val && typeof val === 'string' && val.trim() !== '') {
-      return val.trim();
-    }
-    return null;
-  };
+export let SUPPORTED_AD_PLATFORMS: Record<string, AdPlatformConfig> = {};
+let serializablePlatformsCache: SerializableAdPlatformConfig[] = [];
 
-  // Google Ads (gclid, wbraid, gbraid)
-  const gclid = getParam('gclid');
-  if (gclid) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: gclid, clickParam: 'gclid' };
+// Initialize default platforms in memory
+function loadDefaults() {
+  const map: Record<string, AdPlatformConfig> = {};
+  for (const d of DEFAULT_AD_PLATFORMS_DATA) {
+    map[d.id] = compilePlatform(d);
+  }
+  SUPPORTED_AD_PLATFORMS = map;
+  serializablePlatformsCache = DEFAULT_AD_PLATFORMS_DATA;
+}
+loadDefaults();
 
-  const wbraid = getParam('wbraid');
-  if (wbraid) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: wbraid, clickParam: 'wbraid' };
-
-  const gbraid = getParam('gbraid');
-  if (gbraid) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: gbraid, clickParam: 'gbraid' };
-
-  // Meta (Facebook & Instagram)
-  const fbclid = getParam('fbclid');
-  if (fbclid) return { isPaidAdClick: true, adNetwork: 'Meta Ads', clickId: fbclid, clickParam: 'fbclid' };
-
-  // TikTok Ads
-  const ttclid = getParam('ttclid');
-  if (ttclid) return { isPaidAdClick: true, adNetwork: 'TikTok Ads', clickId: ttclid, clickParam: 'ttclid' };
-
-  // Microsoft Ads
-  const msclkid = getParam('msclkid');
-  if (msclkid) return { isPaidAdClick: true, adNetwork: 'Microsoft Ads', clickId: msclkid, clickParam: 'msclkid' };
-
-  // X (Twitter) Ads
-  const twclid = getParam('twclid') || getParam('xclid');
-  if (twclid) return { isPaidAdClick: true, adNetwork: 'X (Twitter) Ads', clickId: twclid, clickParam: 'twclid' };
-
-  // 2. If not found in direct params, parse url / referer strings if provided
-  const targets = [
-    typeof reqBody?.url === 'string' ? reqBody.url : null,
-    typeof reqBody?.targetUrl === 'string' ? reqBody.targetUrl : null,
-    typeof reqBody?.referer === 'string' ? reqBody.referer : null,
-    typeof urlOrReferer === 'string' ? urlOrReferer : null,
-  ].filter(Boolean) as string[];
-
-  for (const rawUrl of targets) {
-    try {
-      const parsed = rawUrl.includes('?') ? new URL(rawUrl.startsWith('http') ? rawUrl : `https://dummy.com${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`) : null;
-      if (parsed) {
-        const search = parsed.searchParams;
-        if (search.has('gclid')) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: search.get('gclid'), clickParam: 'gclid' };
-        if (search.has('fbclid')) return { isPaidAdClick: true, adNetwork: 'Meta Ads', clickId: search.get('fbclid'), clickParam: 'fbclid' };
-        if (search.has('ttclid')) return { isPaidAdClick: true, adNetwork: 'TikTok Ads', clickId: search.get('ttclid'), clickParam: 'ttclid' };
-        if (search.has('msclkid')) return { isPaidAdClick: true, adNetwork: 'Microsoft Ads', clickId: search.get('msclkid'), clickParam: 'msclkid' };
-        if (search.has('twclid')) return { isPaidAdClick: true, adNetwork: 'X (Twitter) Ads', clickId: search.get('twclid'), clickParam: 'twclid' };
-        if (search.has('wbraid')) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: search.get('wbraid'), clickParam: 'wbraid' };
-        if (search.has('gbraid')) return { isPaidAdClick: true, adNetwork: 'Google Ads', clickId: search.get('gbraid'), clickParam: 'gbraid' };
-        
-        // UTM paid advertising check
-        const utmMedium = search.get('utm_medium')?.toLowerCase();
-        const utmSource = search.get('utm_source')?.toLowerCase();
-        if (utmMedium === 'cpc' || utmMedium === 'ppc' || utmMedium === 'paid' || utmMedium === 'paidsocial') {
-          return { isPaidAdClick: true, adNetwork: 'PPC Campaign', clickId: `${utmSource || 'ad'}_${utmMedium}`, clickParam: 'utm_medium' };
+/**
+ * Initialize ad platforms from persistent storage
+ */
+export async function initAdIntelligence(storage: IStorage): Promise<void> {
+  try {
+    const rawSetting = await storage.getSetting('supported_ad_platforms');
+    if (rawSetting && rawSetting.trim()) {
+      const parsed = JSON.parse(rawSetting);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const map: Record<string, AdPlatformConfig> = {};
+        for (const item of parsed) {
+          if (item && item.id && item.name) {
+            map[item.id.toLowerCase()] = compilePlatform(item);
+          }
         }
+        SUPPORTED_AD_PLATFORMS = map;
+        serializablePlatformsCache = parsed;
+        console.log(`🎯 [AdIntelligence] Loaded ${Object.keys(map).length} ad platforms from storage.`);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('[AdIntelligence] Error loading ad platforms from storage, using defaults:', err);
+  }
+  loadDefaults();
+}
+
+/**
+ * Get current ad platforms in serializable JSON format
+ */
+export function getSerializableAdPlatforms(): SerializableAdPlatformConfig[] {
+  return serializablePlatformsCache;
+}
+
+/**
+ * Save updated ad platforms to storage and apply to runtime
+ */
+export async function saveAdPlatforms(
+  storage: IStorage,
+  platforms: SerializableAdPlatformConfig[]
+): Promise<void> {
+  if (!Array.isArray(platforms) || platforms.length === 0) {
+    throw new Error('Platforms list must not be empty.');
+  }
+
+  const map: Record<string, AdPlatformConfig> = {};
+  const cleanedList: SerializableAdPlatformConfig[] = [];
+
+  for (const p of platforms) {
+    if (!p.id || !p.name) {
+      throw new Error('Each ad platform must have a valid id and name.');
+    }
+    const cleanId = p.id.toLowerCase().trim().replace(/[^a-z0-9_-]/g, '');
+    if (!cleanId) {
+      throw new Error(`Invalid platform ID: ${p.id}`);
+    }
+
+    const cleaned: SerializableAdPlatformConfig = {
+      id: cleanId,
+      name: p.name.trim(),
+      enabled: p.enabled !== false,
+      clickTokens: (p.clickTokens || []).map((t) => t.toLowerCase().trim()).filter(Boolean),
+      crawlerPatterns: (p.crawlerPatterns || []).map((cp) => cp.trim()).filter(Boolean),
+      asns: (p.asns || []).map((n) => Number(n)).filter((n) => !isNaN(n) && n > 0),
+      asnKeywords: (p.asnKeywords || []).map((k) => k.toLowerCase().trim()).filter(Boolean),
+      validHostnameRegex: p.validHostnameRegex ? p.validHostnameRegex.trim() : undefined,
+      description: p.description ? p.description.trim() : undefined,
+    };
+
+    map[cleanId] = compilePlatform(cleaned);
+    cleanedList.push(cleaned);
+  }
+
+  SUPPORTED_AD_PLATFORMS = map;
+  serializablePlatformsCache = cleanedList;
+  await storage.setSetting('supported_ad_platforms', JSON.stringify(cleanedList));
+  console.log(`🎯 [AdIntelligence] Saved & updated ${cleanedList.length} ad platforms.`);
+}
+
+/**
+ * Reset ad platforms in storage to default definitions
+ */
+export async function resetAdPlatforms(storage: IStorage): Promise<void> {
+  loadDefaults();
+  await storage.setSetting('supported_ad_platforms', JSON.stringify(DEFAULT_AD_PLATFORMS_DATA));
+  console.log('🎯 [AdIntelligence] Reset ad platforms to factory defaults.');
+}
+
+/**
+ * Parsed Ad Click Attribution
+ */
+export interface AdClickInfo {
+  isAdClick: boolean;
+  platform: string | null;
+  platformName: string | null;
+  clickToken: string | null;
+  clickId: string | null;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+}
+
+/**
+ * Ad Reviewer Bot Verification Result
+ */
+export interface AdReviewerVerificationResult {
+  isReviewer: boolean;
+  platform: string | null;
+  platformName: string | null;
+  botName: string | null;
+  isVerified: boolean;
+  isSpoofed: boolean;
+  verificationMethod: 'rdns' | 'asn' | 'none';
+  resolvedHost?: string;
+  allowedByScope: boolean;
+  reason: string;
+}
+
+/**
+ * 24-Hour LRU Cache for Reverse DNS Verification Results
+ */
+interface CacheEntry {
+  hostname: string | null;
+  timestamp: number;
+}
+
+const RDNS_CACHE = new Map<string, CacheEntry>();
+const RDNS_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const RDNS_TIMEOUT_MS = 50; // 50ms strict safety timeout guard
+
+/**
+ * Extract Ad Click Token & Campaign Info from query parameters or URL
+ */
+export function extractAdClickInfo(
+  queryParams?: Record<string, any> | string,
+  referer?: string,
+): AdClickInfo {
+  let params: Record<string, string> = {};
+
+  if (typeof queryParams === 'string') {
+    let cleanQuery = queryParams.trim();
+    if (cleanQuery.includes('?')) {
+      cleanQuery = cleanQuery.slice(cleanQuery.indexOf('?') + 1);
+    }
+    try {
+      const searchParams = new URLSearchParams(cleanQuery);
+      searchParams.forEach((val, key) => {
+        params[key.toLowerCase()] = val;
+      });
+      // If query was a bare key without '=' e.g. "fbclickid" or "gclid"
+      if (Object.keys(params).length === 0 && cleanQuery && !cleanQuery.includes('=')) {
+        params[cleanQuery.toLowerCase()] = '';
       }
     } catch {
-      // Ignore URL parse error
+      if (cleanQuery && !cleanQuery.includes('=')) {
+        params[cleanQuery.toLowerCase()] = '';
+      }
+    }
+  } else if (queryParams && typeof queryParams === 'object') {
+    Object.keys(queryParams).forEach((k) => {
+      params[k.toLowerCase()] = queryParams[k] !== undefined && queryParams[k] !== null ? String(queryParams[k]) : '';
+    });
+  }
+
+  // Also check referer for click tokens if not in direct query
+  if (referer && (!params['gclid'] && !params['fbclid'] && !params['fbclickid'] && !params['ttclid'] && !params['msclkid'] && !params['twclid'])) {
+    try {
+      const refUrl = new URL(referer);
+      refUrl.searchParams.forEach((val, key) => {
+        const lowerKey = key.toLowerCase();
+        if (!params[lowerKey]) {
+          params[lowerKey] = val;
+        }
+      });
+    } catch {
+      // ignore invalid referer URLs
     }
   }
 
-  return { isPaidAdClick: false, adNetwork: null, clickId: null, clickParam: null };
-}
-
-/**
- * Step 1: Ultra-fast In-Memory ASN & Network Check (0.001ms).
- * Tests if the client's network/ISP matches the claimed platform before making any network DNS calls.
- */
-export function preScreenAsnForAdReviewer(
-  reviewer: AdReviewerPattern,
-  ispOrOrg: string | undefined | null
-): { passesAsn: boolean; isImposter: boolean; reason?: string } {
-  if (!ispOrOrg || ispOrOrg.trim() === '' || ispOrOrg === 'Unknown') {
-    // If ISP is unknown, don't auto-reject immediately; let rDNS decide
-    return { passesAsn: true, isImposter: false };
-  }
-
-  const cleanIsp = ispOrOrg.toLowerCase();
-
-  // Check if ISP matches the expected keywords for this platform
-  const matchesPlatform = reviewer.expectedAsnKeywords.some(keyword => cleanIsp.includes(keyword.toLowerCase()));
-
-  if (matchesPlatform) {
-    return { passesAsn: true, isImposter: false };
-  }
-
-  // Known unauthorized hosting providers (if a bot claims to be Google AdsBot from Hetzner/OVH/DigitalOcean/etc.)
-  const rogueHosting = [
-    "ovh", "hetzner", "digitalocean", "linode", "vultr", "choopa", "contabo",
-    "leaseweb", "hostinger", "m247", "rackspace", "scaleway", "cogent"
-  ];
-  const isRogueHost = rogueHosting.some(h => cleanIsp.includes(h));
-
-  if (isRogueHost) {
-    return {
-      passesAsn: false,
-      isImposter: true,
-      reason: `Spoofed ${reviewer.name}: Originates from rogue datacenter (${ispOrOrg}) instead of official ${reviewer.platform} network`
-    };
-  }
-
-  // Not a known platform match and not an explicit rogue host (e.g. residential ISP claiming to be AdsBot)
-  return {
-    passesAsn: false,
-    isImposter: true,
-    reason: `Spoofed ${reviewer.name}: Originates from unverified network (${ispOrOrg})`
-  };
-}
-
-/**
- * Step 2: Reverse DNS (PTR) Verification with 50ms strict timeout guard and 24h LRU cache.
- */
-export async function verifyAdReviewerRdns(
-  ip: string,
-  reviewer: AdReviewerPattern
-): Promise<{ verified: boolean; hostname?: string; reason?: string }> {
-  // Check local in-memory cache first
-  const cached = VERIFIED_BOT_CACHE.get(ip);
-  if (cached && cached.expiresAt > Date.now()) {
-    return {
-      verified: cached.verified,
-      hostname: cached.hostname,
-      reason: cached.verified ? `Verified from cache (${cached.hostname})` : 'Cached unverified crawler'
-    };
-  }
-
-  // Local/private IPs for simulator tests
-  if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.')) {
-    return { verified: true, hostname: 'localhost.test.local' };
-  }
-
-  // Strict 50ms timeout promise
-  const timeoutPromise = new Promise<{ verified: boolean; hostname?: string; reason: string }>((resolve) => {
-    setTimeout(() => {
-      resolve({ verified: false, reason: "rDNS lookup timed out (>50ms)" });
-    }, 50);
-  });
-
-  // DNS reverse lookup
-  const lookupPromise = (async (): Promise<{ verified: boolean; hostname?: string; reason?: string }> => {
-    try {
-      const hostnames = await dnsPromises.reverse(ip);
-      if (!hostnames || hostnames.length === 0) {
-        return { verified: false, reason: "No PTR record found for IP" };
-      }
-
-      const primaryHost = hostnames[0].toLowerCase();
-
-      // Check if hostname ends with one of the official suffixes
-      const matchesSuffix = reviewer.expectedHostSuffixes.some(suffix => primaryHost.endsWith(suffix.toLowerCase()));
-
-      if (!matchesSuffix) {
+  // Match against supported platforms (both key=value and key-present)
+  for (const platformKey of Object.keys(SUPPORTED_AD_PLATFORMS)) {
+    const config = SUPPORTED_AD_PLATFORMS[platformKey];
+    if (config.enabled === false) continue;
+    for (const token of config.clickTokens) {
+      if (params[token] !== undefined && params[token] !== null) {
+        const rawVal = params[token]?.trim();
+        const clickIdVal = (rawVal && rawVal !== 'true' && rawVal !== '1') ? rawVal : `${token}_detected`;
         return {
-          verified: false,
-          hostname: primaryHost,
-          reason: `Hostname ${primaryHost} does not match official ${reviewer.platform} domains (${reviewer.expectedHostSuffixes.join(', ')})`
+          isAdClick: true,
+          platform: config.id,
+          platformName: config.name,
+          clickToken: token,
+          clickId: clickIdVal,
+          utmSource: params['utm_source'],
+          utmMedium: params['utm_medium'],
+          utmCampaign: params['utm_campaign'],
         };
       }
-
-      // Bidirectional verification: Verify forward lookup resolves back to the same IP (RFC compliant)
-      try {
-        const forwardLookup = await dnsPromises.lookup(primaryHost);
-        if (forwardLookup && forwardLookup.address === ip) {
-          return { verified: true, hostname: primaryHost };
-        }
-        // In case of multi-IP round robin, accept if forward lookup succeeds
-        return { verified: true, hostname: primaryHost };
-      } catch {
-        return { verified: true, hostname: primaryHost };
-      }
-    } catch (err: any) {
-      return { verified: false, reason: `rDNS lookup failed: ${err?.message || 'unknown error'}` };
     }
-  })();
-
-  const result = await Promise.race([lookupPromise, timeoutPromise]);
-
-  // Store in cache
-  if (VERIFIED_BOT_CACHE.size >= MAX_CACHE_SIZE) {
-    // Evict oldest 1000 items
-    const keys = Array.from(VERIFIED_BOT_CACHE.keys()).slice(0, 1000);
-    keys.forEach(k => VERIFIED_BOT_CACHE.delete(k));
   }
 
-  VERIFIED_BOT_CACHE.set(ip, {
-    verified: result.verified,
-    platform: reviewer.platform,
-    hostname: result.hostname,
-    expiresAt: Date.now() + CACHE_TTL_MS
-  });
+  // Fallback regex search on raw query string if passed as string
+  if (typeof queryParams === 'string') {
+    const lowerQuery = queryParams.toLowerCase();
+    for (const platformKey of Object.keys(SUPPORTED_AD_PLATFORMS)) {
+      const config = SUPPORTED_AD_PLATFORMS[platformKey];
+      if (config.enabled === false) continue;
+      for (const token of config.clickTokens) {
+        if (lowerQuery.includes(token)) {
+          const match = lowerQuery.match(new RegExp(`${token}(?:=([^&#\\s]*))?`, 'i'));
+          const tokenVal = match && match[1] ? decodeURIComponent(match[1]) : `${token}_detected`;
+          return {
+            isAdClick: true,
+            platform: config.id,
+            platformName: config.name,
+            clickToken: token,
+            clickId: tokenVal,
+            utmSource: params['utm_source'],
+            utmMedium: params['utm_medium'],
+            utmCampaign: params['utm_campaign'],
+          };
+        }
+      }
+    }
+  }
 
-  return result;
-}
+  // Check for general UTM paid tags (e.g., utm_medium=cpc)
+  if (params['utm_medium'] && /cpc|ppc|paid/i.test(params['utm_medium'])) {
+    const source = params['utm_source']?.toLowerCase() || '';
+    let matchedPlatform: string | null = null;
+    let matchedPlatformName: string | null = null;
 
-export interface AdIntelligenceResult {
-  // Paid Ad Click fields
-  isPaidAdClick: boolean;
-  adNetwork: string | null;
-  adClickId: string | null;
-  adParam: string | null;
+    if (source.includes('google')) {
+      matchedPlatform = 'google';
+      matchedPlatformName = 'Google Ads';
+    } else if (source.includes('facebook') || source.includes('meta') || source.includes('instagram')) {
+      matchedPlatform = 'meta';
+      matchedPlatformName = 'Meta Ads';
+    } else if (source.includes('tiktok')) {
+      matchedPlatform = 'tiktok';
+      matchedPlatformName = 'TikTok Ads';
+    } else if (source.includes('bing') || source.includes('microsoft')) {
+      matchedPlatform = 'microsoft';
+      matchedPlatformName = 'Microsoft Ads';
+    } else if (source.includes('twitter') || source === 'x') {
+      matchedPlatform = 'x';
+      matchedPlatformName = 'X (Twitter) Ads';
+    }
 
-  // Ad Reviewer / Crawler fields
-  isClaimingAdReviewer: boolean;
-  reviewerName: string | null;
-  reviewerPlatform: string | null;
+    return {
+      isAdClick: true,
+      platform: matchedPlatform,
+      platformName: matchedPlatformName || 'Paid Campaign',
+      clickToken: 'utm_medium',
+      clickId: params['utm_medium'],
+      utmSource: params['utm_source'],
+      utmMedium: params['utm_medium'],
+      utmCampaign: params['utm_campaign'],
+    };
+  }
 
-  isVerifiedAdReviewer: boolean;
-  isImposterReviewer: boolean;
-  verificationMethod: 'rDNS_and_ASN' | 'ASN_Fallback' | 'Cached_rDNS' | 'None';
-  verificationHostname?: string;
-  verificationFailureReason?: string;
-
-  // Exemption flags for policies
-  isExemptFromHeadless: boolean;
-  isExemptFromGeoDeviceRules: boolean;
+  return {
+    isAdClick: false,
+    platform: null,
+    platformName: null,
+    clickToken: null,
+    clickId: null,
+  };
 }
 
 /**
- * Complete Master Evaluation for Ad Intelligence.
- * Executes both Ad Click detection and Two-Tier Ad Reviewer verification with zero lag.
+ * Reverse DNS with 50ms Timeout Guard and In-Memory 24h LRU Cache
  */
-export async function evaluateAdIntelligence(
-  clientIp: string,
+async function resolveHostnameWithTimeout(ip: string): Promise<string | null> {
+  const now = Date.now();
+  const cached = RDNS_CACHE.get(ip);
+  if (cached && now - cached.timestamp < RDNS_CACHE_TTL_MS) {
+    return cached.hostname;
+  }
+
+  try {
+    const lookupPromise = dns.promises.reverse(ip);
+    const timeoutPromise = new Promise<string[]>((_, reject) =>
+      setTimeout(() => reject(new Error('DNS Timeout')), RDNS_TIMEOUT_MS)
+    );
+
+    const hostnames = await Promise.race([lookupPromise, timeoutPromise]);
+    const host = hostnames && hostnames.length > 0 ? hostnames[0] : null;
+
+    RDNS_CACHE.set(ip, { hostname: host, timestamp: now });
+    if (RDNS_CACHE.size > 10000) {
+      // Evict oldest entries
+      const oldestKey = RDNS_CACHE.keys().next().value;
+      if (oldestKey) RDNS_CACHE.delete(oldestKey);
+    }
+    return host;
+  } catch {
+    RDNS_CACHE.set(ip, { hostname: null, timestamp: now });
+    return null;
+  }
+}
+
+/**
+ * Two-Tier Verification Engine for Ad Reviewers
+ *
+ * @param ip Visitor IP address
+ * @param userAgent Visitor User-Agent string
+ * @param asn Visitor Autonomous System Number (optional)
+ * @param asnOrg Visitor ASN Organization / ISP (optional)
+ * @param activePlatforms List of platform IDs enabled by user (defaults to all)
+ */
+export async function verifyAdReviewer(
+  ip: string,
   userAgent: string,
-  ispOrOrg?: string | null,
-  reqQuery: Record<string, any> = {},
-  reqBody: Record<string, any> = {}
-): Promise<AdIntelligenceResult> {
-  // 1. Detect Ad Click parameters
-  const adClick = detectAdClickTokens(reqQuery, reqBody);
+  asn?: number,
+  asnOrg?: string,
+  activePlatforms?: string[],
+): Promise<AdReviewerVerificationResult> {
+  const ua = userAgent || '';
+  let candidatePlatform: AdPlatformConfig | null = null;
+  let matchedBotName: string | null = null;
 
-  // 2. Check if User-Agent matches any known Ad Reviewer or Preview Bot
-  const cleanUA = userAgent || '';
-  const matchingReviewer = AD_REVIEWER_REGISTRY.find(r => r.pattern.test(cleanUA));
+  // Find candidate platform from User-Agent pattern
+  for (const platformKey of Object.keys(SUPPORTED_AD_PLATFORMS)) {
+    const config = SUPPORTED_AD_PLATFORMS[platformKey];
+    if (config.enabled === false) continue;
+    for (const pattern of config.crawlerPatterns) {
+      if (pattern.test(ua)) {
+        candidatePlatform = config;
+        const match = ua.match(pattern);
+        matchedBotName = match ? match[0] : config.name;
+        break;
+      }
+    }
+    if (candidatePlatform) break;
+  }
 
-  if (!matchingReviewer) {
+  // Not claiming to be an ad reviewer
+  if (!candidatePlatform) {
     return {
-      isPaidAdClick: adClick.isPaidAdClick,
-      adNetwork: adClick.adNetwork,
-      adClickId: adClick.clickId,
-      adParam: adClick.clickParam,
-      isClaimingAdReviewer: false,
-      reviewerName: null,
-      reviewerPlatform: null,
-      isVerifiedAdReviewer: false,
-      isImposterReviewer: false,
-      verificationMethod: 'None',
-      isExemptFromHeadless: false,
-      isExemptFromGeoDeviceRules: false,
+      isReviewer: false,
+      platform: null,
+      platformName: null,
+      botName: null,
+      isVerified: false,
+      isSpoofed: false,
+      verificationMethod: 'none',
+      allowedByScope: false,
+      reason: 'Not an ad compliance crawler',
     };
   }
 
-  // 3. User-Agent claims to be an Ad Reviewer -> Run Step 1 (ASN Pre-Screen)
-  const asnResult = preScreenAsnForAdReviewer(matchingReviewer, ispOrOrg);
+  // Check if this platform is allowed by user's campaign scope
+  const isPlatformAllowedByScope =
+    !activePlatforms ||
+    activePlatforms.length === 0 ||
+    activePlatforms.includes(candidatePlatform.id);
 
-  if (asnResult.isImposter) {
-    // Instant rejection: Claiming AdsBot but on rogue hosting
+  const orgLower = (asnOrg || '').toLowerCase();
+  const matchesAsn =
+    (asn && candidatePlatform.asns.includes(asn)) ||
+    candidatePlatform.asnKeywords.some((kw) => orgLower.includes(kw));
+
+  // Step 1: Pre-screen against ASN (Instant memory lookup <0.001ms)
+  // If ASN does not match platform (e.g. from Hetzner, DigitalOcean, OVH, residential ISP)
+  if (asn && !matchesAsn) {
     return {
-      isPaidAdClick: adClick.isPaidAdClick,
-      adNetwork: adClick.adNetwork,
-      adClickId: adClick.clickId,
-      adParam: adClick.clickParam,
-      isClaimingAdReviewer: true,
-      reviewerName: matchingReviewer.name,
-      reviewerPlatform: matchingReviewer.platform,
-      isVerifiedAdReviewer: false,
-      isImposterReviewer: true,
-      verificationMethod: 'None',
-      verificationFailureReason: asnResult.reason,
-      isExemptFromHeadless: false,
-      isExemptFromGeoDeviceRules: false,
+      isReviewer: true,
+      platform: candidatePlatform.id,
+      platformName: candidatePlatform.name,
+      botName: matchedBotName,
+      isVerified: false,
+      isSpoofed: true,
+      verificationMethod: 'asn',
+      allowedByScope: false,
+      reason: `Spoofed ad crawler: claims to be ${candidatePlatform.name} but originates from unauthorized network (${asnOrg || 'ASN ' + asn})`,
     };
   }
 
-  // 4. Step 2: Reverse DNS lookup with 50ms timeout guard and LRU cache
-  const rdnsResult = await verifyAdReviewerRdns(clientIp, matchingReviewer);
+  // Step 2: Reverse DNS check for platforms with strict hostname patterns (e.g., Google, Meta, Bing)
+  if (candidatePlatform.validHostnameRegex) {
+    const hostname = await resolveHostnameWithTimeout(ip);
 
-  if (rdnsResult.verified) {
+    if (hostname && candidatePlatform.validHostnameRegex.test(hostname)) {
+      return {
+        isReviewer: true,
+        platform: candidatePlatform.id,
+        platformName: candidatePlatform.name,
+        botName: matchedBotName,
+        isVerified: true,
+        isSpoofed: false,
+        verificationMethod: 'rdns',
+        resolvedHost: hostname,
+        allowedByScope: isPlatformAllowedByScope,
+        reason: isPlatformAllowedByScope
+          ? `Verified ${candidatePlatform.name} reviewer (rDNS: ${hostname})`
+          : `Verified ${candidatePlatform.name} reviewer, but platform is not enabled in active campaign settings`,
+      };
+    }
+
+    // If ASN matched Google or Meta, but rDNS resolved to a public customer cloud VM (e.g. googleusercontent.com)
+    if (hostname && !candidatePlatform.validHostnameRegex.test(hostname)) {
+      return {
+        isReviewer: true,
+        platform: candidatePlatform.id,
+        platformName: candidatePlatform.name,
+        botName: matchedBotName,
+        isVerified: false,
+        isSpoofed: true,
+        verificationMethod: 'rdns',
+        resolvedHost: hostname,
+        allowedByScope: false,
+        reason: `Impersonation detected: IP belongs to cloud provider network but hostname (${hostname}) is not an official ${candidatePlatform.name} crawler`,
+      };
+    }
+
+    // If rDNS timed out or had no PTR, but ASN is authentic
+    if (!hostname && matchesAsn) {
+      return {
+        isReviewer: true,
+        platform: candidatePlatform.id,
+        platformName: candidatePlatform.name,
+        botName: matchedBotName,
+        isVerified: true,
+        isSpoofed: false,
+        verificationMethod: 'asn',
+        allowedByScope: isPlatformAllowedByScope,
+        reason: isPlatformAllowedByScope
+          ? `Verified ${candidatePlatform.name} reviewer via official ASN (${asnOrg || 'AS' + asn})`
+          : `Verified ${candidatePlatform.name} reviewer via ASN, but platform is not enabled in active campaign settings`,
+      };
+    }
+  }
+
+  // Platforms without strict rDNS (TikTok, X) rely on ASN & Network validation
+  if (matchesAsn) {
     return {
-      isPaidAdClick: adClick.isPaidAdClick,
-      adNetwork: adClick.adNetwork,
-      adClickId: adClick.clickId,
-      adParam: adClick.clickParam,
-      isClaimingAdReviewer: true,
-      reviewerName: matchingReviewer.name,
-      reviewerPlatform: matchingReviewer.platform,
-      isVerifiedAdReviewer: true,
-      isImposterReviewer: false,
-      verificationMethod: 'rDNS_and_ASN',
-      verificationHostname: rdnsResult.hostname,
-      isExemptFromHeadless: true,
-      isExemptFromGeoDeviceRules: true,
+      isReviewer: true,
+      platform: candidatePlatform.id,
+      platformName: candidatePlatform.name,
+      botName: matchedBotName,
+      isVerified: true,
+      isSpoofed: false,
+      verificationMethod: 'asn',
+      allowedByScope: isPlatformAllowedByScope,
+      reason: isPlatformAllowedByScope
+        ? `Verified ${candidatePlatform.name} reviewer via official network (${asnOrg || 'AS' + asn})`
+        : `Verified ${candidatePlatform.name} reviewer, but platform is not enabled in active campaign settings`,
     };
   }
 
-  // If rDNS timed out or failed, check if ASN was verified Google/Meta network
-  if (asnResult.passesAsn && ispOrOrg && matchingReviewer.expectedAsnKeywords.some(k => ispOrOrg.toLowerCase().includes(k))) {
-    return {
-      isPaidAdClick: adClick.isPaidAdClick,
-      adNetwork: adClick.adNetwork,
-      adClickId: adClick.clickId,
-      adParam: adClick.clickParam,
-      isClaimingAdReviewer: true,
-      reviewerName: matchingReviewer.name,
-      reviewerPlatform: matchingReviewer.platform,
-      isVerifiedAdReviewer: true,
-      isImposterReviewer: false,
-      verificationMethod: 'ASN_Fallback',
-      isExemptFromHeadless: true,
-      isExemptFromGeoDeviceRules: true,
-    };
-  }
-
-  // Failed both rDNS and ASN
+  // Claimed bot pattern but neither ASN nor rDNS could verify it
   return {
-    isPaidAdClick: adClick.isPaidAdClick,
-    adNetwork: adClick.adNetwork,
-    adClickId: adClick.clickId,
-    adParam: adClick.clickParam,
-    isClaimingAdReviewer: true,
-    reviewerName: matchingReviewer.name,
-    reviewerPlatform: matchingReviewer.platform,
-    isVerifiedAdReviewer: false,
-    isImposterReviewer: true,
-    verificationMethod: 'rDNS_and_ASN',
-    verificationHostname: rdnsResult.hostname,
-    verificationFailureReason: rdnsResult.reason || 'Failed reverse DNS verification',
-    isExemptFromHeadless: false,
-    isExemptFromGeoDeviceRules: false,
+    isReviewer: true,
+    platform: candidatePlatform.id,
+    platformName: candidatePlatform.name,
+    botName: matchedBotName,
+    isVerified: false,
+    isSpoofed: true,
+    verificationMethod: 'none',
+    allowedByScope: false,
+    reason: `Unverified / spoofed ad crawler: claims to be ${candidatePlatform.name} without valid network credentials`,
   };
 }
+
+/**
+ * Headless Browser Exemption Helper
+ * Only officially verified compliance reviewers that are in-scope are allowed to run headless Chromium.
+ */
+export function isExemptFromHeadlessBlock(verification: AdReviewerVerificationResult): boolean {
+  return verification.isReviewer && verification.isVerified && !verification.isSpoofed && verification.allowedByScope;
+}
+
+/**
+ * Admin Sandbox Test Engine for Ad Bot Verification & Click Token Extraction
+ */
+export async function testAdVerification(
+  ip: string,
+  userAgent: string,
+  asn?: number,
+  asnOrg?: string,
+  urlOrQuery?: string,
+  activePlatforms?: string[]
+): Promise<{
+  clickInfo: AdClickInfo;
+  reviewerInfo: AdReviewerVerificationResult;
+}> {
+  const clickInfo = extractAdClickInfo(urlOrQuery || {});
+  const reviewerInfo = await verifyAdReviewer(ip, userAgent, asn, asnOrg, activePlatforms);
+  return { clickInfo, reviewerInfo };
+}
+

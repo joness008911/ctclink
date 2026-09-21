@@ -945,48 +945,28 @@ if (strpos($visitorIp, ',') !== false) {
     $visitorIp = trim($ips[0]);
 }
 
-// 2. Asynchronous Verification Request Handler (Called via AJAX background fetch)
-if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
-    header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
+// 2. Comprehensive Query String & Request URI Extraction
+// Preserves ad click tokens (gclid, fbclid, ttclid, msclkid, twclid, wbraid, gbraid, UTMs)
+// across Apache, Nginx, LiteSpeed, Cloudflare, reverse proxies, and URL rewrites.
+$ctcQuery = is_array($_GET) ? $_GET : [];
+if (empty($ctcQuery) && !empty($_SERVER['QUERY_STRING'])) {
+    parse_str($_SERVER['QUERY_STRING'], $ctcQuery);
+}
+if (empty($ctcQuery) && !empty($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '?') !== false) {
+    $queryStringFromUri = substr($_SERVER['REQUEST_URI'], strpos($_SERVER['REQUEST_URI'], '?') + 1);
+    parse_str($queryStringFromUri, $ctcQuery);
+}
 
-    $clientTokens = null;
-    $rawTokens = $_POST['clientTokens'] ?? $_GET['ctc_tk'] ?? null;
-    if ($rawTokens) {
-        $decoded = @json_decode(base64_decode($rawTokens), true);
-        if (is_array($decoded)) {
-            $clientTokens = $decoded;
-        }
-    }
-
-    $postData = [
-        'apiKey' => $apiKey,
-        'ip' => $visitorIp,
-        'userAgent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
-        'clientTokens' => $clientTokens,
-        'headers' => [
-            'Accept-Language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
-            'Accept-Encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '',
-            'Accept' => $_SERVER['HTTP_ACCEPT'] ?? '',
-            'Referer' => $_SERVER['HTTP_REFERER'] ?? '',
-            'Host' => $_SERVER['HTTP_HOST'] ?? '',
-            'Sec-Ch-Ua' => $_SERVER['HTTP_SEC_CH_UA'] ?? '',
-            'Sec-Ch-Ua-Mobile' => $_SERVER['HTTP_SEC_CH_UA_MOBILE'] ?? '',
-            'Sec-Ch-Ua-Platform' => $_SERVER['HTTP_SEC_CH_UA_PLATFORM'] ?? '',
-        ],
-        'query' => $_GET,
-        'source' => 'php-interstitial-theme-${theme.id}'
-    ];
-
+// 3. High-Performance API Classification Caller
+function ctc_execute_classification($postData, $apiEndpoint, $apiKey) {
     $ch = curl_init();
     curl_setopt_array($ch, [
         CURLOPT_URL => rtrim($apiEndpoint, '/') . '/api/classify',
         CURLOPT_POST => true,
         CURLOPT_POSTFIELDS => json_encode($postData),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 12,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_SSL_VERIFYHOST => 0,
         CURLOPT_FOLLOWLOCATION => true,
@@ -995,7 +975,7 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
             'Accept: application/json',
             'X-API-Key: ' . $apiKey,
             'Authorization: Bearer ' . $apiKey,
-            'User-Agent: CleanTraffic-PHP-Interstitial/2.0'
+            'User-Agent: CleanTraffic-PHP-Connector/2.0'
         ]
     ]);
 
@@ -1013,9 +993,9 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
                             "Accept: application/json\r\n" .
                             "X-API-Key: " . $apiKey . "\r\n" .
                             "Authorization: Bearer " . $apiKey . "\r\n" .
-                            "User-Agent: CleanTraffic-PHP-Interstitial/2.0\r\n",
+                            "User-Agent: CleanTraffic-PHP-Connector/2.0\r\n",
                 'content' => json_encode($postData),
-                'timeout' => 15,
+                'timeout' => 12,
                 'ignore_errors' => true
             ],
             'ssl' => [
@@ -1041,27 +1021,130 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
     }
 
     if ($response === false || (!empty($curlError) && empty($response))) {
-        http_response_code(503);
-        echo json_encode([
-            'status' => 'error',
-            'error' => 'Connection timeout during security verification.',
-            'detail' => !empty($curlError) ? $curlError : 'Connection error',
-            'fail_closed' => true
-        ]);
-        exit;
+        return ['success' => false, 'httpCode' => 503, 'error' => 'Connection timeout during security verification.'];
     }
 
     $result = json_decode($response, true);
-    if ($httpCode !== 200 || !is_array($result)) {
-        http_response_code(502);
+    if (!is_array($result)) {
+        return ['success' => false, 'httpCode' => $httpCode ?: 502, 'error' => 'Invalid classification response.'];
+    }
+
+    return ['success' => true, 'httpCode' => $httpCode, 'data' => $result];
+}
+
+// 4. Immediate Server-Side Handling for Crawlers & Ad Reviewers (Non-interactive bots that do not execute JavaScript)
+$userUa = $_SERVER['HTTP_USER_AGENT'] ?? '';
+$isCrawlerOrReviewer = (bool)preg_match('/(bot|crawler|spider|facebookexternalhit|facebot|meta-externalagent|facebookcatalog|bytespider|tiktokbot|tiktokspider|adidxbot|bingbot|bingpreview|twitterbot|mediapartners|adsbot|google-inspectiontool|googlebot)/i', $userUa);
+
+if ($isCrawlerOrReviewer && (!isset($_GET['ctc_verify']) || $_GET['ctc_verify'] !== '1')) {
+    $crawlerPostData = [
+        'apiKey' => $apiKey,
+        'ip' => $visitorIp,
+        'userAgent' => $userUa,
+        'clientTokens' => null,
+        'headers' => [
+            'Accept-Language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+            'Accept-Encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '',
+            'Accept' => $_SERVER['HTTP_ACCEPT'] ?? '',
+            'Referer' => $_SERVER['HTTP_REFERER'] ?? '',
+            'Host' => $_SERVER['HTTP_HOST'] ?? '',
+            'Sec-Ch-Ua' => $_SERVER['HTTP_SEC_CH_UA'] ?? '',
+            'Sec-Ch-Ua-Mobile' => $_SERVER['HTTP_SEC_CH_UA_MOBILE'] ?? '',
+            'Sec-Ch-Ua-Platform' => $_SERVER['HTTP_SEC_CH_UA_PLATFORM'] ?? '',
+        ],
+        'query' => $ctcQuery,
+        'requestUri' => $_SERVER['REQUEST_URI'] ?? '',
+        'queryString' => $_SERVER['QUERY_STRING'] ?? '',
+        'source' => 'php-crawler-server-side'
+    ];
+
+    $crawlerRes = ctc_execute_classification($crawlerPostData, $apiEndpoint, $apiKey);
+    if ($crawlerRes['success'] && isset($crawlerRes['data'])) {
+        $cData = $crawlerRes['data'];
+        $dest = $cData['destination'] ?? $cData['redirectUrl'] ?? $cData['url'] ?? '';
+        $action = $cData['action'] ?? ($cData['isHuman'] ? 'redirect' : 'block');
+
+        if ($action === '404' || $dest === '404') {
+            http_response_code(404);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "404 Not Found";
+            exit;
+        }
+        if ($action === '403' || $dest === '403' || (!$cData['isHuman'] && empty($dest))) {
+            http_response_code(403);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "403 Forbidden";
+            exit;
+        }
+        if (!empty($dest)) {
+            $q = $_SERVER['QUERY_STRING'] ?? '';
+            if (empty($q) && !empty($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '?') !== false) {
+                $q = substr($_SERVER['REQUEST_URI'], strpos($_SERVER['REQUEST_URI'], '?') + 1);
+            }
+            if (!empty($q)) {
+                $dest .= (strpos($dest, '?') !== false ? '&' : '?') . $q;
+            }
+            header("Location: " . $dest, true, 302);
+            exit;
+        }
+    }
+    http_response_code(403);
+    echo "403 Forbidden";
+    exit;
+}
+
+// 5. Asynchronous Verification Request Handler (Called via AJAX background fetch from loading screen)
+if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+
+    $clientTokens = null;
+    $rawTokens = $_POST['clientTokens'] ?? $_GET['ctc_tk'] ?? null;
+    if ($rawTokens) {
+        $decoded = @json_decode(base64_decode($rawTokens), true);
+        if (is_array($decoded)) {
+            $clientTokens = $decoded;
+        }
+    }
+
+    $cleanQuery = $ctcQuery;
+    unset($cleanQuery['ctc_verify']);
+    unset($cleanQuery['ctc_tk']);
+
+    $postData = [
+        'apiKey' => $apiKey,
+        'ip' => $visitorIp,
+        'userAgent' => $userUa,
+        'clientTokens' => $clientTokens,
+        'headers' => [
+            'Accept-Language' => $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '',
+            'Accept-Encoding' => $_SERVER['HTTP_ACCEPT_ENCODING'] ?? '',
+            'Accept' => $_SERVER['HTTP_ACCEPT'] ?? '',
+            'Referer' => $_SERVER['HTTP_REFERER'] ?? '',
+            'Host' => $_SERVER['HTTP_HOST'] ?? '',
+            'Sec-Ch-Ua' => $_SERVER['HTTP_SEC_CH_UA'] ?? '',
+            'Sec-Ch-Ua-Mobile' => $_SERVER['HTTP_SEC_CH_UA_MOBILE'] ?? '',
+            'Sec-Ch-Ua-Platform' => $_SERVER['HTTP_SEC_CH_UA_PLATFORM'] ?? '',
+        ],
+        'query' => $cleanQuery,
+        'requestUri' => $_SERVER['REQUEST_URI'] ?? '',
+        'queryString' => !empty($cleanQuery) ? http_build_query($cleanQuery) : ($_SERVER['QUERY_STRING'] ?? ''),
+        'source' => 'php-interstitial-theme-${theme.id}'
+    ];
+
+    $apiRes = ctc_execute_classification($postData, $apiEndpoint, $apiKey);
+    if (!$apiRes['success'] || !isset($apiRes['data'])) {
+        http_response_code($apiRes['httpCode'] ?: 503);
         echo json_encode([
             'status' => 'error',
-            'error' => $result['message'] ?? $result['error'] ?? 'Security verification service temporarily unavailable.',
+            'error' => $apiRes['error'] ?? 'Connection timeout during security verification.',
             'fail_closed' => true
         ]);
         exit;
     }
 
+    $result = $apiRes['data'];
     $destinationUrl = $result['destination'] 
         ?? $result['redirectUrl'] 
         ?? $result['destinationUrl'] 
@@ -1208,7 +1291,8 @@ ${renderedBody}
               var dest = data.destination;
               var currentSearch = window.location.search;
               if (currentSearch) {
-                var cleanSearch = currentSearch.replace(/[\?&]ctc_verify=[^&]*/g, '');
+                var cleanSearch = currentSearch.replace(/[\?&](ctc_verify|ctc_tk)=[^&]*/gi, '');
+                cleanSearch = cleanSearch.replace(/^&+/, '');
                 if (cleanSearch && cleanSearch !== '?' && cleanSearch !== '&') {
                   dest += (dest.indexOf('?') !== -1 ? '&' : '?') + cleanSearch.replace(/^[\?&]/, '');
                 }

@@ -15,7 +15,10 @@ import {
   Tablet,
   ChevronDown,
   Calendar,
-  X
+  X,
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -35,7 +38,67 @@ function getNetworkClassification(c: any) {
   const isp = (c.isp || "").toLowerCase();
   const usageType = (c.usageType || "").toUpperCase();
 
-  // 1. Good Bot / Search Engine / SEO Indexers
+  // 0. Spoofed Ad Crawler (High Priority Alert)
+  const isSpoofed = Boolean(
+    c.trafficType === "spoofed_ad_bot" ||
+    c.adTraffic?.isSpoofed ||
+    method.includes("spoofed ad") ||
+    method.includes("impersonation")
+  );
+  if (isSpoofed) {
+    const platform = c.reviewerPlatform || c.adTraffic?.reviewerPlatform || "Ad Network";
+    return {
+      label: `🚨 Spoofed Ad Crawler • Fake ${platform}`,
+      className: "bg-rose-100 text-rose-900 border-rose-300 font-bold",
+      type: "spoofed"
+    };
+  }
+
+  // 1. Verified Ad Compliance Reviewer
+  const isReviewer = Boolean(
+    c.trafficType === "ad_reviewer" ||
+    c.isVerifiedReviewer || 
+    c.adTraffic?.isVerifiedReviewer || 
+    method.includes("verified ad compliance") || 
+    method.includes("ad reviewer") ||
+    method.includes("ad compliance")
+  );
+  if (isReviewer) {
+    const platform = c.reviewerPlatform || c.adTraffic?.reviewerPlatform || c.adTraffic?.platformName || "Google / Meta";
+    return {
+      label: `🛡️ Verified Reviewer • ${platform}`,
+      className: "bg-indigo-50 text-indigo-900 border-indigo-200 font-bold",
+      type: "reviewer"
+    };
+  }
+
+  // 2. Paid Ad Campaign Traffic
+  const isPaid = Boolean(
+    c.trafficType === "ad_click" ||
+    c.adNetwork || 
+    c.adTraffic?.adNetwork || 
+    c.adTraffic?.isAdClick ||
+    method.includes("ad campaign") || 
+    c.clickToken || 
+    c.clickId ||
+    c.gclid || 
+    c.fbclid || 
+    c.ttclid || 
+    c.msclkid || 
+    c.twclid
+  );
+  if (isPaid) {
+    const net = c.adNetwork || c.adTraffic?.platformName || c.adTraffic?.adNetwork || "Paid Ads";
+    const token = c.clickToken || c.adTraffic?.clickToken || (c.gclid ? "gclid" : c.fbclid ? "fbclid" : c.ttclid ? "ttclid" : "");
+    const tokenDisplay = token ? ` (${token})` : "";
+    return {
+      label: `🎯 Paid Ad • ${net}${tokenDisplay}`,
+      className: "bg-blue-50 text-blue-800 border-blue-200/80 font-semibold",
+      type: "paid"
+    };
+  }
+
+  // 3. Good Bot / Search Engine / SEO Indexers
   if (
     method.includes("search indexer") || 
     method.includes("seo") || 
@@ -133,30 +196,33 @@ function getNetworkClassification(c: any) {
     };
   }
 
-  // 6. Clean Residential / Human
+  // 6. Clean Residential / Organic Human
   if (isHuman || usageType === "RES") {
     return {
-      label: "Residential • Human ISP",
-      className: "bg-emerald-50 text-emerald-800 border-emerald-200/70"
+      label: "Organic • Residential Human",
+      className: "bg-teal-50 text-teal-800 border-teal-200/70 font-semibold",
+      type: "organic"
     };
   }
 
   return {
-    label: isHuman ? "Verified Network" : "Filtered Network",
-    className: isHuman ? "bg-emerald-50 text-emerald-800 border-emerald-200/70" : "bg-slate-100 text-slate-700 border-slate-200"
+    label: isHuman ? "Verified Organic" : "Filtered Network",
+    className: isHuman ? "bg-emerald-50 text-emerald-800 border-emerald-200/70" : "bg-slate-100 text-slate-700 border-slate-200",
+    type: "other"
   };
 }
 
 export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogsTabProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "allowed" | "challenged" | "blocked">("all");
+  const [trafficFilter, setTrafficFilter] = useState<"all" | "paid" | "organic" | "reviewer" | "spoofed">("all");
   const [dateRangePreset, setDateRangePreset] = useState<"all" | "today" | "24h" | "7d" | "30d" | "custom">("all");
   const [customDate, setCustomDate] = useState<string>("");
   const [selectedVisitor, setSelectedVisitor] = useState<any | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
 
-  // Filter with date range selection
+  // Filter with date range selection and traffic attribution
   const filtered = useMemo(() => {
     const now = new Date();
 
@@ -167,6 +233,40 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       if (filterType === "allowed" && !isHuman) return false;
       if (filterType === "challenged" && !isChallenged) return false;
       if (filterType === "blocked" && (isHuman || isChallenged)) return false;
+
+      const isSpoofed = Boolean(
+        c.trafficType === "spoofed_ad_bot" ||
+        c.adTraffic?.isSpoofed ||
+        (c.detectionMethod || "").toLowerCase().includes("spoofed ad") ||
+        (c.detectionMethod || "").toLowerCase().includes("impersonation")
+      );
+      const isReviewer = Boolean(
+        c.trafficType === "ad_reviewer" ||
+        c.isVerifiedReviewer || 
+        c.adTraffic?.isVerifiedReviewer ||
+        (c.detectionMethod || "").toLowerCase().includes("verified ad compliance") ||
+        (c.detectionMethod || "").toLowerCase().includes("ad reviewer") ||
+        (c.detectionMethod || "").toLowerCase().includes("ad compliance")
+      );
+      const isPaid = Boolean(
+        c.trafficType === "ad_click" ||
+        c.adNetwork || 
+        c.clickToken || 
+        c.clickId ||
+        c.adTraffic?.isAdClick ||
+        c.gclid || 
+        c.fbclid || 
+        c.ttclid || 
+        c.msclkid || 
+        c.twclid ||
+        (c.detectionMethod || "").toLowerCase().includes("ad campaign")
+      );
+      const isOrganic = isHuman && !isPaid && !isReviewer;
+
+      if (trafficFilter === "paid" && !isPaid) return false;
+      if (trafficFilter === "organic" && !isOrganic) return false;
+      if (trafficFilter === "reviewer" && !isReviewer) return false;
+      if (trafficFilter === "spoofed" && !isSpoofed) return false;
 
       // Date Filtering
       if (c.timestamp) {
@@ -193,13 +293,18 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       return (
         (c.isp && c.isp.toLowerCase().includes(term)) ||
         (c.ip && c.ip.toLowerCase().includes(term)) ||
+        (c.ipAddress && c.ipAddress.toLowerCase().includes(term)) ||
         (c.country && c.country.toLowerCase().includes(term)) ||
         (c.city && c.city.toLowerCase().includes(term)) ||
         (c.detectionMethod && c.detectionMethod.toLowerCase().includes(term)) ||
-        (c.visitorType && c.visitorType.toLowerCase().includes(term))
+        (c.visitorType && c.visitorType.toLowerCase().includes(term)) ||
+        (c.adNetwork && c.adNetwork.toLowerCase().includes(term)) ||
+        (c.clickToken && c.clickToken.toLowerCase().includes(term)) ||
+        (c.clickId && c.clickId.toLowerCase().includes(term)) ||
+        (c.reviewerPlatform && c.reviewerPlatform.toLowerCase().includes(term))
       );
     });
-  }, [classifications, filterType, searchTerm, dateRangePreset, customDate]);
+  }, [classifications, filterType, trafficFilter, searchTerm, dateRangePreset, customDate]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
   const paginatedData = useMemo(() => {
@@ -214,6 +319,12 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       "Timestamp",
       "IP Address",
       "Visitor Type",
+      "Traffic Attribution",
+      "Ad Network",
+      "Click Token",
+      "Click ID",
+      "Verified Ad Bot",
+      "Reviewer Platform",
       "Threat Score",
       "ASN",
       "Carrier / ISP",
@@ -240,10 +351,40 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       const net = getNetworkClassification(item);
       const timeStr = item.timestamp ? new Date(item.timestamp).toISOString() : "";
       
+      const isSpoofed = Boolean(
+        item.trafficType === "spoofed_ad_bot" ||
+        item.adTraffic?.isSpoofed ||
+        (item.detectionMethod || "").toLowerCase().includes("spoofed ad")
+      );
+      const isReviewer = Boolean(
+        item.trafficType === "ad_reviewer" ||
+        item.isVerifiedReviewer || 
+        item.adTraffic?.isVerifiedReviewer
+      );
+      const isPaid = Boolean(
+        item.trafficType === "ad_click" ||
+        item.adNetwork || 
+        item.clickToken || 
+        item.adTraffic?.isAdClick
+      );
+      const attributionType = isSpoofed 
+        ? "Spoofed Ad Crawler" 
+        : isReviewer 
+        ? "Verified Ad Reviewer" 
+        : isPaid 
+        ? "Paid Ad Click" 
+        : (item.visitorType === "Human" ? "Organic Human" : "Bot Traffic");
+
       return [
         escapeCsv(timeStr),
         escapeCsv(item.ip || item.ipAddress || ""),
         escapeCsv(item.visitorType || ""),
+        escapeCsv(attributionType),
+        escapeCsv(item.adNetwork || item.adTraffic?.platformName || ""),
+        escapeCsv(item.clickToken || item.adTraffic?.clickToken || ""),
+        escapeCsv(item.clickId || item.adTraffic?.clickId || ""),
+        escapeCsv(item.isVerifiedReviewer || item.adTraffic?.isVerifiedReviewer ? "Yes" : "No"),
+        escapeCsv(item.reviewerPlatform || item.adTraffic?.reviewerPlatform || ""),
         escapeCsv(threat.score),
         escapeCsv(asnInfo.asnBadge),
         escapeCsv(item.isp || ""),
@@ -332,7 +473,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
               <Input
                 value={searchTerm}
                 onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                placeholder="Search IP, ISP, country..."
+                placeholder="Search IP, ISP, ad network, click ID..."
                 className="pl-8 text-xs h-8 bg-slate-50 border-slate-200 text-slate-900 rounded-lg placeholder:text-slate-400 focus:bg-white"
               />
             </div>
@@ -349,6 +490,69 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
               <Download className="h-3.5 w-3.5 text-[#0A5C48]" />
               <span>Export CSV</span>
             </Button>
+          </div>
+        </div>
+
+        {/* Traffic Attribution Sub-Toolbar */}
+        <div className="px-4 sm:px-5 py-2.5 bg-slate-50/80 border-b border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 text-slate-600 font-semibold mr-1">
+              <Sparkles className="h-3.5 w-3.5 text-[#0A5C48]" />
+              <span>Traffic Attribution:</span>
+            </div>
+
+            {/* Attribution Pills */}
+            <div className="flex items-center gap-1 bg-white border border-slate-200 p-0.5 rounded-lg shadow-2xs">
+              <button
+                type="button"
+                onClick={() => { setTrafficFilter("all"); setCurrentPage(1); }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                  trafficFilter === "all" ? "bg-slate-900 text-white shadow-2xs font-bold" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                All Sources
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrafficFilter("paid"); setCurrentPage(1); }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                  trafficFilter === "paid" ? "bg-blue-600 text-white shadow-2xs font-bold" : "text-blue-700 hover:bg-blue-50"
+                }`}
+              >
+                🎯 Paid Ads Only
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrafficFilter("organic"); setCurrentPage(1); }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                  trafficFilter === "organic" ? "bg-teal-700 text-white shadow-2xs font-bold" : "text-teal-800 hover:bg-teal-50"
+                }`}
+              >
+                🌿 Organic Only
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrafficFilter("reviewer"); setCurrentPage(1); }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                  trafficFilter === "reviewer" ? "bg-indigo-600 text-white shadow-2xs font-bold" : "text-indigo-700 hover:bg-indigo-50"
+                }`}
+              >
+                🛡️ Ad Reviewer Bots
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTrafficFilter("spoofed"); setCurrentPage(1); }}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                  trafficFilter === "spoofed" ? "bg-rose-600 text-white shadow-2xs font-bold animate-pulse" : "text-rose-700 hover:bg-rose-50"
+                }`}
+              >
+                🚨 Spoofed Crawlers
+              </button>
+            </div>
+          </div>
+
+          <div className="text-[11px] text-slate-500 font-medium">
+            Showing <strong className="text-slate-900">{filtered.length}</strong> matched log{filtered.length === 1 ? "" : "s"}
           </div>
         </div>
 
@@ -463,6 +667,34 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                   methodStr.includes("proxy") ||
                   methodStr.includes("vpn")
                 );
+
+                const isSpoofed = Boolean(
+                  c.trafficType === "spoofed_ad_bot" ||
+                  c.adTraffic?.isSpoofed ||
+                  methodStr.includes("spoofed ad") ||
+                  methodStr.includes("impersonation")
+                );
+                const isReviewer = Boolean(
+                  c.trafficType === "ad_reviewer" ||
+                  c.isVerifiedReviewer || 
+                  c.adTraffic?.isVerifiedReviewer ||
+                  methodStr.includes("verified ad compliance") ||
+                  methodStr.includes("ad reviewer") ||
+                  methodStr.includes("ad compliance")
+                );
+                const isPaid = Boolean(
+                  c.trafficType === "ad_click" ||
+                  c.adNetwork || 
+                  c.clickToken || 
+                  c.adTraffic?.isAdClick ||
+                  c.gclid || 
+                  c.fbclid || 
+                  c.ttclid || 
+                  c.msclkid || 
+                  c.twclid ||
+                  methodStr.includes("ad campaign")
+                );
+
                 const flag = getCountryFlag(c.countryCode);
                 const ipStr = c.ip || c.ipAddress || "—";
                 const networkClass = getNetworkClassification(c);
@@ -496,10 +728,25 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                     </td>
 
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      {isHuman ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                          Allowed
+                      {isSpoofed ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-900 border border-rose-300 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                          🚨 Spoofed Bot
+                        </span>
+                      ) : isReviewer ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-900 border border-indigo-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                          🛡️ Reviewer Passed
+                        </span>
+                      ) : isPaid ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-900 border border-blue-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                          🎯 Paid Allowed
+                        </span>
+                      ) : isHuman ? (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200/70">
+                          <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
+                          Allowed (Organic)
                         </span>
                       ) : isPolicyFilter ? (
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200/60">
@@ -530,7 +777,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
                     {/* Network / ASN & ISP */}
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="flex flex-col gap-1 max-w-[210px]">
+                      <div className="flex flex-col gap-1 max-w-[220px]">
                         <div className="flex items-center gap-1.5">
                           <span className="inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded border border-slate-200">
                             {asnInfo.asnBadge}
@@ -539,10 +786,15 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                             {ispDisplayName}
                           </span>
                         </div>
-                        <div>
+                        <div className="flex items-center gap-1 flex-wrap">
                           <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${networkClass.className}`}>
                             {networkClass.label}
                           </span>
+                          {c.clickId && (
+                            <span className="inline-flex items-center text-[9px] font-mono bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded border border-blue-200 truncate max-w-[100px]" title={`Click ID: ${c.clickId}`}>
+                              {c.clickId.length > 8 ? `${c.clickId.slice(0, 7)}…` : c.clickId}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>

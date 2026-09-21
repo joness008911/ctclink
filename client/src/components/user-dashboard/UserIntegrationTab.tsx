@@ -25,7 +25,8 @@ import {
   RefreshCw,
   ExternalLink,
   SlidersHorizontal,
-  Info
+  Info,
+  Target
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -204,8 +205,18 @@ export function UserIntegrationTab({
         `4. Ensure PHP 7.4+ with the standard cURL extension is enabled.\n` +
         `5. When visitors land on your link, they immediately see the clean verification splash (zero blank white screen).\n` +
         `6. Classification executes asynchronously in the background. On success, humans are forwarded to your configured Human Target URL, while bots receive your configured action (404, 403, or Bot URL).\n` +
-        `7. If an external service or network timeout occurs, the script safely fails closed with an immediate polished retry state.\n` +
-        `8. All rules, geo-fencing, device filters, and target URLs remain dynamically managed in real time from your CleanTraffic Dashboard.\n`
+        `7. AD ATTRIBUTION & CLICK TOKEN FORWARDING:\n` +
+        `   - All paid ad click tokens (Meta: fbclid, fbclickid; Google: gclid, wbraid, gbraid; TikTok: ttclid; Microsoft: msclkid; X: twclid) and UTM tags\n` +
+        `     are automatically captured across Apache, Nginx, LiteSpeed, and reverse proxies via GET, QUERY_STRING, and REQUEST_URI fallback.\n` +
+        `   - Paid campaigns are automatically attributed with live token tracking in your CleanTraffic Dashboard.\n` +
+        `   - Natural visitors without ad tokens are cleanly separated and classified as Organic / Direct traffic.\n` +
+        `   - Verified human visitors are forwarded with 100% of their original campaign parameters intact.\n` +
+        `8. TESTING AD PARAMETERS:\n` +
+        `   - Test Facebook/Meta: visit https://your-domain.com/index.php?fbclid=test1234 or ?fbclickid=test1234\n` +
+        `   - Test Google Ads: visit https://your-domain.com/index.php?gclid=test1234\n` +
+        `   - Test Organic: visit https://your-domain.com/index.php (without parameters)\n` +
+        `9. If an external service or network timeout occurs, the script safely fails closed with an immediate polished retry state.\n` +
+        `10. All rules, geo-fencing, device filters, and target URLs remain dynamically managed in real time from your CleanTraffic Dashboard.\n`
       );
 
       const content = await zip.generateAsync({ type: "blob" });
@@ -564,7 +575,7 @@ export function UserIntegrationTab({
       </div>
 
       {/* Architecture Highlights */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
           <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
             <Key className="h-4 w-4" />
@@ -578,10 +589,10 @@ export function UserIntegrationTab({
         <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
           <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
             <ShieldCheck className="h-4 w-4" />
-            2. Instant Verification Interstitial
+            2. Instant Interstitial
           </div>
           <p className="text-[11px] text-[#64748B] leading-relaxed">
-            Eliminates blank white screens with an immediate &lt;15ms security splash while verification runs asynchronously in the background.
+            Eliminates blank white screens with an immediate &lt;15ms security splash while verification runs asynchronously.
           </p>
         </div>
 
@@ -598,11 +609,76 @@ export function UserIntegrationTab({
         <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
           <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
             <Zap className="h-4 w-4" />
-            4. Anti-Bypass & Multi-Domain
+            4. Anti-Bypass Security
           </div>
           <p className="text-[11px] text-[#64748B] leading-relaxed">
             Destination URLs stay hidden on the server until classification passes. Deploy across unlimited campaign domains safely.
           </p>
+        </div>
+
+        <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 space-y-1.5 shadow-xs">
+          <div className="flex items-center gap-2 text-[#0A5C48] font-bold text-xs">
+            <Target className="h-4 w-4" />
+            5. Ad Token Forwarding
+          </div>
+          <p className="text-[11px] text-[#64748B] leading-relaxed">
+            Preserves and forwards gclid, fbclid, ttclid, msclkid, twclid, wbraid, gbraid, and UTMs directly to your target offer.
+          </p>
+        </div>
+      </div>
+
+      {/* Ad Attribution & Testing Verification Guide */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-xs space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Target className="h-4 w-4 text-emerald-400" />
+            <h4 className="text-sm font-bold text-white">How to Test Paid Ad Attribution vs Organic Traffic</h4>
+          </div>
+          <span className="text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 px-2 py-0.5 rounded">
+            Live Parameter Engine
+          </span>
+        </div>
+
+        <p className="text-xs text-slate-300 leading-relaxed">
+          CleanTraffic isolates paid campaign traffic with click tokens from natural organic visitors. When testing your deployed <code className="text-emerald-300 bg-slate-800 px-1 py-0.5 rounded font-mono text-[11px]">index.php</code> script, use these campaign query parameters:
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
+          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] text-blue-400 font-sans font-bold uppercase tracking-wider block">Meta (Facebook & IG)</span>
+            <div className="text-slate-200 select-all break-all text-[11px]">
+              ?fbclid=test_token_123<br/>
+              <span className="text-slate-400 text-[10px] font-sans">Alias: ?fbclickid=test_123</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase tracking-wider block">Google Ads</span>
+            <div className="text-slate-200 select-all break-all text-[11px]">
+              ?gclid=test_gclid_123<br/>
+              <span className="text-slate-400 text-[10px] font-sans">iOS: ?gbraid=... | ?wbraid=...</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-800/80 border border-slate-700/80 rounded-lg p-3 space-y-1">
+            <span className="text-[10px] text-purple-400 font-sans font-bold uppercase tracking-wider block">TikTok & Microsoft</span>
+            <div className="text-slate-200 select-all break-all text-[11px]">
+              ?ttclid=test_ttclid_123<br/>
+              <span className="text-slate-400 text-[10px] font-sans">Bing: ?msclkid=test_msclk_123</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-slate-800/50 border border-slate-700/50 rounded-lg p-3 text-xs space-y-1.5 text-slate-300">
+          <div className="font-semibold text-slate-200 flex items-center gap-1.5">
+            <Info className="h-3.5 w-3.5 text-emerald-400" />
+            Verification & Troubleshooting Checklist:
+          </div>
+          <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-300 pl-1">
+            <li><strong>Organic Traffic:</strong> Visiting without query parameters (or standard search referrals) automatically logs as <span className="text-emerald-400 font-semibold">Organic • Residential Human</span>. No paid ad card will be displayed.</li>
+            <li><strong>Active API Key:</strong> Verify that <code className="text-emerald-300 font-mono">$apiKey</code> in your <code className="text-emerald-300 font-mono">index.php</code> matches your active account API key so events appear in your dashboard.</li>
+            <li><strong>Outbound cURL:</strong> Confirm your web host allows outbound HTTPS requests to the CleanTraffic API endpoint (<code className="text-emerald-300 font-mono">{effectiveEndpoint || "your-cleantraffic-instance"}</code>).</li>
+          </ul>
         </div>
       </div>
 

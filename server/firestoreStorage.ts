@@ -211,6 +211,12 @@ export class FirestoreStorage implements IStorage {
       browser: classification.browser || "Unknown",
       deviceType: classification.deviceType || "desktop",
       apiKeyId: classification.apiKeyId || null,
+      adNetwork: classification.adNetwork || null,
+      clickToken: classification.clickToken || null,
+      clickId: classification.clickId || null,
+      trafficType: classification.trafficType || null,
+      isVerifiedReviewer: Boolean(classification.isVerifiedReviewer),
+      reviewerPlatform: classification.reviewerPlatform || null,
       timestamp: now,
     };
 
@@ -1223,6 +1229,8 @@ export class FirestoreStorage implements IStorage {
     allowSearchCrawlers?: string;
     blockAiCrawlers?: string;
     allowSocialPreviews?: string;
+    protectionMode?: string;
+    activeAdPlatforms?: string;
     interstitialThemeId?: string;
     interstitialHeading?: string;
     interstitialSubnote?: string;
@@ -1246,6 +1254,8 @@ export class FirestoreStorage implements IStorage {
       allowSearchCrawlers: urls.allowSearchCrawlers !== undefined ? urls.allowSearchCrawlers : (existing?.allowSearchCrawlers || "allow"),
       blockAiCrawlers: urls.blockAiCrawlers !== undefined ? urls.blockAiCrawlers : (existing?.blockAiCrawlers || "block"),
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
+      protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
+      activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
       interstitialThemeId: urls.interstitialThemeId !== undefined ? urls.interstitialThemeId : (existing?.interstitialThemeId || "clean_light"),
       interstitialHeading: urls.interstitialHeading !== undefined ? urls.interstitialHeading : (existing?.interstitialHeading || "Verifying your connection..."),
       interstitialSubnote: urls.interstitialSubnote !== undefined ? urls.interstitialSubnote : (existing?.interstitialSubnote || "Please wait while we secure your session."),

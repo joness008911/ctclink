@@ -326,7 +326,7 @@ export function UserSimulatorTab({ apiKey, humanUrl, botUrl }: UserSimulatorTabP
           <span className="font-medium text-slate-700">Test Sandbox:</span>
           <span>Zero Quota Deducted</span>
           <span className="text-slate-300">•</span>
-          <span className="text-slate-400">: </span>
+          <span className="text-slate-400"></span>
         </div>
       </div>
 
