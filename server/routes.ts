@@ -21,6 +21,7 @@ import {
   recordFailedLogin,
   recordSuccessfulLogin,
 } from "./accountLockout";
+import { cleanTrafficGuard } from "./cleanTrafficGuard";
 
 // Session & idle timeout configuration
 export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
@@ -641,6 +642,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
   if (ipLogCleanupTimer && typeof ipLogCleanupTimer.unref === 'function') {
     ipLogCleanupTimer.unref();
   }
+  
+  // Protected Landing Page Route (Express Middleware Integration)
+  app.get("/landing", cleanTrafficGuard(), (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CleanTraffic Secured Landing Page</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0B0F19; color: #F8FAFC; margin: 0; padding: 40px 20px; display: flex; align-items: center; justify-content: center; min-height: 100vh; box-sizing: border-box; }
+    .card { max-width: 520px; width: 100%; background: #111827; border: 1px solid #1F2937; border-radius: 16px; padding: 40px 32px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.6); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); color: #10B981; border-radius: 9999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 20px; }
+    h1 { font-size: 24px; font-weight: 700; margin: 0 0 12px 0; color: #FFFFFF; }
+    p { font-size: 14px; line-height: 1.6; color: #94A3B8; margin: 0 0 24px 0; }
+    .status-box { background: #0A0D14; border: 1px solid #1E293B; border-radius: 10px; padding: 14px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; color: #38BDF8; text-align: left; line-height: 1.6; }
+    .status-box span { color: #10B981; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Shield Active • Verified Human
+    </div>
+    <h1>Express Landing Page Live</h1>
+    <p>This landing page is secured live by the CleanTraffic Node.js / Express middleware on Railway. Automated bots, scrapers, and crawlers are intercepted with an exact 404 or 403 response before reaching this page.</p>
+    <div class="status-box">
+      <div>Status: <span>HTTP 200 OK</span></div>
+      <div>Session: <span>ctc_verified=1 active</span></div>
+      <div>Attribution: <span>Ad click tokens captured</span></div>
+    </div>
+  </div>
+</body>
+</html>`);
+  });
   
   // IP Whitelist Middleware - Runs BEFORE session to block unauthorized /user access early
   app.use(async (req, res, next) => {
@@ -4578,37 +4615,6 @@ Disallow: /*`);
 })();`;
 
     res.send(protectJs);
-  });
-
-  // Built-in Demo Test Page for testing the protection shield directly on Railway
-  app.get("/demo-shield", (req, res) => {
-    const apiKey = (req.query.apiKey as string) || "";
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CleanTraffic Shield Test Page</title>
-  <script src="/v1/protect.js" data-api-key="${apiKey}" async></script>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0B0F19; color: #F8FAFC; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; }
-    .card { background: #111827; border: 1px solid #1F2937; border-radius: 16px; padding: 40px; max-width: 520px; text-align: center; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
-    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); color: #10B981; border-radius: 9999px; font-size: 12px; font-weight: 600; margin-bottom: 20px; }
-    h1 { font-size: 24px; font-weight: 700; margin: 0 0 12px; color: #FFFFFF; }
-    p { font-size: 14px; color: #94A3B8; line-height: 1.6; margin: 0 0 24px; }
-    .status { background: #1E293B; border-radius: 8px; padding: 12px 16px; font-family: monospace; font-size: 13px; color: #38BDF8; word-break: break-all; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="badge">&#x2713; CleanTraffic Shield Active</div>
-    <h1>Protected Landing Page Demo</h1>
-    <p>If you see this page, CleanTraffic evaluated your session, confirmed your browser is a legitimate human visitor, and passed you through safely.</p>
-    <div class="status">Testing with Key: ${apiKey || 'Auto-detected'}</div>
-  </div>
-</body>
-</html>`);
   });
 
   // Get API keys (protected)
