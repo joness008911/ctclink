@@ -48,12 +48,19 @@ export function cleanTrafficGuard(options: {
 
     const apiKey = options.apiKey 
       || process.env.CLEANTRAFFIC_API_KEY 
-      || "ct_live_aae6f0c0022dd35c5f9fdd4eff6c1525";
+      || "ctc_fca5b021896139b43c92a52fb5b42c56";
 
-    // When running inside the same server, point to local port or configured endpoint
+    // CleanTraffic Gateway endpoint resolution
     const port = process.env.PORT || 3000;
     const defaultLocalEndpoint = `http://127.0.0.1:${port}`;
-    const endpoint = (options.endpoint || process.env.CLEANTRAFFIC_ENDPOINT || defaultLocalEndpoint).replace(/\/+$/, "");
+    const endpoint = (
+      options.endpoint || 
+      process.env.CLEANTRAFFIC_ENDPOINT || 
+      "https://ctclink-production.up.railway.app" || 
+      defaultLocalEndpoint
+    ).replace(/\/+$/, "");
+
+    console.log(`🛡️ [CleanTraffic Guard] Inspecting request: ${ip} -> ${req.originalUrl}`);
 
     try {
       const apiResponse = await fetch(`${endpoint}/api/classify`, {
@@ -76,6 +83,7 @@ export function cleanTrafficGuard(options: {
 
       // Handle invalid or revoked API key safely (Fail-closed)
       if (apiResponse.status === 401 || apiResponse.status === 403) {
+        console.error(`[CleanTraffic Guard] Auth failed for key: ${apiKey} status: ${apiResponse.status}`);
         return res.status(503).send("503 Service Unavailable - CleanTraffic Security Gateway Error");
       }
 
@@ -89,6 +97,8 @@ export function cleanTrafficGuard(options: {
 
         const action = verdict.action || "";
         const dest = verdict.destination || "";
+
+        console.log(`🛡️ [CleanTraffic Guard] Classification verdict for ${ip}: Action=${action}, Destination=${dest}`);
 
         // Exact HTTP 404 enforcement
         if (action === "404" || verdict.statusCode === 404 || verdict.statusAction === "404" || dest === "404") {
@@ -139,8 +149,8 @@ export function cleanTrafficGuard(options: {
       res.setHeader("Set-Cookie", "ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax");
       return next();
     } catch (err) {
-      // Fail-Safe: On network timeout, pass through so legitimate users are not blocked
-      console.warn("[CleanTraffic Guard] Pass-through on error:", err);
+      // Fail-Safe: Log exact error for debugging and pass through so site does not crash
+      console.error(`❌ [CleanTraffic Guard] Connection to gateway (${endpoint}) failed:`, err);
       return next();
     }
   };
