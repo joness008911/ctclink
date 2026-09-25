@@ -83,6 +83,9 @@ service cloud.firestore {
     match /interstitial_themes/{themeId} {
       allow read, write: if true;
     }
+    match /device_profiles/{profileId} {
+      allow read, write: if true;
+    }
 
     // Default deny for unmatched collections
     match /{document=**} {

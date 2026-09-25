@@ -16,7 +16,7 @@
  *
  * Run with: npm test
  */
-import { test, describe } from "node:test";
+import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,6 +25,11 @@ import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "../shared/schema.js";
 import { DatabaseStorage, MemStorage } from "../server/storage.js";
+import { isValidDatabaseUrl } from "../server/db.js";
+
+after(() => {
+  setTimeout(() => process.exit(0), 100).unref();
+});
 
 // ---------------------------------------------------------------------------
 // 1. Static migration SQL analysis
@@ -81,9 +86,9 @@ describe("Billing upgrade migration SQL (0001_billing_upgrade.sql)", () => {
 describe("Billing columns present in database schema (live DB)", () => {
   const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
 
-  if (!dbUrl) {
+  if (!dbUrl || !isValidDatabaseUrl(dbUrl)) {
     // Skip gracefully when no DB is available (CI without secrets)
-    test("skip — DATABASE_URL not set", { skip: true }, () => {});
+    test("skip — DATABASE_URL not set or not configured", { skip: true }, () => {});
     return;
   }
 
@@ -174,7 +179,7 @@ describe("Webhook claim-release on customer lookup failure", () => {
     // neon-http null-map driver bug.  We verify the benign path (unknown customer)
     // returns undefined without throwing — the known good case in all environments.
     const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
-    if (!dbUrl) { return; } // skip if no DB
+    if (!dbUrl || !isValidDatabaseUrl(dbUrl)) { return; } // skip if no DB
 
     const storage = new DatabaseStorage();
     // An unknown customer should return undefined, not throw
@@ -192,8 +197,8 @@ describe("Webhook claim-release on customer lookup failure", () => {
 describe("DatabaseStorage billing query smoke test (live DB)", () => {
   const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
 
-  if (!dbUrl) {
-    test("skip — DATABASE_URL not set", { skip: true }, () => {});
+  if (!dbUrl || !isValidDatabaseUrl(dbUrl)) {
+    test("skip — DATABASE_URL not set or not configured", { skip: true }, () => {});
     return;
   }
 

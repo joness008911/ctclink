@@ -22,6 +22,8 @@ import {
   recordSuccessfulLogin,
 } from "./accountLockout";
 import { cleanTrafficGuard } from "./cleanTrafficGuard";
+import { synthesizeDeviceId } from "./deviceId";
+import { deviceTracker } from "./deviceTracker";
 
 // Session & idle timeout configuration
 export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
@@ -5332,6 +5334,17 @@ Disallow: /*`);
       const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
+      // Synthesize high-precision Device ID & record activity (First Seen, Last Seen, Visit Count)
+      const rawClientTokens = req.body?.clientTokens || req.body?.tokens || req.body?.hardwareTokens || null;
+      const deviceSynthesis = synthesizeDeviceId({
+        ip: clientIp,
+        userAgent,
+        headers: (req.body?.headers || req.headers) as Record<string, string | string[] | undefined>,
+        clientTokens: rawClientTokens
+      });
+      const resolvedDeviceId = deviceSynthesis.deviceId;
+      const deviceActivity = deviceTracker.recordVisit(resolvedDeviceId, clientIp);
+
       // Load Geolocation & Threat Intelligence API key
       const cleanTrafficApiKey = await getEffectiveIp2GeoKey();
 
@@ -5511,13 +5524,24 @@ Disallow: /*`);
           }
         }
 
-        // TIER 1B: HIGH-FREQUENCY REQUEST VELOCITY ANOMALY (Intercepts automated scrapers on clean residential IPs)
-        const velocityCheck = checkRequestVelocity(clientIp);
-        if (visitorType !== 'Bot' && !isVerifiedAdReviewer && velocityCheck.isVelocityExceeded) {
-          visitorType = 'Bot';
-          detectionMethod = 'High-Frequency Request Velocity';
-          blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP';
-          console.log(`🚫 BLOCKED (Tier 1B - Request Velocity): ${clientIp} - ${velocityCheck.reason}`);
+        // TIER 1B: HIGH-FREQUENCY REQUEST VELOCITY ANOMALY (Device ID + IP Rate Limiting)
+        // Exempts verified ad reviewers and search crawlers automatically to avoid ad suspension
+        const isExemptCrawler = isVerifiedAdReviewer || isAllowedCrawler;
+        if (visitorType !== 'Bot' && !isExemptCrawler) {
+          if (deviceActivity.isRateLimited) {
+            visitorType = 'Bot';
+            detectionMethod = 'Device Velocity Exceeded (>5 req/60s)';
+            blockReason = `Device ${resolvedDeviceId} exceeded rate limit (${deviceActivity.velocity60s} requests in 60s)`;
+            console.log(`🚫 BLOCKED (Tier 1B - Device Rate Limit): ${clientIp} [${resolvedDeviceId}] - ${deviceActivity.velocity60s} req/60s`);
+          } else {
+            const velocityCheck = checkRequestVelocity(clientIp);
+            if (velocityCheck.isVelocityExceeded) {
+              visitorType = 'Bot';
+              detectionMethod = 'High-Frequency Request Velocity';
+              blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP';
+              console.log(`🚫 BLOCKED (Tier 1B - IP Velocity): ${clientIp} - ${velocityCheck.reason}`);
+            }
+          }
         }
 
         // Check header anomalies & Client Hints (Sec-CH-UA) consistency
@@ -5923,8 +5947,9 @@ Disallow: /*`);
         (async () => {
           try {
             const isSpoofedBot = Boolean(adReviewerDetails?.isReviewer && adReviewerDetails?.isSpoofed);
+            const isFraudClick = adClickInfo.isAdClick && deviceActivity.visitCount > 1;
             const trafficType = adClickInfo.isAdClick 
-              ? 'ad_click' 
+              ? (isFraudClick ? 'ad_fraud_repeat' : 'ad_click')
               : isVerifiedAdReviewer 
               ? 'ad_reviewer' 
               : isSpoofedBot 
@@ -5940,6 +5965,10 @@ Disallow: /*`);
               region: classificationData.region_name || '',
               browser: classificationData.browser || browser,
               deviceType: classificationData.device_type || deviceType,
+              deviceId: resolvedDeviceId,
+              isNewVisitor: deviceActivity.isNewVisitor,
+              firstSeen: new Date(deviceActivity.firstSeen),
+              visitCount: deviceActivity.visitCount,
               visitorType: visitorType,
               isp: classificationData.isp || 'Unknown',
               detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
@@ -5961,6 +5990,11 @@ Disallow: /*`);
                   ? new Date(classification.timestamp).toISOString()
                   : new Date().toISOString(),
                 ipAddress: clientIp,
+                deviceId: resolvedDeviceId,
+                isNewVisitor: deviceActivity.isNewVisitor,
+                firstSeen: deviceActivity.firstSeen,
+                lastSeen: deviceActivity.lastSeen,
+                visitCount: deviceActivity.visitCount,
                 visitorType: visitorType as 'Human' | 'Bot',
                 detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
                 country: classificationData.country_name || 'Unknown',
@@ -6015,6 +6049,11 @@ Disallow: /*`);
       const isErrorCode = !isHumanVisitor && (finalBotUrl === '404' || finalBotUrl === '403');
       const response: any = {
         ip: clientIp,
+        deviceId: resolvedDeviceId,
+        isNewVisitor: deviceActivity.isNewVisitor,
+        firstSeen: deviceActivity.firstSeen,
+        lastSeen: deviceActivity.lastSeen,
+        visitCount: deviceActivity.visitCount,
         location: classificationData.location || 'Unknown',
         country: classificationData.country_name || 'Unknown',
         countryCode: classificationData.country_code || '',

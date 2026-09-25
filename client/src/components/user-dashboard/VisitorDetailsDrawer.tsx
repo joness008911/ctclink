@@ -41,6 +41,7 @@ export function VisitorDetailsDrawer({
   botUrl,
 }: VisitorDetailsDrawerProps) {
   const [copiedIp, setCopiedIp] = useState(false);
+  const [copiedDeviceId, setCopiedDeviceId] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "signals" | "request" | "response" | "timeline">("overview");
 
   if (!visitor) return null;
@@ -49,6 +50,11 @@ export function VisitorDetailsDrawer({
   const detectionMethod = visitor.detectionMethod || (isHuman ? "Clean Residential IP" : "Datacenter ASN");
   const flag = getCountryFlag(visitor.countryCode);
   const ipAddress = visitor.ip || visitor.ipAddress || "—";
+  const deviceId = visitor.deviceId || "—";
+  const isNewVisitor = visitor.isNewVisitor;
+  const visitCount = visitor.visitCount || 1;
+  const firstSeen = visitor.firstSeen ? new Date(visitor.firstSeen) : null;
+  const lastSeen = visitor.lastSeen ? new Date(visitor.lastSeen) : null;
   const timestamp = visitor.timestamp ? new Date(visitor.timestamp) : new Date();
 
   // Categorize detection type for accurate verdict, scoring, and telemetry
@@ -196,6 +202,12 @@ export function VisitorDetailsDrawer({
     navigator.clipboard.writeText(ipAddress);
     setCopiedIp(true);
     setTimeout(() => setCopiedIp(false), 2000);
+  };
+
+  const copyDeviceId = () => {
+    navigator.clipboard.writeText(deviceId);
+    setCopiedDeviceId(true);
+    setTimeout(() => setCopiedDeviceId(false), 2000);
   };
 
   // Explicit, Accurate Telemetry Signals based on exact visitor classification
@@ -559,6 +571,56 @@ export function VisitorDetailsDrawer({
                       {visitor.deviceType || "Desktop Device"} • {visitor.browser || "Chrome Browser"}
                     </span>
                   </div>
+
+                  <div className="flex items-center justify-between p-3">
+                    <span className="text-slate-500 font-medium">Device ID</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[11px] font-bold text-slate-800 bg-slate-200/60 px-2 py-0.5 rounded border border-slate-300/60">
+                        {deviceId}
+                      </span>
+                      {deviceId !== "—" && (
+                        <button
+                          onClick={copyDeviceId}
+                          title="Copy Device ID"
+                          className="p-1 text-slate-400 hover:text-slate-700 rounded transition-colors"
+                        >
+                          {copiedDeviceId ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-3">
+                    <span className="text-slate-500 font-medium">Visitor Profile</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        isNewVisitor === false
+                          ? "bg-purple-50 text-purple-700 border border-purple-200"
+                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${isNewVisitor === false ? "bg-purple-600" : "bg-emerald-600"}`} />
+                        {isNewVisitor === false ? `Returning Visitor (${visitCount} visits)` : "New Visitor (1st Visit)"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {firstSeen && (
+                    <div className="flex items-center justify-between p-3">
+                      <span className="text-slate-500 font-medium">First Seen</span>
+                      <span className="font-mono text-[11px] text-slate-700">
+                        {format(firstSeen, "MMM d, yyyy HH:mm:ss")}
+                      </span>
+                    </div>
+                  )}
+
+                  {lastSeen && (
+                    <div className="flex items-center justify-between p-3">
+                      <span className="text-slate-500 font-medium">Last Seen</span>
+                      <span className="font-mono text-[11px] text-slate-700">
+                        {format(lastSeen, "MMM d, yyyy HH:mm:ss")}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 

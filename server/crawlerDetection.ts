@@ -331,67 +331,160 @@ export function checkHeaderAnomalies(headers: Record<string, any>, userAgent: st
 }
 
 /**
- * High-performance in-memory request velocity tracker to intercept automated
- * scrapers and headless bots executing on clean residential/office IPs.
+ * High-performance in-memory hybrid request velocity tracker to intercept automated
+ * scrapers and click bots, while accommodating multi-user office networks and shared Wi-Fi.
  */
 interface VelocityRecord {
   timestamps: number[];
   lastSeen: number;
 }
 
-const velocityMap = new Map<string, VelocityRecord>();
-const VELOCITY_BURST_LIMIT = 4; // Max requests within 2 seconds
-const VELOCITY_BURST_WINDOW_MS = 2000;
-const VELOCITY_RATE_LIMIT = 5; // Max requests within 10 seconds (triggers at 5th hit)
-const VELOCITY_RATE_WINDOW_MS = 10000;
+interface IpDeviceRecord {
+  deviceHashes: Map<string, number>; // deviceHash -> lastSeen
+  lastSeen: number;
+}
 
-export function checkRequestVelocity(clientIp: string): {
+const velocityMap = new Map<string, VelocityRecord>();
+const ipDeviceMap = new Map<string, IpDeviceRecord>();
+
+// Device-level limits (strict: single laptop/phone shouldn't machine-gun clicks)
+const DEV_BURST_LIMIT = 4; // Max 4 requests in 2 seconds
+const DEV_BURST_WINDOW_MS = 2000;
+const DEV_RATE_LIMIT = 6; // Max 6 requests in 10 seconds
+const DEV_RATE_WINDOW_MS = 10000;
+
+// IP-level limits for requests WITHOUT a device signature (headless bots, cURL, scripts)
+const STRICT_IP_BURST_LIMIT = 4;
+const STRICT_IP_RATE_LIMIT = 5;
+
+// IP-level limits for requests WITH valid device signatures (NAT-tolerant for offices/conferences)
+const NAT_IP_BURST_LIMIT = 20; // Allows office bursts across colleagues
+const NAT_IP_RATE_LIMIT = 30; // Max 30 requests in 10 seconds across an entire corporate NAT
+const MAX_DEVICE_ROTATION_PER_IP = 10; // Anti-churn: max 10 new distinct device hashes per 10s on a single IP
+
+export function checkRequestVelocity(clientIp: string, deviceHash?: string | null): {
   isVelocityExceeded: boolean;
   reqCount?: number;
   reason?: string;
+  isDeviceThrottled?: boolean;
 } {
   if (!clientIp || clientIp === "unknown" || clientIp === "127.0.0.1" || clientIp === "::1") {
     return { isVelocityExceeded: false };
   }
 
   const now = Date.now();
-  let record = velocityMap.get(clientIp);
-  if (!record) {
-    record = { timestamps: [now], lastSeen: now };
-    velocityMap.set(clientIp, record);
-    return { isVelocityExceeded: false };
+  const cleanDeviceHash = deviceHash ? String(deviceHash).trim() : null;
+
+  // 1. EVALUATE HARDWARE DEVICE VELOCITY IF DEVICE HASH IS PRESENT
+  if (cleanDeviceHash && cleanDeviceHash.length >= 8) {
+    const devKey = `dev:${cleanDeviceHash}`;
+    let devRecord = velocityMap.get(devKey);
+    if (!devRecord) {
+      devRecord = { timestamps: [now], lastSeen: now };
+      velocityMap.set(devKey, devRecord);
+    } else {
+      devRecord.timestamps = devRecord.timestamps.filter((t) => now - t < DEV_RATE_WINDOW_MS);
+      devRecord.timestamps.push(now);
+      devRecord.lastSeen = now;
+
+      // Check device rapid burst (2 seconds)
+      const devBurst = devRecord.timestamps.filter((t) => now - t < DEV_BURST_WINDOW_MS).length;
+      if (devBurst > DEV_BURST_LIMIT) {
+        return {
+          isVelocityExceeded: true,
+          reqCount: devBurst,
+          reason: `Rapid-fire automated click velocity from single device (${devBurst} req / 2s)`,
+          isDeviceThrottled: true,
+        };
+      }
+
+      // Check device 10-second limit
+      if (devRecord.timestamps.length >= DEV_RATE_LIMIT) {
+        return {
+          isVelocityExceeded: true,
+          reqCount: devRecord.timestamps.length,
+          reason: `High-frequency scraping velocity from single device (${devRecord.timestamps.length} req / 10s)`,
+          isDeviceThrottled: true,
+        };
+      }
+    }
+
+    // 2. ANTI-SPOOFING CHURN GUARD (Prevent bot attackers rotating fake device hashes on same IP)
+    let ipDevTracker = ipDeviceMap.get(clientIp);
+    if (!ipDevTracker) {
+      ipDevTracker = { deviceHashes: new Map([[cleanDeviceHash, now]]), lastSeen: now };
+      ipDeviceMap.set(clientIp, ipDevTracker);
+    } else {
+      // Prune old devices older than 10s
+      for (const [dHash, seenTime] of ipDevTracker.deviceHashes.entries()) {
+        if (now - seenTime > DEV_RATE_WINDOW_MS) {
+          ipDevTracker.deviceHashes.delete(dHash);
+        }
+      }
+      ipDevTracker.deviceHashes.set(cleanDeviceHash, now);
+      ipDevTracker.lastSeen = now;
+
+      if (ipDevTracker.deviceHashes.size > MAX_DEVICE_ROTATION_PER_IP) {
+        return {
+          isVelocityExceeded: true,
+          reqCount: ipDevTracker.deviceHashes.size,
+          reason: `Suspicious rapid device hash rotation attack from single IP (${ipDevTracker.deviceHashes.size} hashes / 10s)`,
+        };
+      }
+    }
   }
 
-  // Filter timestamps within the rate window
-  record.timestamps = record.timestamps.filter((t) => now - t < VELOCITY_RATE_WINDOW_MS);
-  record.timestamps.push(now);
-  record.lastSeen = now;
+  // 3. IP-LEVEL VELOCITY (NAT-AWARE)
+  const ipKey = `ip:${clientIp}`;
+  let ipRecord = velocityMap.get(ipKey);
+  if (!ipRecord) {
+    ipRecord = { timestamps: [now], lastSeen: now };
+    velocityMap.set(ipKey, ipRecord);
+  } else {
+    ipRecord.timestamps = ipRecord.timestamps.filter((t) => now - t < DEV_RATE_WINDOW_MS);
+    ipRecord.timestamps.push(now);
+    ipRecord.lastSeen = now;
 
-  // Check rapid 2-second burst limit
-  const recentBurstCount = record.timestamps.filter((t) => now - t < VELOCITY_BURST_WINDOW_MS).length;
-  if (recentBurstCount > VELOCITY_BURST_LIMIT) {
-    return {
-      isVelocityExceeded: true,
-      reqCount: recentBurstCount,
-      reason: `Rapid-fire automated click velocity (${recentBurstCount} req / 2s)`,
-    };
+    // Use relaxed limits if a valid device hash is present, or strict limits if absent (headless/non-JS)
+    const effectiveBurstLimit = cleanDeviceHash ? NAT_IP_BURST_LIMIT : STRICT_IP_BURST_LIMIT;
+    const effectiveRateLimit = cleanDeviceHash ? NAT_IP_RATE_LIMIT : STRICT_IP_RATE_LIMIT;
+
+    const recentBurstCount = ipRecord.timestamps.filter((t) => now - t < DEV_BURST_WINDOW_MS).length;
+    if (recentBurstCount > effectiveBurstLimit) {
+      return {
+        isVelocityExceeded: true,
+        reqCount: recentBurstCount,
+        reason: cleanDeviceHash
+          ? `Network-wide traffic flood from office IP (${recentBurstCount} req / 2s)`
+          : `Rapid-fire automated click velocity (${recentBurstCount} req / 2s)`,
+      };
+    }
+
+    if (ipRecord.timestamps.length >= effectiveRateLimit) {
+      return {
+        isVelocityExceeded: true,
+        reqCount: ipRecord.timestamps.length,
+        reason: cleanDeviceHash
+          ? `Excessive network-wide traffic volume from office IP (${ipRecord.timestamps.length} req / 10s)`
+          : `High-frequency scraping velocity (${ipRecord.timestamps.length} req / 10s)`,
+      };
+    }
   }
 
-  // Check 10-second frequency rate limit (triggers on 5 or more visits within 10 seconds)
-  if (record.timestamps.length >= VELOCITY_RATE_LIMIT) {
-    return {
-      isVelocityExceeded: true,
-      reqCount: record.timestamps.length,
-      reason: `High-frequency scraping velocity (${record.timestamps.length} req / 10s)`,
-    };
-  }
-
-  // Periodic pruning if map grows large (> 5000 entries)
-  if (velocityMap.size > 5000) {
-    const cutoff = now - VELOCITY_RATE_WINDOW_MS;
-    for (const [ip, rec] of velocityMap.entries()) {
+  // Memory protection pruning
+  if (velocityMap.size > 8000) {
+    const cutoff = now - DEV_RATE_WINDOW_MS;
+    for (const [key, rec] of velocityMap.entries()) {
       if (rec.lastSeen < cutoff) {
-        velocityMap.delete(ip);
+        velocityMap.delete(key);
+      }
+    }
+  }
+  if (ipDeviceMap.size > 4000) {
+    const cutoff = now - DEV_RATE_WINDOW_MS;
+    for (const [ip, rec] of ipDeviceMap.entries()) {
+      if (rec.lastSeen < cutoff) {
+        ipDeviceMap.delete(ip);
       }
     }
   }

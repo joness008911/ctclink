@@ -59,6 +59,10 @@
         "country": { "type": "string" },
         "isp": { "type": "string" },
         "apiKeyId": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "isNewVisitor": { "type": "boolean" },
+        "firstSeen": { "type": "string", "format": "date-time" },
+        "visitCount": { "type": "number" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "ipAddress", "visitorType"]

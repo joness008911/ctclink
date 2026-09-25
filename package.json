@@ -11,7 +11,8 @@
     "lint": "tsc --noEmit",
     "db:push": "drizzle-kit push",
     "db:migrate": "drizzle-kit migrate",
-    "test": "tsx --test tests/accountLockout.test.ts tests/webhook.lifecycle.test.ts tests/migration.integration.test.ts tests/authSeparation.test.ts tests/changePassword.test.ts",
+    "test": "tsx --test tests/accountLockout.test.ts tests/webhook.lifecycle.test.ts tests/migration.integration.test.ts tests/authSeparation.test.ts tests/changePassword.test.ts tests/deviceIntelligence.test.ts",
+    "test:device": "tsx --test tests/deviceIntelligence.test.ts",
     "test:auth": "tsx --test tests/authSeparation.test.ts",
     "test:password": "tsx --test tests/changePassword.test.ts",
     "test:unit": "tsx --test tests/accountLockout.test.ts"

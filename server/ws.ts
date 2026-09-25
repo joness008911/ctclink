@@ -30,6 +30,11 @@ export interface SecurityEventPayload {
   id: string;
   timestamp: string;
   ipAddress: string;
+  deviceId?: string | null;
+  isNewVisitor?: boolean | null;
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+  visitCount?: number | null;
   visitorType: "Human" | "Bot";
   detectionMethod: string;
   country: string;

@@ -724,7 +724,19 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                     </td>
 
                     <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
-                      {ipStr}
+                      <div>{ipStr}</div>
+                      {c.deviceId && (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="font-mono text-[10px] text-slate-500 font-normal bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                            {c.deviceId.length > 14 ? `${c.deviceId.slice(0, 14)}...` : c.deviceId}
+                          </span>
+                          {c.isNewVisitor === false && (
+                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1 rounded border border-purple-200">
+                              Returning
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     <td className="py-3.5 px-4 whitespace-nowrap">

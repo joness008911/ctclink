@@ -23,6 +23,10 @@ export const classifications = pgTable("classifications", {
   isp: text("isp"),
   browser: text("browser"),
   deviceType: text("device_type"),
+  deviceId: text("device_id"),
+  isNewVisitor: boolean("is_new_visitor"),
+  firstSeen: timestamp("first_seen"),
+  visitCount: integer("visit_count"),
   apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }), // Link to which API key was used
   adNetwork: text("ad_network"),
   clickToken: text("click_token"),

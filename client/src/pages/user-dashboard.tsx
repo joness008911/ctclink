@@ -98,6 +98,10 @@ export default function UserDashboard() {
     totalClassifications: number;
     humanVisitors: number;
     botTraffic: number;
+    adClicks?: number;
+    adBotsBlocked?: number;
+    adLegitimateClicks?: number;
+    adNetworks?: Record<string, { total: number; human: number; bot: number }>;
   }>({
     queryKey: ["/api/user/stats"],
     refetchInterval: 15000,

@@ -1400,7 +1400,9 @@ ${renderedBody}
         colorDepth: window.screen ? window.screen.colorDepth : 0,
         missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
         gpuRenderer: '',
-        untrustedEvent: false
+        untrustedEvent: false,
+        timezoneOffset: new Date().getTimezoneOffset(),
+        hardwareConcurrency: navigator.hardwareConcurrency || 0
       };
 
       try {

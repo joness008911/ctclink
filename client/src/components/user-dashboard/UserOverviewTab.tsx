@@ -29,7 +29,10 @@ import {
   SlidersHorizontal,
   ChevronLeft,
   ChevronDown,
-  Sparkles
+  Sparkles,
+  DollarSign,
+  Target,
+  MousePointerClick
 } from "lucide-react";
 import {
   AreaChart,
@@ -54,6 +57,10 @@ interface UserOverviewTabProps {
     totalClassifications: number;
     humanVisitors: number;
     botTraffic: number;
+    adClicks?: number;
+    adBotsBlocked?: number;
+    adLegitimateClicks?: number;
+    adNetworks?: Record<string, { total: number; human: number; bot: number }>;
   } | undefined;
   apiKeyDetails: any;
   classifications: any[];
@@ -103,6 +110,30 @@ export function UserOverviewTab({
     if (num >= 1000) return (num / 1000).toFixed(1) + "K";
     return num.toString();
   };
+
+  // PPC Ad Click Metrics & Financial Savings Calculation
+  const [avgCpc, setAvgCpc] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("ctc_user_avg_cpc");
+      if (saved && !isNaN(Number(saved))) return Number(saved);
+    }
+    return 1.85; // Default standard industry average CPC ($1.85)
+  });
+
+  const handleCpcChange = (val: number) => {
+    const safeVal = Math.max(0.01, Math.min(100, val));
+    setAvgCpc(safeVal);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ctc_user_avg_cpc", String(safeVal));
+    }
+  };
+
+  // Compute ad traffic metrics from stats API with fallback to classifications array
+  const adClicks = stats?.adClicks ?? classifications.filter(c => c.adNetwork || c.clickToken || c.clickId || c.trafficType === 'ad_click' || c.trafficType === 'spoofed_ad_bot').length;
+  const adBotsBlocked = stats?.adBotsBlocked ?? classifications.filter(c => (c.adNetwork || c.clickToken || c.clickId || c.trafficType === 'ad_click' || c.trafficType === 'spoofed_ad_bot') && c.visitorType === 'Bot').length;
+  const adLegitClicks = stats?.adLegitimateClicks ?? classifications.filter(c => (c.adNetwork || c.clickToken || c.clickId || c.trafficType === 'ad_click' || c.trafficType === 'spoofed_ad_bot') && c.visitorType === 'Human').length;
+  const adSpendSaved = (adBotsBlocked * avgCpc);
+  const adFraudRate = adClicks > 0 ? ((adBotsBlocked / adClicks) * 100).toFixed(1) : "0.0";
 
   // Filter and search classifications
   const filteredClassifications = useMemo(() => {
@@ -523,6 +554,137 @@ export function UserOverviewTab({
               />
               <circle cx="100" cy="6" r="3" fill="#D97706" stroke="#FFFFFF" strokeWidth="1.5" />
             </svg>
+          </div>
+        </div>
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          ROW 1.5: PPC AD FRAUD & BUDGET PROTECTION SHIELD (Phase 1)
+      ───────────────────────────────────────────────────────────── */}
+      <div className="bg-gradient-to-r from-[#0F172A] via-[#1E293B] to-[#0F172A] text-white border border-slate-700/60 rounded-xl p-4 sm:p-5 shadow-sm relative overflow-hidden">
+        {/* Subtle decorative glow */}
+        <div className="absolute top-0 right-1/4 w-72 h-36 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 right-10 w-48 h-24 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+
+        <div className="relative z-10">
+          {/* Header & CPC Adjuster */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-700/60 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm sm:text-base font-bold text-white tracking-tight flex items-center gap-2">
+                    <span>PPC Ad Fraud & Budget Protection</span>
+                  </h3>
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                    Real-Time Shield
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Protects Google Ads (gclid), Meta Ads (fbclid), TikTok (ttclid), & Bing CPC budgets from scrapers and click farms.
+                </p>
+              </div>
+            </div>
+
+            {/* Average CPC Adjuster */}
+            <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-lg text-xs self-start md:self-auto">
+              <DollarSign className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="text-slate-300 text-xs font-medium">Avg CPC:</span>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-400 text-xs">$</span>
+                <input
+                  type="number"
+                  step="0.10"
+                  min="0.10"
+                  max="50"
+                  value={avgCpc}
+                  onChange={(e) => handleCpcChange(parseFloat(e.target.value) || 0.1)}
+                  className="w-14 bg-slate-900 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-white font-mono focus:outline-none focus:border-emerald-400 text-center"
+                  title="Adjust your estimated average Cost Per Click (CPC) to calculate financial savings"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Ad Fraud Metric Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+            {/* Card 1: Estimated Ad Spend Saved */}
+            <div className="bg-slate-800/60 border border-slate-700/70 rounded-lg p-3.5 hover:border-emerald-500/50 transition-colors">
+              <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Ad Spend Saved</span>
+                </span>
+                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-semibold">
+                  Saved
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-emerald-400 tracking-tight font-mono">
+                ${adSpendSaved.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                {formatNumber(adBotsBlocked)} fake clicks deflected × ${avgCpc.toFixed(2)} CPC
+              </div>
+            </div>
+
+            {/* Card 2: Fraudulent Ad Clicks Blocked */}
+            <div className="bg-slate-800/60 border border-slate-700/70 rounded-lg p-3.5 hover:border-rose-500/50 transition-colors">
+              <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <Bot className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Fraudulent Clicks Blocked</span>
+                </span>
+                <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30 px-1.5 py-0.2 rounded font-semibold">
+                  {adFraudRate}% Fraud
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-rose-400 tracking-tight font-mono">
+                {formatNumber(adBotsBlocked)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Zero landing page render, deflected to 404
+              </div>
+            </div>
+
+            {/* Card 3: Legitimate Ad Buyers Passed */}
+            <div className="bg-slate-800/60 border border-slate-700/70 rounded-lg p-3.5 hover:border-blue-500/50 transition-colors">
+              <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Legitimate Ad Visitors</span>
+                </span>
+                <span className="text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30 px-1.5 py-0.2 rounded font-semibold">
+                  Real Buyers
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-blue-400 tracking-tight font-mono">
+                {formatNumber(adLegitClicks)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Forwarded seamlessly to approved offer
+              </div>
+            </div>
+
+            {/* Card 4: Total Ad Clicks Inspected */}
+            <div className="bg-slate-800/60 border border-slate-700/70 rounded-lg p-3.5 hover:border-slate-500 transition-colors">
+              <div className="flex items-center justify-between text-xs text-slate-300 font-medium">
+                <span className="flex items-center gap-1.5">
+                  <MousePointerClick className="w-3.5 h-3.5 text-slate-300" />
+                  <span>Total Paid Ad Clicks</span>
+                </span>
+                <span className="text-[10px] bg-slate-700 text-slate-300 border border-slate-600 px-1.5 py-0.2 rounded font-semibold">
+                  PPC Traffic
+                </span>
+              </div>
+              <div className="mt-2 text-2xl font-black text-white tracking-tight font-mono">
+                {formatNumber(adClicks)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Tracking tags: gclid, fbclid, ttclid, msclkid
+              </div>
+            </div>
           </div>
         </div>
       </div>
