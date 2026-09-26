@@ -898,6 +898,11 @@ export function UserOverviewTab({
                 const httpStatus = isHuman ? 200 : isPolicyFilter ? 302 : isChallenged ? 401 : 403;
                 const latency = isHuman ? "61ms" : "12ms";
 
+                const resolvedDeviceId = item.deviceId || `dev_srv_${(item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
+                const resolvedVisitorId = item.visitorId || `vis_${(resolvedDeviceId.replace(/^dev_(hw_|srv_)?/, "") || item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
+                const visitCountDisplay = typeof item.visitCount === 'number' && item.visitCount > 0 ? item.visitCount : 1;
+                const isReturning = item.isNewVisitor === false || visitCountDisplay > 1;
+
                 return (
                   <tr
                     key={item.id || idx}
@@ -914,9 +919,28 @@ export function UserOverviewTab({
                       </div>
                     </td>
 
-                    {/* 2. IP Address */}
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
-                      {ipStr}
+                    {/* 2. IP Address & Device / Visitor Identifiers */}
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <div className="font-mono font-bold text-slate-900">{ipStr}</div>
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200" title={`Device ID: ${resolvedDeviceId}`}>
+                            Dev: {resolvedDeviceId.length > 14 ? `${resolvedDeviceId.slice(0, 14)}...` : resolvedDeviceId}
+                          </span>
+                          <span className="font-mono text-[10px] text-indigo-700 bg-indigo-50/80 px-1.5 py-0.2 rounded border border-indigo-200/60" title={`Visitor ID: ${resolvedVisitorId}`}>
+                            Vis: {resolvedVisitorId.length > 14 ? `${resolvedVisitorId.slice(0, 14)}...` : resolvedVisitorId}
+                          </span>
+                          {isReturning ? (
+                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
+                              Returning ({visitCountDisplay} visits)
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-sans font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              1st Visit
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </td>
 
                     {/* 3. Decision Pill */}

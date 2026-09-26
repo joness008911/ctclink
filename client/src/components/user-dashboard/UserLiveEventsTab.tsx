@@ -111,7 +111,30 @@ export function UserLiveEventsTab() {
                           {evt.visitorType}
                         </span>
                       </td>
-                      <td className="py-3 px-3 font-mono font-semibold text-[#0F172A]">{evt.ipAddress}</td>
+                      <td className="py-3 px-3 font-mono">
+                        <div className="font-semibold text-[#0F172A]">{evt.ipAddress}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                          {evt.deviceId && (
+                            <span className="text-[10px] font-mono bg-slate-100 px-1 py-0.2 rounded border border-slate-200 text-slate-700" title={`Device ID: ${evt.deviceId}`}>
+                              Dev: {evt.deviceId.length > 12 ? `${evt.deviceId.slice(0, 12)}...` : evt.deviceId}
+                            </span>
+                          )}
+                          {evt.visitorId && (
+                            <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1 py-0.2 rounded border border-indigo-200" title={`Visitor ID: ${evt.visitorId}`}>
+                              Vis: {evt.visitorId.length > 12 ? `${evt.visitorId.slice(0, 12)}...` : evt.visitorId}
+                            </span>
+                          )}
+                          {evt.visitCount && evt.visitCount > 1 ? (
+                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1 py-0.2 rounded border border-purple-200">
+                              Returning ({evt.visitCount})
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-sans font-bold text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200">
+                              1st Visit
+                            </span>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 px-3 text-[#52635B]">{evt.detectionMethod}</td>
                       <td className="py-3 px-3 text-[#2D3B35] font-medium">{evt.country}</td>
                       <td className="py-3 px-3 text-[#2D3B35] max-w-[160px] truncate" title={evt.isp}>

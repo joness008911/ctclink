@@ -12,6 +12,7 @@
 
 export interface DeviceRecord {
   deviceId: string;
+  tenantKey: string;
   firstSeen: number; // Unix timestamp ms
   lastSeen: number;  // Unix timestamp ms
   visitCount: number;
@@ -32,9 +33,62 @@ class DeviceTracker {
   }
 
   /**
-   * Records a request for a given deviceId and IP address
+   * Helper to derive tenant-scoped key
    */
-  recordVisit(deviceId: string, ip: string, now: number = Date.now()): {
+  getTenantKey(deviceId: string, apiKeyId?: string | null): string {
+    return `${apiKeyId || "global"}:${deviceId}`;
+  }
+
+  /**
+   * Records sliding window velocity strictly for rate limiting
+   */
+  recordVelocity(tenantKey: string, now: number = Date.now()): {
+    velocity60s: number;
+    isRateLimited: boolean;
+  } {
+    const windowStart = now - 60 * 1000;
+    let record = this.devices.get(tenantKey);
+
+    if (!record) {
+      record = {
+        deviceId: tenantKey.split(":")[1] || tenantKey,
+        tenantKey,
+        firstSeen: now,
+        lastSeen: now,
+        visitCount: 1,
+        recentTimestamps: [now],
+        lastIp: "",
+      };
+      this.devices.set(tenantKey, record);
+      return { velocity60s: 1, isRateLimited: false };
+    }
+
+    record.lastSeen = now;
+    record.recentTimestamps = record.recentTimestamps.filter((t) => t > windowStart);
+    record.recentTimestamps.push(now);
+
+    const velocity60s = record.recentTimestamps.length;
+    const isRateLimited = velocity60s > 5;
+
+    return { velocity60s, isRateLimited };
+  }
+
+  /**
+   * Records a request for a given deviceId and IP address with tenant scoping
+   * and support for real database-backed visit history.
+   */
+  recordVisit(
+    deviceId: string,
+    ip: string,
+    now: number = Date.now(),
+    apiKeyId?: string | null,
+    knownDbStats?: {
+      visitCount: number;
+      firstSeen: number;
+      lastSeen: number;
+      isNewVisitor: boolean;
+    }
+  ): {
     deviceId: string;
     isNewVisitor: boolean;
     visitCount: number;
@@ -43,20 +97,50 @@ class DeviceTracker {
     velocity60s: number;
     isRateLimited: boolean;
   } {
+    const tenantKey = this.getTenantKey(deviceId, apiKeyId);
     const windowStart = now - 60 * 1000;
-    let record = this.devices.get(deviceId);
+    let record = this.devices.get(tenantKey);
+
+    if (knownDbStats) {
+      // Use authentic persistent database stats
+      const recent = record ? record.recentTimestamps.filter((t) => t > windowStart) : [];
+      recent.push(now);
+
+      const updatedRecord: DeviceRecord = {
+        deviceId,
+        tenantKey,
+        firstSeen: knownDbStats.firstSeen,
+        lastSeen: now,
+        visitCount: knownDbStats.visitCount,
+        recentTimestamps: recent,
+        lastIp: ip,
+      };
+      this.devices.set(tenantKey, updatedRecord);
+
+      const velocity60s = recent.length;
+      return {
+        deviceId,
+        isNewVisitor: knownDbStats.isNewVisitor,
+        visitCount: knownDbStats.visitCount,
+        firstSeen: new Date(knownDbStats.firstSeen).toISOString(),
+        lastSeen: new Date(knownDbStats.lastSeen).toISOString(),
+        velocity60s,
+        isRateLimited: velocity60s > 5,
+      };
+    }
 
     if (!record) {
       // First time seeing this device
       record = {
         deviceId,
+        tenantKey,
         firstSeen: now,
         lastSeen: now,
         visitCount: 1,
         recentTimestamps: [now],
-        lastIp: ip
+        lastIp: ip,
       };
-      this.devices.set(deviceId, record);
+      this.devices.set(tenantKey, record);
 
       return {
         deviceId,
@@ -65,7 +149,7 @@ class DeviceTracker {
         firstSeen: new Date(now).toISOString(),
         lastSeen: new Date(now).toISOString(),
         velocity60s: 1,
-        isRateLimited: false
+        isRateLimited: false,
       };
     }
 
@@ -76,7 +160,7 @@ class DeviceTracker {
     record.lastIp = ip;
 
     // Prune timestamps older than 60s
-    record.recentTimestamps = record.recentTimestamps.filter(t => t > windowStart);
+    record.recentTimestamps = record.recentTimestamps.filter((t) => t > windowStart);
     record.recentTimestamps.push(now);
 
     const velocity60s = record.recentTimestamps.length;
@@ -90,15 +174,16 @@ class DeviceTracker {
       firstSeen: new Date(record.firstSeen).toISOString(),
       lastSeen: new Date(record.lastSeen).toISOString(),
       velocity60s,
-      isRateLimited
+      isRateLimited,
     };
   }
 
   /**
    * Inspect existing record without incrementing count
    */
-  getDevice(deviceId: string): DeviceRecord | undefined {
-    return this.devices.get(deviceId);
+  getDevice(deviceId: string, apiKeyId?: string | null): DeviceRecord | undefined {
+    const tenantKey = this.getTenantKey(deviceId, apiKeyId);
+    return this.devices.get(tenantKey) || this.devices.get(deviceId);
   }
 
   /**

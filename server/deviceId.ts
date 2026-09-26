@@ -11,8 +11,10 @@ export interface VisitorDeviceSignals {
     screenWidth?: number;
     screenHeight?: number;
     colorDepth?: number;
+    pixelRatio?: number;
     missingPluginsArray?: boolean;
     gpuRenderer?: string;
+    canvasHash?: string;
     untrustedEvent?: boolean;
     timezoneOffset?: number;
     hardwareConcurrency?: number;
@@ -25,10 +27,10 @@ export interface VisitorDeviceSignals {
  * Generates a stable, high-entropy device identifier without injecting invasive 
  * client-side trackers or triggering privacy alarms in Brave/Safari/Firefox.
  * 
- * Handles:
- *  - High-Entropy Client Hardware Signals (when available via passive interstitial)
- *  - Server Subnet & Client-Hints Normalization (when requests arrive without client JS)
- *  - Safe fallback for all null / undefined / bot payloads
+ * Guarantees:
+ *  - Cross-VPN & Cross-Proxy persistence (Hardware layer is decoupled from IP subnet)
+ *  - Cross-Incognito persistence (Stable GPU + Screen + CPU + Canvas rendering profile)
+ *  - Safe server-side fallback for bots, ad reviewers, and non-JS clients
  */
 export function synthesizeDeviceId(signals: VisitorDeviceSignals): {
   deviceId: string;
@@ -50,26 +52,29 @@ export function synthesizeDeviceId(signals: VisitorDeviceSignals): {
     subnet = parts.slice(0, 3).join(":") + "::/48";
   }
 
-  // Tier 1: Hardware-backed ID (from passive screen/GPU/canvas tokens)
+  // Tier 1: Hardware-backed ID (from passive screen/GPU/canvas/hardware tokens)
+  // Cross-VPN, Cross-Proxy, and Cross-Incognito resilient: Does NOT bind to IP/subnet.
   if (
     tokens &&
     (tokens.gpuRenderer || (tokens.screenWidth && tokens.screenWidth > 0))
   ) {
     const screenRes = `${tokens.screenWidth || 0}x${tokens.screenHeight || 0}x${tokens.colorDepth || 0}`;
     const gpu = (tokens.gpuRenderer || "").toLowerCase().trim();
-    const plugins = tokens.missingPluginsArray ? "no_plugins" : "has_plugins";
     const cores = tokens.hardwareConcurrency || 0;
-    const tz = tokens.timezoneOffset || 0;
+    const tz = tokens.timezoneOffset !== undefined && tokens.timezoneOffset !== null ? tokens.timezoneOffset : 0;
+    const pixelRatio = tokens.pixelRatio ? Math.round(tokens.pixelRatio * 100) / 100 : 1;
+    const canvas = (tokens.canvasHash || "").trim();
 
-    // Combine hardware entropy with client hints/ua
+    // Hardware entropy without network IP/subnet or incognito-volatile plugin flags:
+    // Screen resolution, GPU hardware chip, CPU cores, timezone offset, pixel ratio, canvas render, and browser platform
     const hardwareSeed = [
-      subnet,
       ua,
       screenRes,
       gpu,
-      plugins,
       cores,
-      tz
+      tz,
+      pixelRatio,
+      canvas
     ].join("|");
 
     const hash = createHash("sha256").update(hardwareSeed).digest("hex").slice(0, 16);

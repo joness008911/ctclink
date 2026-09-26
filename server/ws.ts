@@ -31,6 +31,7 @@ export interface SecurityEventPayload {
   timestamp: string;
   ipAddress: string;
   deviceId?: string | null;
+  visitorId?: string | null;
   isNewVisitor?: boolean | null;
   firstSeen?: string | null;
   lastSeen?: string | null;
@@ -50,6 +51,11 @@ export interface SecurityEventPayload {
   isVerifiedReviewer?: boolean;
   reviewerPlatform?: string | null;
   adTraffic?: any;
+  userAgent?: string | null;
+  clientSignals?: any;
+  requestHeaders?: any;
+  responseDetails?: any;
+  timelineEvents?: any;
 }
 
 // Map: apiKeyId → set of open WebSocket connections for that key's owner(s)

@@ -708,6 +708,11 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                   ? "Residential Broadband"
                   : "Unresolved Carrier";
 
+                const resolvedDeviceId = c.deviceId || `dev_srv_${(c.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
+                const resolvedVisitorId = c.visitorId || `vis_${(resolvedDeviceId.replace(/^dev_(hw_|srv_)?/, "") || c.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
+                const visitCountDisplay = typeof c.visitCount === 'number' && c.visitCount > 0 ? c.visitCount : 1;
+                const isReturning = c.isNewVisitor === false || visitCountDisplay > 1;
+
                 return (
                   <tr
                     key={c.id || i}
@@ -723,20 +728,27 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       </div>
                     </td>
 
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
-                      <div>{ipStr}</div>
-                      {c.deviceId && (
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="font-mono text-[10px] text-slate-500 font-normal bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
-                            {c.deviceId.length > 14 ? `${c.deviceId.slice(0, 14)}...` : c.deviceId}
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <div className="font-mono font-bold text-slate-900">{ipStr}</div>
+                      <div className="flex flex-col gap-0.5 mt-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200" title={`Device ID: ${resolvedDeviceId}`}>
+                            Dev: {resolvedDeviceId.length > 14 ? `${resolvedDeviceId.slice(0, 14)}...` : resolvedDeviceId}
                           </span>
-                          {c.isNewVisitor === false && (
-                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1 rounded border border-purple-200">
-                              Returning
+                          <span className="font-mono text-[10px] text-indigo-700 bg-indigo-50/80 px-1.5 py-0.2 rounded border border-indigo-200/60" title={`Visitor ID: ${resolvedVisitorId}`}>
+                            Vis: {resolvedVisitorId.length > 14 ? `${resolvedVisitorId.slice(0, 14)}...` : resolvedVisitorId}
+                          </span>
+                          {isReturning ? (
+                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
+                              Returning ({visitCountDisplay} visits)
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-sans font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                              1st Visit
                             </span>
                           )}
                         </div>
-                      )}
+                      </div>
                     </td>
 
                     <td className="py-3.5 px-4 whitespace-nowrap">

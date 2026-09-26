@@ -58,7 +58,7 @@ import bcrypt from "bcrypt";
 import { db, isDatabaseConfigured } from "./db";
 import { isFirestoreAvailable } from "./firebase";
 import { FirestoreStorage } from "./firestoreStorage";
-import { eq, desc, sql, count, lt, or, inArray } from "drizzle-orm";
+import { eq, desc, sql, count, lt, or, and, inArray } from "drizzle-orm";
 import { getTierCallLimit } from "@shared/subscription";
 
 // IP2Geo Cache for performance optimization
@@ -109,6 +109,13 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   
   createClassification(classification: InsertClassification): Promise<Classification>;
+  getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, visitorId?: string | null): Promise<{
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  }>;
   getRecentClassifications(limit?: number): Promise<Classification[]>;
   getClassificationStats(): Promise<{
     totalClassifications: number;
@@ -418,8 +425,10 @@ export class MemStorage implements IStorage {
       browser: insertClassification.browser || null,
       deviceType: insertClassification.deviceType || null,
       deviceId: insertClassification.deviceId || null,
+      visitorId: insertClassification.visitorId || null,
       isNewVisitor: insertClassification.isNewVisitor !== undefined ? Boolean(insertClassification.isNewVisitor) : null,
       firstSeen: insertClassification.firstSeen ? new Date(insertClassification.firstSeen) : null,
+      lastSeen: insertClassification.lastSeen ? new Date(insertClassification.lastSeen) : null,
       visitCount: insertClassification.visitCount ?? null,
       apiKeyId: insertClassification.apiKeyId ?? null,
       adNetwork: insertClassification.adNetwork || null,
@@ -428,11 +437,64 @@ export class MemStorage implements IStorage {
       trafficType: insertClassification.trafficType || null,
       isVerifiedReviewer: Boolean(insertClassification.isVerifiedReviewer),
       reviewerPlatform: insertClassification.reviewerPlatform || null,
+      userAgent: insertClassification.userAgent || null,
+      clientSignals: insertClassification.clientSignals || null,
+      requestHeaders: insertClassification.requestHeaders || null,
+      responseDetails: insertClassification.responseDetails || null,
+      timelineEvents: insertClassification.timelineEvents || null,
+      riskScore: insertClassification.riskScore ?? null,
+      usageType: insertClassification.usageType || null,
       id, 
       timestamp: new Date() 
     };
     this.classifications.set(id, classification);
     return classification;
+  }
+
+  async getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, visitorId?: string | null): Promise<{
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  }> {
+    const now = new Date();
+    const pastVisits = Array.from(this.classifications.values())
+      .filter((c) => {
+        // Enforce tenant isolation
+        const matchApiKey = (c.apiKeyId || null) === (apiKeyId || null);
+        if (!matchApiKey) return false;
+
+        return (
+          (deviceId && c.deviceId === deviceId) ||
+          (visitorId && c.visitorId === visitorId) ||
+          (clientIp && clientIp !== "127.0.0.1" && clientIp !== "::1" && c.ipAddress === clientIp)
+        );
+      })
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    if (pastVisits.length === 0) {
+      return {
+        isNewVisitor: true,
+        visitCount: 1,
+        firstSeen: now,
+        lastSeen: now,
+      };
+    }
+
+    const firstVisit = pastVisits[0];
+    const mostRecentVisit = pastVisits[pastVisits.length - 1];
+    const firstSeen = firstVisit.firstSeen ? new Date(firstVisit.firstSeen) : new Date(firstVisit.timestamp);
+    const lastSeen = new Date(mostRecentVisit.timestamp);
+    const existingVisitorId = firstVisit.visitorId || mostRecentVisit.visitorId || null;
+
+    return {
+      isNewVisitor: false,
+      visitCount: pastVisits.length + 1,
+      firstSeen,
+      lastSeen,
+      existingVisitorId,
+    };
   }
 
   async getRecentClassifications(limit: number = 10): Promise<Classification[]> {
@@ -1374,6 +1436,69 @@ export class DatabaseStorage {
   async createClassification(classification: InsertClassification): Promise<Classification> {
     const [newClassification] = await db.insert(classifications).values(classification).returning();
     return newClassification;
+  }
+
+  async getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, visitorId?: string | null): Promise<{
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  }> {
+    const now = new Date();
+    try {
+      const matchConditions = [];
+      if (deviceId) matchConditions.push(eq(classifications.deviceId, deviceId));
+      if (visitorId) matchConditions.push(eq(classifications.visitorId, visitorId));
+      if (clientIp && clientIp !== "127.0.0.1" && clientIp !== "::1") {
+        matchConditions.push(eq(classifications.ipAddress, clientIp));
+      }
+
+      if (matchConditions.length === 0) {
+        return { isNewVisitor: true, visitCount: 1, firstSeen: now, lastSeen: now };
+      }
+
+      const queryConditions = apiKeyId 
+        ? and(eq(classifications.apiKeyId, apiKeyId), or(...matchConditions))
+        : or(...matchConditions);
+
+      const pastVisits = await db
+        .select()
+        .from(classifications)
+        .where(queryConditions)
+        .orderBy(classifications.timestamp);
+
+      if (pastVisits.length === 0) {
+        return {
+          isNewVisitor: true,
+          visitCount: 1,
+          firstSeen: now,
+          lastSeen: now,
+        };
+      }
+
+      const firstVisit = pastVisits[0];
+      const mostRecentVisit = pastVisits[pastVisits.length - 1];
+      const firstSeen = firstVisit.firstSeen ? new Date(firstVisit.firstSeen) : new Date(firstVisit.timestamp);
+      const lastSeen = new Date(mostRecentVisit.timestamp);
+      const existingVisitorId = firstVisit.visitorId || mostRecentVisit.visitorId || null;
+
+      return {
+        isNewVisitor: false,
+        visitCount: pastVisits.length + 1,
+        firstSeen,
+        lastSeen,
+        existingVisitorId,
+      };
+    } catch (e) {
+      console.error("Database getVisitorHistory error:", e);
+      return {
+        isNewVisitor: true,
+        visitCount: 1,
+        firstSeen: now,
+        lastSeen: now,
+      };
+    }
   }
 
   async getRecentClassifications(limit: number = 10): Promise<Classification[]> {

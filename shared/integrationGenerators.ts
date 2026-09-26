@@ -87,6 +87,14 @@ export default {
       const userAgent = request.headers.get('user-agent') || '';
       const referer = request.headers.get('referer') || '';
       
+      let clientTokens = null;
+      const rawTokens = url.searchParams.get('ctc_tk');
+      if (rawTokens) {
+        try {
+          clientTokens = JSON.parse(atob(rawTokens));
+        } catch(e) {}
+      }
+
       // Clean query parameters
       const cleanParams = new URLSearchParams(url.search);
       cleanParams.delete('ctc_verify');
@@ -107,6 +115,7 @@ export default {
             apiKey: '${apiKey}',
             ip: clientIp,
             userAgent: userAgent,
+            clientTokens: clientTokens,
             queryString: cleanParams.toString(),
             referer: referer,
             url: request.url
@@ -256,7 +265,52 @@ export default {
 
   <script>
     (function() {
+      var hwTokens = {
+        webdriver: !!(navigator.webdriver),
+        screenWidth: window.screen ? window.screen.width : 0,
+        screenHeight: window.screen ? window.screen.height : 0,
+        colorDepth: window.screen ? window.screen.colorDepth : 0,
+        pixelRatio: window.devicePixelRatio || 1,
+        gpuRenderer: '',
+        canvasHash: '',
+        timezoneOffset: new Date().getTimezoneOffset(),
+        hardwareConcurrency: navigator.hardwareConcurrency || 0
+      };
+
+      try {
+        var canvas = document.createElement('canvas');
+        var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (gl) {
+          var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+          if (debugInfo) {
+            hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+          }
+        }
+      } catch(e) {}
+
+      try {
+        var c2 = document.createElement('canvas');
+        c2.width = 160; c2.height = 30;
+        var ctx2 = c2.getContext('2d');
+        if (ctx2) {
+          ctx2.textBaseline = 'top';
+          ctx2.font = '12px Arial';
+          ctx2.fillStyle = '#f60';
+          ctx2.fillRect(10, 1, 40, 15);
+          ctx2.fillStyle = '#069';
+          ctx2.fillText('ctc_render', 2, 5);
+          hwTokens.canvasHash = c2.toDataURL().slice(-32);
+        }
+      } catch(e) {}
+
+      var encodedTokens = '';
+      try { encodedTokens = btoa(JSON.stringify(hwTokens)); } catch(e) {}
+
       var verifyUrl = window.location.pathname + (window.location.search ? window.location.search + '&ctc_verify=1' : '?ctc_verify=1');
+      if (encodedTokens) {
+        verifyUrl += '&ctc_tk=' + encodeURIComponent(encodedTokens);
+      }
+
       var statusEl = document.getElementById('p-status');
       var errorEl = document.getElementById('p-error');
       var errorMsgEl = document.getElementById('p-error-msg');

@@ -16,6 +16,12 @@ export interface SecurityEvent {
   id: string;
   timestamp: string;
   ipAddress: string;
+  deviceId?: string;
+  visitorId?: string;
+  isNewVisitor?: boolean;
+  visitCount?: number;
+  firstSeen?: string;
+  lastSeen?: string;
   visitorType: "Human" | "Bot";
   detectionMethod: string;
   country: string;

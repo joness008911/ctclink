@@ -1398,8 +1398,10 @@ ${renderedBody}
         screenWidth: window.screen ? window.screen.width : 0,
         screenHeight: window.screen ? window.screen.height : 0,
         colorDepth: window.screen ? window.screen.colorDepth : 0,
+        pixelRatio: window.devicePixelRatio || 1,
         missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
         gpuRenderer: '',
+        canvasHash: '',
         untrustedEvent: false,
         timezoneOffset: new Date().getTimezoneOffset(),
         hardwareConcurrency: navigator.hardwareConcurrency || 0
@@ -1413,6 +1415,22 @@ ${renderedBody}
           if (debugInfo) {
             hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
           }
+        }
+      } catch(e) {}
+
+      try {
+        var c2 = document.createElement('canvas');
+        c2.width = 160; c2.height = 30;
+        var ctx2 = c2.getContext('2d');
+        if (ctx2) {
+          ctx2.textBaseline = 'top';
+          ctx2.font = '12px Arial';
+          ctx2.fillStyle = '#f60';
+          ctx2.fillRect(10, 1, 40, 15);
+          ctx2.fillStyle = '#069';
+          ctx2.fillText('ctc_render', 2, 5);
+          var str = c2.toDataURL();
+          hwTokens.canvasHash = str.slice(-32);
         }
       } catch(e) {}
 

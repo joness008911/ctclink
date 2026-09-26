@@ -24,8 +24,10 @@ export const classifications = pgTable("classifications", {
   browser: text("browser"),
   deviceType: text("device_type"),
   deviceId: text("device_id"),
+  visitorId: text("visitor_id"),
   isNewVisitor: boolean("is_new_visitor"),
   firstSeen: timestamp("first_seen"),
+  lastSeen: timestamp("last_seen"),
   visitCount: integer("visit_count"),
   apiKeyId: varchar("api_key_id").references(() => apiKeys.id, { onDelete: 'set null' }), // Link to which API key was used
   adNetwork: text("ad_network"),
@@ -34,6 +36,13 @@ export const classifications = pgTable("classifications", {
   trafficType: text("traffic_type"),
   isVerifiedReviewer: boolean("is_verified_reviewer").default(false),
   reviewerPlatform: text("reviewer_platform"),
+  userAgent: text("user_agent"),
+  clientSignals: jsonb("client_signals"),
+  requestHeaders: jsonb("request_headers"),
+  responseDetails: jsonb("response_details"),
+  timelineEvents: jsonb("timeline_events"),
+  riskScore: integer("risk_score"),
+  usageType: text("usage_type"),
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 

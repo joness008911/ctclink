@@ -87,7 +87,30 @@ export default function ClassificationTable() {
                   <td className="p-4 text-sm text-muted-foreground">
                     {formatTime(classification.timestamp)}
                   </td>
-                  <td className="p-4 text-sm font-mono">{classification.ipAddress}</td>
+                  <td className="p-4 text-sm font-mono">
+                    <div className="font-bold text-foreground">{classification.ipAddress}</div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {classification.deviceId && (
+                        <span className="text-[10px] font-mono bg-muted px-1.5 py-0.5 rounded border border-border" title={`Device ID: ${classification.deviceId}`}>
+                          Dev: {classification.deviceId.length > 12 ? `${classification.deviceId.slice(0, 12)}...` : classification.deviceId}
+                        </span>
+                      )}
+                      {classification.visitorId && (
+                        <span className="text-[10px] font-mono bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-200 dark:border-indigo-800" title={`Visitor ID: ${classification.visitorId}`}>
+                          Vis: {classification.visitorId.length > 12 ? `${classification.visitorId.slice(0, 12)}...` : classification.visitorId}
+                        </span>
+                      )}
+                      {classification.visitCount && classification.visitCount > 1 ? (
+                        <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 dark:bg-purple-950/40 dark:text-purple-300 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+                          Returning ({classification.visitCount})
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-sans font-bold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                          1st Visit
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-4 text-sm">{classification.location}</td>
                   <td className="p-4">
                     <span 

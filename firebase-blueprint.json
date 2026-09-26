@@ -60,9 +60,16 @@
         "isp": { "type": "string" },
         "apiKeyId": { "type": "string" },
         "deviceId": { "type": "string" },
+        "visitorId": { "type": "string" },
         "isNewVisitor": { "type": "boolean" },
         "firstSeen": { "type": "string", "format": "date-time" },
+        "lastSeen": { "type": "string", "format": "date-time" },
         "visitCount": { "type": "number" },
+        "userAgent": { "type": "string" },
+        "clientSignals": { "type": "object" },
+        "requestHeaders": { "type": "object" },
+        "responseDetails": { "type": "object" },
+        "timelineEvents": { "type": "array" },
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "ipAddress", "visitorType"]

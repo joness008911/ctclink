@@ -211,8 +211,10 @@ export class FirestoreStorage implements IStorage {
       browser: classification.browser || "Unknown",
       deviceType: classification.deviceType || "desktop",
       deviceId: classification.deviceId || null,
+      visitorId: classification.visitorId || null,
       isNewVisitor: classification.isNewVisitor !== undefined ? Boolean(classification.isNewVisitor) : null,
       firstSeen: classification.firstSeen ? new Date(classification.firstSeen) : null,
+      lastSeen: classification.lastSeen ? new Date(classification.lastSeen) : null,
       visitCount: classification.visitCount ?? null,
       apiKeyId: classification.apiKeyId || null,
       adNetwork: classification.adNetwork || null,
@@ -221,18 +223,126 @@ export class FirestoreStorage implements IStorage {
       trafficType: classification.trafficType || null,
       isVerifiedReviewer: Boolean(classification.isVerifiedReviewer),
       reviewerPlatform: classification.reviewerPlatform || null,
+      userAgent: classification.userAgent || null,
+      clientSignals: classification.clientSignals || null,
+      requestHeaders: classification.requestHeaders || null,
+      responseDetails: classification.responseDetails || null,
+      timelineEvents: classification.timelineEvents || null,
+      riskScore: classification.riskScore ?? null,
+      usageType: classification.usageType || null,
       timestamp: now,
     };
 
     try {
       await setDoc(doc(this.db, "classifications", id), {
         ...record,
+        firstSeen: record.firstSeen ? record.firstSeen.toISOString() : null,
+        lastSeen: record.lastSeen ? record.lastSeen.toISOString() : null,
         timestamp: now.toISOString(),
       });
     } catch (e) {
       console.error("Firestore createClassification error:", e);
     }
     return record;
+  }
+
+  async getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, visitorId?: string | null): Promise<{
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  }> {
+    const now = new Date();
+    try {
+      const pastDocs: any[] = [];
+      
+      // Query by deviceId (single equality filter requires no composite index)
+      if (deviceId) {
+        const q = query(
+          collection(this.db, "classifications"),
+          where("deviceId", "==", deviceId),
+          limit(100)
+        );
+        const snaps = await getDocs(q);
+        snaps.forEach((docSnap) => {
+          const data = docSnap.data();
+          // Strictly isolate by apiKeyId
+          if ((data.apiKeyId || null) === (apiKeyId || null)) {
+            pastDocs.push(data);
+          }
+        });
+      }
+
+      // If nothing found by deviceId, check by visitorId
+      if (pastDocs.length === 0 && visitorId) {
+        const qVis = query(
+          collection(this.db, "classifications"),
+          where("visitorId", "==", visitorId),
+          limit(100)
+        );
+        const snaps = await getDocs(qVis);
+        snaps.forEach((docSnap) => {
+          const data = docSnap.data();
+          if ((data.apiKeyId || null) === (apiKeyId || null)) {
+            pastDocs.push(data);
+          }
+        });
+      }
+
+      // If still nothing found, corroborate with clientIp for non-localhost
+      if (pastDocs.length === 0 && clientIp && clientIp !== "127.0.0.1" && clientIp !== "::1") {
+        const qIp = query(
+          collection(this.db, "classifications"),
+          where("ipAddress", "==", clientIp),
+          limit(100)
+        );
+        const ipSnaps = await getDocs(qIp);
+        ipSnaps.forEach((docSnap) => {
+          const data = docSnap.data();
+          if ((data.apiKeyId || null) === (apiKeyId || null)) {
+            pastDocs.push(data);
+          }
+        });
+      }
+
+      if (pastDocs.length === 0) {
+        return {
+          isNewVisitor: true,
+          visitCount: 1,
+          firstSeen: now,
+          lastSeen: now,
+        };
+      }
+
+      pastDocs.sort((a, b) => {
+        const timeA = new Date(a.timestamp || 0).getTime();
+        const timeB = new Date(b.timestamp || 0).getTime();
+        return timeA - timeB;
+      });
+
+      const firstVisit = pastDocs[0];
+      const mostRecentVisit = pastDocs[pastDocs.length - 1];
+      const firstSeen = firstVisit.firstSeen ? new Date(firstVisit.firstSeen) : new Date(firstVisit.timestamp);
+      const lastSeen = new Date(mostRecentVisit.timestamp);
+      const existingVisitorId = firstVisit.visitorId || mostRecentVisit.visitorId || null;
+
+      return {
+        isNewVisitor: false,
+        visitCount: pastDocs.length + 1,
+        firstSeen,
+        lastSeen,
+        existingVisitorId,
+      };
+    } catch (e) {
+      console.error("Firestore getVisitorHistory error:", e);
+      return {
+        isNewVisitor: true,
+        visitCount: 1,
+        firstSeen: now,
+        lastSeen: now,
+      };
+    }
   }
 
   async getRecentClassifications(limitCount = 10): Promise<Classification[]> {
@@ -1277,21 +1387,40 @@ export class FirestoreStorage implements IStorage {
   // ── Classification for Users ───────────────────────────────────────────────
   async getUserClassifications(apiKeyId: string, limitCount = 500): Promise<Classification[]> {
     try {
-      const q = query(
-        collection(this.db, "classifications"),
-        where("apiKeyId", "==", apiKeyId),
-        orderBy("timestamp", "desc"),
-        limit(limitCount)
-      );
-      const snaps = await getDocs(q);
-      return snaps.docs.map((d) => {
+      let snaps;
+      try {
+        const q = query(
+          collection(this.db, "classifications"),
+          where("apiKeyId", "==", apiKeyId),
+          orderBy("timestamp", "desc"),
+          limit(limitCount)
+        );
+        snaps = await getDocs(q);
+      } catch (indexError) {
+        // Fallback: query without composite orderBy to prevent failure if index is missing
+        const fallbackQ = query(
+          collection(this.db, "classifications"),
+          where("apiKeyId", "==", apiKeyId),
+          limit(limitCount * 2)
+        );
+        snaps = await getDocs(fallbackQ);
+      }
+
+      const list = snaps.docs.map((d) => {
         const data = d.data();
         return {
           ...data,
           timestamp: data.timestamp ? new Date(data.timestamp) : new Date(),
+          firstSeen: data.firstSeen ? new Date(data.firstSeen) : null,
+          lastSeen: data.lastSeen ? new Date(data.lastSeen) : null,
         } as Classification;
       });
+
+      return list
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, limitCount);
     } catch (e) {
+      console.error("Firestore getUserClassifications error:", e);
       return [];
     }
   }
