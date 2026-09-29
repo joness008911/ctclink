@@ -820,70 +820,7 @@ Disallow: /assets/
 Disallow: /*`);
   });
 
-  // Client-Side Universal JavaScript Shield (for Shopify, Wix, Webflow, Squarespace)
-  app.get('/v1/protect.js', (req, res) => {
-    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    
-    const host = req.protocol + '://' + req.get('host');
-    
-    res.send(`/**
- * CleanTraffic Universal Client Shield
- * Lightweight client-side bot detection & ad attribution for Shopify, Wix, Webflow & Squarespace
- */
-(function() {
-  try {
-    var curScript = document.currentScript || document.querySelector('script[data-api-key]');
-    var apiKey = curScript ? curScript.getAttribute('data-api-key') : null;
-    if (!apiKey) {
-      console.warn('[CleanTraffic] Missing data-api-key attribute on protect.js script tag.');
-      return;
-    }
 
-    // Session cache to prevent redundant checks within the same user session
-    if (sessionStorage && sessionStorage.getItem('ctc_verified_' + apiKey) === '1') {
-      return;
-    }
-
-    var endpoint = '${host}';
-    var qs = window.location.search ? window.location.search.substring(1) : '';
-
-    var payload = {
-      apiKey: apiKey,
-      userAgent: navigator.userAgent || '',
-      queryString: qs,
-      referer: document.referrer || '',
-      url: window.location.href,
-      screenW: window.screen ? window.screen.width : null,
-      screenH: window.screen ? window.screen.height : null,
-      hasTouch: 'ontouchstart' in window || (navigator.maxTouchPoints > 0),
-      webdriver: Boolean(navigator.webdriver)
-    };
-
-    fetch(endpoint + '/api/classify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(verdict) {
-      if (verdict && verdict.action === 'redirect' && verdict.destination) {
-        window.location.replace(verdict.destination);
-      } else if (verdict && verdict.action === '403') {
-        document.documentElement.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#1e293b;"><h1 style="font-size:28px;margin-bottom:8px;">403 - Access Restricted</h1><p style="color:#64748b;font-size:15px;">Your connection does not meet security requirements.</p></div>';
-      } else {
-        if (sessionStorage) {
-          sessionStorage.setItem('ctc_verified_' + apiKey, '1');
-        }
-      }
-    })
-    .catch(function(err) {
-      // Fail-Safe: On network error, gracefully continue site operations
-    });
-  } catch(e) {}
-})();`);
-  });
 
   // Authentication middleware — admin sessions only (via token or session)
   const requireAuth = (req: any, res: any, next: any) => {
@@ -4515,13 +4452,20 @@ Disallow: /*`);
 
   // ========== END AD PLATFORMS MANAGEMENT ==========
 
-  // Serve client-side JavaScript protection tag (/v1/protect.js)
+  // Serve client-side JavaScript protection tag (/v1/protect.js) - Full WebGL/Canvas Hardware Fingerprinting & In-Place Shield
   app.get("/v1/protect.js", (req, res) => {
     res.setHeader("Content-Type", "application/javascript; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=300");
     res.setHeader("Access-Control-Allow-Origin", "*");
 
-    const protectJs = `(function() {
+    const protectJs = `/**
+ * CleanTraffic Universal Client Shield & Identification Agent
+ * Enterprise-grade client-side bot detection, hardware entropy & traffic defense.
+ * Compatible with Shopify, Wix, Webflow, Squarespace, WordPress, and Custom Landing Pages.
+ */
+(function(window, document) {
+  'use strict';
+
   var currentScript = document.currentScript || (function() {
     var scripts = document.getElementsByTagName('script');
     for (var i = scripts.length - 1; i >= 0; i--) {
@@ -4537,47 +4481,137 @@ Disallow: /*`);
   var subnote = currentScript.getAttribute('data-subnote') || 'Please wait while we secure your session.';
   var originUrl = window.location.origin || (window.location.protocol + '//' + window.location.host);
 
-  if (sessionStorage.getItem('ctc_verified') === '1') return;
+  // Ready listeners for developer API
+  var readyCallbacks = [];
+  var lastResult = null;
 
+  window.CleanTraffic = window.CleanTraffic || {
+    get: function() {
+      return new Promise(function(resolve) {
+        if (lastResult) return resolve(lastResult);
+        readyCallbacks.push(resolve);
+      });
+    },
+    onReady: function(cb) {
+      if (typeof cb !== 'function') return;
+      if (lastResult) cb(lastResult);
+      else readyCallbacks.push(cb);
+    },
+    version: '2.5.0'
+  };
+
+  // If already verified in this session, resolve immediately
+  var cacheKey = 'ctc_verified_' + (apiKey || 'default');
+  if (sessionStorage.getItem(cacheKey) === '1') {
+    var cachedData = null;
+    try { cachedData = JSON.parse(sessionStorage.getItem('ctc_data_' + apiKey) || '{}'); } catch(e) {}
+    lastResult = cachedData || { isHuman: true, action: 'Allowed', cached: true };
+    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
+    return;
+  }
+
+  // Visual Interstitial Loading Overlay (Zero-Flicker, Smooth Fade)
   var overlay = null;
   if (enableLoading) {
     overlay = document.createElement('div');
     overlay.id = 'ctc-protect-overlay';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0B0F19;color:#F8FAFC;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0B0F19;color:#F8FAFC;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;box-sizing:border-box;transition:opacity 0.25s ease-out;';
     overlay.innerHTML = '<div style="background:#111827;border:1px solid #1F2937;border-radius:16px;padding:36px 32px;max-width:440px;width:100%;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">' +
       '<div style="width:48px;height:48px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#10B981;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
       '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' +
       '</div>' +
-      '<h2 style="font-size:18px;font-weight:700;margin-bottom:8px;color:#FFFFFF;">' + heading + '</h2>' +
-      '<p style="font-size:13px;color:#94A3B8;margin-bottom:20px;line-height:1.5;">' + subnote + '</p>' +
+      '<h2 style="font-size:18px;font-weight:700;margin:0 0 8px;color:#FFFFFF;letter-spacing:-0.01em;">' + heading + '</h2>' +
+      '<p style="font-size:13px;color:#94A3B8;margin:0 0 20px;line-height:1.5;">' + subnote + '</p>' +
       '<div style="height:4px;width:100%;background:#1F2937;border-radius:2px;overflow:hidden;margin-bottom:12px;">' +
       '<div style="height:100%;width:40%;background:#10B981;border-radius:2px;animation:ctc-sweep 1.5s infinite ease-in-out;"></div>' +
       '</div>' +
-      '<div id="ctc-protect-status" style="font-size:12px;color:#64748B;font-family:monospace;">Verifying connection...</div>' +
+      '<div id="ctc-protect-status" style="font-size:12px;color:#64748B;font-family:monospace;">Verifying connection security...</div>' +
       '<div id="ctc-protect-retry" style="display:none;margin-top:14px;">' +
       '<button type="button" onclick="location.reload()" style="padding:8px 16px;background:#10B981;color:#0B0F19;font-weight:600;border:none;border-radius:6px;cursor:pointer;font-size:12px;">Retry Verification</button>' +
       '</div>' +
       '</div>' +
       '<style>@keyframes ctc-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}</style>';
-    document.documentElement.appendChild(overlay);
+    
+    if (document.body) {
+      document.body.appendChild(overlay);
+    } else {
+      document.documentElement.appendChild(overlay);
+    }
   }
 
-  var scriptSrc = currentScript.src;
-  var apiBase = scriptSrc.substring(0, scriptSrc.indexOf('/v1/protect.js'));
+  // 1. Full Entropy Collection (Identical to Fingerprint Pro & PHP Script)
+  var hwTokens = {
+    webdriver: Boolean(navigator.webdriver),
+    outerWidth: window.outerWidth || 0,
+    outerHeight: window.outerHeight || 0,
+    screenWidth: window.screen ? window.screen.width : 0,
+    screenHeight: window.screen ? window.screen.height : 0,
+    colorDepth: window.screen ? window.screen.colorDepth : 0,
+    pixelRatio: window.devicePixelRatio || 1,
+    missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
+    gpuRenderer: '',
+    canvasHash: '',
+    untrustedEvent: false,
+    timezoneOffset: new Date().getTimezoneOffset(),
+    hardwareConcurrency: navigator.hardwareConcurrency || 0,
+    touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0)
+  };
+
+  // Passive WebGL unmasked GPU renderer probe
+  try {
+    var canvas = document.createElement('canvas');
+    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+      }
+    }
+  } catch(e) {}
+
+  // Passive 2D Canvas anti-aliasing curve probe
+  try {
+    var c2 = document.createElement('canvas');
+    c2.width = 160;
+    c2.height = 30;
+    var ctx2 = c2.getContext('2d');
+    if (ctx2) {
+      ctx2.textBaseline = 'top';
+      ctx2.font = '12px Arial';
+      ctx2.fillStyle = '#f60';
+      ctx2.fillRect(10, 1, 40, 15);
+      ctx2.fillStyle = '#069';
+      ctx2.fillText('ctc_render', 2, 5);
+      hwTokens.canvasHash = c2.toDataURL().slice(-32);
+    }
+  } catch(e) {}
+
+  var scriptSrc = currentScript.src || '';
+  var apiBase = scriptSrc.indexOf('/v1/protect.js') !== -1 ? scriptSrc.substring(0, scriptSrc.indexOf('/v1/protect.js')) : originUrl;
   if (!apiBase) apiBase = originUrl;
 
   var qs = window.location.search ? window.location.search.substring(1) : '';
   var payload = {
     apiKey: apiKey,
-    userAgent: navigator.userAgent,
+    userAgent: navigator.userAgent || '',
     queryString: qs,
-    referer: document.referrer,
-    screenW: window.screen.width,
-    screenH: window.screen.height,
-    hasTouch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,
-    webdriver: Boolean(navigator.webdriver),
-    url: window.location.href
+    referer: document.referrer || '',
+    url: window.location.href,
+    clientTokens: hwTokens,
+    screenW: hwTokens.screenWidth,
+    screenH: hwTokens.screenHeight,
+    hasTouch: hwTokens.touchPoints > 0,
+    webdriver: hwTokens.webdriver
   };
+
+  function dismissOverlay() {
+    if (overlay && overlay.parentNode) {
+      overlay.style.opacity = '0';
+      setTimeout(function() {
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }, 250);
+    }
+  }
 
   fetch(apiBase + '/api/classify', {
     method: 'POST',
@@ -4587,31 +4621,54 @@ Disallow: /*`);
   .then(function(res) {
     if (res.status === 401 || res.status === 403) {
       if (overlay) {
-        document.getElementById('ctc-protect-status').textContent = 'Security configuration error (API Key Expired/Revoked).';
-        document.getElementById('ctc-protect-retry').style.display = 'block';
+        var statusEl = document.getElementById('ctc-protect-status');
+        var retryEl = document.getElementById('ctc-protect-retry');
+        if (statusEl) statusEl.textContent = 'Security configuration error (API Key Expired/Revoked).';
+        if (retryEl) retryEl.style.display = 'block';
       }
       return null;
     }
     return res.json();
   })
-  .then(function(data) {
-    if (!data) return;
+  .then(function(verdict) {
+    if (!verdict) return;
+
+    lastResult = {
+      visitorId: verdict.visitorId || verdict.visitor_id || '',
+      deviceId: verdict.deviceId || verdict.device_id || '',
+      isHuman: Boolean(verdict.isHuman || verdict.is_human),
+      action: verdict.action || (verdict.isHuman ? 'Allowed' : 'Blocked'),
+      country: verdict.country || '',
+      riskScore: verdict.risk_score || 0
+    };
+
+    // Store in session cache
+    try {
+      sessionStorage.setItem(cacheKey, '1');
+      sessionStorage.setItem('ctc_data_' + apiKey, JSON.stringify(lastResult));
+    } catch(e) {}
+
+    // Dispatch custom event & notify listeners
+    try {
+      window.dispatchEvent(new CustomEvent('ctc:verified', { detail: lastResult }));
+    } catch(e) {}
+    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
 
     // Strict 404 enforcement
-    if (data.action === '404' || data.statusCode === 404 || data.statusAction === '404' || data.destination === '404') {
-      document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;">The requested resource was not found on this server.</p></div>';
+    if (verdict.action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || verdict.destination === '404') {
+      document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
       return;
     }
 
     // Strict 403 enforcement
-    if (data.action === '403' || data.statusCode === 403 || data.statusAction === '403' || data.destination === '403') {
-      document.body.innerHTML = '<div style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;">Access to this resource is denied.</p></div>';
+    if (verdict.action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || verdict.destination === '403') {
+      document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
       return;
     }
 
-    // Redirect human visitor or custom bot URL
-    if (data.destination) {
-      var dest = data.destination;
+    // Smart Routing: Redirect if destination URL is configured and different from current page
+    if (verdict.destination && verdict.destination !== '404' && verdict.destination !== '403') {
+      var dest = verdict.destination;
       if (qs) {
         dest += (dest.indexOf('?') !== -1 ? '&' : '?') + qs;
       }
@@ -4619,23 +4676,14 @@ Disallow: /*`);
       return;
     }
 
-    // Clean allow
-    sessionStorage.setItem('ctc_verified', '1');
-    if (overlay && overlay.parentNode) {
-      overlay.style.transition = 'opacity 0.25s ease';
-      overlay.style.opacity = '0';
-      setTimeout(function() {
-        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-      }, 250);
-    }
+    // In-Place Landing Page Protection: Smoothly dismiss overlay, visitor continues browsing
+    dismissOverlay();
   })
-  .catch(function() {
-    // Fail-safe pass-through on error
-    if (overlay && overlay.parentNode) {
-      overlay.parentNode.removeChild(overlay);
-    }
+  .catch(function(err) {
+    // Fail-safe pass-through on transient network error
+    dismissOverlay();
   });
-})();`;
+})(window, document);`;
 
     res.send(protectJs);
   });

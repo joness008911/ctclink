@@ -404,7 +404,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    const filename = `cloaker-traffic-audit-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
+    const filename = `cleantraffic-audit-${format(new Date(), "yyyy-MM-dd-HHmm")}.csv`;
     link.setAttribute("download", filename);
     document.body.appendChild(link);
     link.click();

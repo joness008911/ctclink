@@ -37,6 +37,7 @@ export function generateCloudflareWorkerScript(options: GeneratorOptions): strin
   const enableLoading = options.enableLoading !== false; // default true
   const heading = (options.heading || "Verifying connection security...").replace(/"/g, '\\"');
   const subnote = (options.subnote || "Please wait while we secure your session.").replace(/"/g, '\\"');
+  const humanTargetUrl = (options.humanTargetUrl || "").replace(/\/+$/, "");
 
   if (enableLoading) {
     return `/**
@@ -405,7 +406,15 @@ export default {
  *    - Route pattern: *yourdomain.com/*
  *    - Zone: select your domain
  * 5. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
+ * 
+ * STANDALONE PROXY MODE (OPTIONAL):
+ * If using this worker on *.workers.dev directly as an ad campaign link, set ORIGIN_URL
+ * below to your target website (e.g. "https://yourwebsite.com").
  */
+
+// Target origin for standalone workers.dev proxy mode (optional)
+// Leave as empty string "" if using as a Route (*yourdomain.com/*) on a Cloudflare-managed domain.
+const ORIGIN_URL = "${humanTargetUrl}";
 
 export default {
   async fetch(request, env, ctx) {
@@ -420,7 +429,12 @@ export default {
     // 2. Check if visitor was previously cleared in this session
     const cookieHeader = request.headers.get('Cookie') || '';
     if (cookieHeader.includes('ctc_verified=1')) {
-      return fetch(request);
+      if (ORIGIN_URL) {
+        return fetch(new Request(new URL(url.pathname + url.search, ORIGIN_URL).toString(), request));
+      }
+      if (!url.hostname.endsWith('.workers.dev')) {
+        return fetch(request);
+      }
     }
 
     // 3. Extract real visitor client IP and request metadata
@@ -501,7 +515,78 @@ export default {
       console.warn('CleanTraffic Edge Worker classification pass-through on error:', err);
     }
 
-    // 5. Allowed visitor passes through seamlessly to your origin host (Shopify, Wix, Vercel, etc.)
+    // 5. Allowed human visitor routing
+    // Case A: Standalone Proxy mode with ORIGIN_URL configured
+    if (ORIGIN_URL) {
+      const targetUrl = new URL(url.pathname + url.search, ORIGIN_URL);
+      const proxyRequest = new Request(targetUrl.toString(), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        redirect: 'follow'
+      });
+      const originResponse = await fetch(proxyRequest);
+      const modifiedResponse = new Response(originResponse.body, originResponse);
+      modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
+      return modifiedResponse;
+    }
+
+    // Case B: Direct visit on *.workers.dev preview URL without custom domain route or ORIGIN_URL
+    // Prevents self-fetch loop that causes Cloudflare to print the raw JavaScript script on the screen!
+    if (url.hostname.endsWith('.workers.dev')) {
+      const colo = (request.cf && request.cf.colo) || 'Global Edge';
+      return new Response(\`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CleanTraffic Edge Shield &bull; Active</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0B0F19; color: #F8FAFC; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card { background: #111827; border: 1px solid #1F2937; border-radius: 16px; padding: 36px 32px; max-width: 520px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #10B981; border-radius: 9999px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #10B981; box-shadow: 0 0 8px #10B981; }
+    h1 { font-size: 20px; font-weight: 700; color: #FFFFFF; margin-bottom: 8px; }
+    p { font-size: 13px; color: #94A3B8; line-height: 1.6; margin-bottom: 20px; }
+    .info-grid { background: #0B0F19; border: 1px solid #1F2937; border-radius: 10px; padding: 16px; margin-bottom: 20px; font-size: 12px; }
+    .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1E293B; }
+    .row:last-child { border-bottom: none; }
+    .label { color: #64748B; }
+    .val { color: #F1F5F9; font-weight: 600; font-family: monospace; }
+    .note { font-size: 12px; color: #38BDF8; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 14px; line-height: 1.5; }
+    .steps { margin-top: 10px; font-size: 12px; color: #CBD5E1; line-height: 1.6; padding-left: 18px; }
+    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #F8FAFC; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge"><span class="dot"></span> CleanTraffic Edge Shield Active</div>
+    <h1>Cloudflare Edge Protection Online</h1>
+    <p>Your Cloudflare Worker is active at POP data center <strong>\${colo}</strong> and successfully connected to the CleanTraffic Intelligence Engine.</p>
+    <div class="info-grid">
+      <div class="row"><span class="label">Client IP:</span><span class="val">\${clientIp}</span></div>
+      <div class="row"><span class="label">Classification:</span><span class="val" style="color:#10B981">Human Visitor (Passed)</span></div>
+      <div class="row"><span class="label">Protection Mode:</span><span class="val">Transparent Inline Shield</span></div>
+      <div class="row"><span class="label">API Key:</span><span class="val">\${'${apiKey}'.slice(0, 8)}...</span></div>
+    </div>
+    <div class="note">
+      <strong>How to Protect Your Live Website:</strong>
+      <ol class="steps">
+        <li><strong>Custom Domain Route (Recommended):</strong> In Cloudflare, go to <strong>Workers &amp; Pages &rarr; Settings &rarr; Domains &amp; Routes &rarr; Add Route</strong> (e.g. <code>*yourdomain.com/*</code>).</li>
+        <li><strong>Or Standalone Proxy:</strong> Set <code>const ORIGIN_URL = "https://yourwebsite.com";</code> at line 20 of this worker script to proxy all verified visitors directly to your store or offer.</li>
+      </ol>
+    </div>
+  </div>
+</body>
+</html>\`, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      });
+    }
+
+    // Case C: Custom Domain Route Pass-Through (e.g. *yourdomain.com/*)
+    // Traffic passes seamlessly to origin host (Shopify, Wix, Vercel, WordPress, etc.)
     const originResponse = await fetch(request);
     const modifiedResponse = new Response(originResponse.body, originResponse);
     modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
@@ -512,9 +597,10 @@ export default {
 }
 
 /**
- * 2. 1-Line JavaScript Protection Snippet
- * For closed SaaS builders (Shopify, Wix, Webflow, Squarespace, ClickFunnels)
- * Supports both Interstitial Loading Screen Mode and Transparent Inline Mode.
+ * 2. 1-Line JavaScript Protection Snippet & Identification Agent
+ * For closed SaaS builders (Shopify, Wix, Webflow, Squarespace, Carrd, Custom HTML)
+ * Supports both In-Place Landing Page Protection and Smart Traffic Routing.
+ * Full WebGL GPU & 2D Canvas Hardware Fingerprinting across all environments.
  */
 export function generateJsSnippet(options: GeneratorOptions): {
   embedTag: string;
@@ -527,7 +613,7 @@ export function generateJsSnippet(options: GeneratorOptions): {
   const heading = options.heading || "Verifying connection security...";
   const subnote = options.subnote || "Please wait while we secure your session.";
 
-  const embedTag = `<!-- CleanTraffic Protection Tag (Place inside <head>) -->
+  const embedTag = `<!-- CleanTraffic Client Protection & Identification Agent (Place inside <head>) -->
 <script src="${endpoint}/v1/protect.js" 
   data-api-key="${apiKey}" 
   data-loading="${enableLoading ? "true" : "false"}" 
@@ -537,42 +623,128 @@ export function generateJsSnippet(options: GeneratorOptions): {
   async>
 </script>`;
 
-  const inlineScript = `<!-- CleanTraffic Universal Inline Shield -->
+  const inlineScript = `<!-- CleanTraffic Autonomous Inline Shield & Fingerprinting Agent -->
 <script>
-(function() {
+(function(window, document) {
+  'use strict';
   var apiKey = "${apiKey}";
   var endpoint = "${endpoint}";
   var enableLoading = ${enableLoading ? "true" : "false"};
   var qs = window.location.search ? window.location.search.substring(1) : "";
   
+  // Ready listeners for developer API (Fingerprint-style)
+  var readyCallbacks = [];
+  var lastResult = null;
+  window.CleanTraffic = window.CleanTraffic || {
+    get: function() {
+      return new Promise(function(resolve) {
+        if (lastResult) return resolve(lastResult);
+        readyCallbacks.push(resolve);
+      });
+    },
+    onReady: function(cb) {
+      if (typeof cb !== 'function') return;
+      if (lastResult) cb(lastResult);
+      else readyCallbacks.push(cb);
+    },
+    version: '2.5.0'
+  };
+
   // Anti-bypass session storage to prevent repeated checks
-  if (sessionStorage.getItem("ctc_verified") === "1") return;
+  var cacheKey = "ctc_verified_" + apiKey;
+  if (sessionStorage.getItem(cacheKey) === "1") {
+    var cachedData = null;
+    try { cachedData = JSON.parse(sessionStorage.getItem("ctc_data_" + apiKey) || "{}"); } catch(e) {}
+    lastResult = cachedData || { isHuman: true, action: "Allowed", cached: true };
+    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
+    return;
+  }
 
   var overlay = null;
   if (enableLoading) {
     overlay = document.createElement("div");
     overlay.id = "ctc-loading-overlay";
-    overlay.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0B0F19;color:#F8FAFC;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;";
+    overlay.style.cssText = "position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0B0F19;color:#F8FAFC;z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:20px;box-sizing:border-box;transition:opacity 0.25s ease-out;";
     overlay.innerHTML = '<div style="background:#111827;border:1px solid #1F2937;border-radius:16px;padding:36px 32px;max-width:440px;width:100%;text-align:center;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">' +
-      '<h2 style="font-size:18px;font-weight:700;margin-bottom:8px;color:#FFF;">${heading.replace(/'/g, "\\'")}</h2>' +
-      '<p style="font-size:13px;color:#94A3B8;margin-bottom:20px;">${subnote.replace(/'/g, "\\'")}</p>' +
+      '<div style="width:48px;height:48px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);color:#10B981;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;">' +
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>' +
+      '</div>' +
+      '<h2 style="font-size:18px;font-weight:700;margin:0 0 8px;color:#FFF;letter-spacing:-0.01em;">${heading.replace(/'/g, "\\'")}</h2>' +
+      '<p style="font-size:13px;color:#94A3B8;margin:0 0 20px;line-height:1.5;">${subnote.replace(/'/g, "\\'")}</p>' +
       '<div style="height:4px;width:100%;background:#1F2937;border-radius:2px;overflow:hidden;margin-bottom:12px;"><div style="height:100%;width:40%;background:#10B981;border-radius:2px;animation:ctc-sweep 1.5s infinite ease-in-out;"></div></div>' +
-      '<div id="ctc-msg" style="font-size:12px;color:#64748B;font-family:monospace;">Verifying connection...</div>' +
+      '<div id="ctc-msg" style="font-size:12px;color:#64748B;font-family:monospace;">Verifying connection security...</div>' +
       '<div id="ctc-retry" style="display:none;margin-top:14px;"><button type="button" onclick="location.reload()" style="padding:8px 16px;background:#10B981;color:#0B0F19;font-weight:600;border:none;border-radius:6px;cursor:pointer;font-size:12px;">Retry Verification</button></div>' +
       '</div><style>@keyframes ctc-sweep{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}</style>';
-    document.documentElement.appendChild(overlay);
+    if (document.body) { document.body.appendChild(overlay); } else { document.documentElement.appendChild(overlay); }
   }
+
+  // Full Passive Hardware & Entropy Collector
+  var hwTokens = {
+    webdriver: Boolean(navigator.webdriver),
+    outerWidth: window.outerWidth || 0,
+    outerHeight: window.outerHeight || 0,
+    screenWidth: window.screen ? window.screen.width : 0,
+    screenHeight: window.screen ? window.screen.height : 0,
+    colorDepth: window.screen ? window.screen.colorDepth : 0,
+    pixelRatio: window.devicePixelRatio || 1,
+    missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
+    gpuRenderer: '',
+    canvasHash: '',
+    untrustedEvent: false,
+    timezoneOffset: new Date().getTimezoneOffset(),
+    hardwareConcurrency: navigator.hardwareConcurrency || 0,
+    touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0)
+  };
+
+  // Passive WebGL unmasked GPU renderer probe
+  try {
+    var canvas = document.createElement('canvas');
+    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+      }
+    }
+  } catch(e) {}
+
+  // Passive 2D Canvas anti-aliasing curve probe
+  try {
+    var c2 = document.createElement('canvas');
+    c2.width = 160; c2.height = 30;
+    var ctx2 = c2.getContext('2d');
+    if (ctx2) {
+      ctx2.textBaseline = 'top';
+      ctx2.font = '12px Arial';
+      ctx2.fillStyle = '#f60';
+      ctx2.fillRect(10, 1, 40, 15);
+      ctx2.fillStyle = '#069';
+      ctx2.fillText('ctc_render', 2, 5);
+      hwTokens.canvasHash = c2.toDataURL().slice(-32);
+    }
+  } catch(e) {}
 
   var payload = {
     apiKey: apiKey,
-    userAgent: navigator.userAgent,
+    userAgent: navigator.userAgent || '',
     queryString: qs,
-    referer: document.referrer,
-    screenW: window.screen.width,
-    screenH: window.screen.height,
-    hasTouch: 'ontouchstart' in window || navigator.maxTouchPoints > 0,
-    webdriver: Boolean(navigator.webdriver)
+    referer: document.referrer || '',
+    url: window.location.href,
+    clientTokens: hwTokens,
+    screenW: hwTokens.screenWidth,
+    screenH: hwTokens.screenHeight,
+    hasTouch: hwTokens.touchPoints > 0,
+    webdriver: hwTokens.webdriver
   };
+
+  function dismissOverlay() {
+    if (overlay && overlay.parentNode) {
+      overlay.style.opacity = '0';
+      setTimeout(function() {
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }, 250);
+    }
+  }
 
   fetch(endpoint + "/api/classify", {
     method: "POST",
@@ -582,7 +754,7 @@ export function generateJsSnippet(options: GeneratorOptions): {
   .then(function(res) {
     if (res.status === 401 || res.status === 403) {
       if (overlay) {
-        document.getElementById("ctc-msg").textContent = "Security gateway configuration required.";
+        document.getElementById("ctc-msg").textContent = "Security gateway configuration required (API Key Expired/Revoked).";
         document.getElementById("ctc-retry").style.display = "block";
       }
       return null;
@@ -592,20 +764,39 @@ export function generateJsSnippet(options: GeneratorOptions): {
   .then(function(data) {
     if (!data) return;
 
+    lastResult = {
+      visitorId: data.visitorId || data.visitor_id || '',
+      deviceId: data.deviceId || data.device_id || '',
+      isHuman: Boolean(data.isHuman || data.is_human),
+      action: data.action || (data.isHuman ? 'Allowed' : 'Blocked'),
+      country: data.country || '',
+      riskScore: data.risk_score || 0
+    };
+
+    try {
+      sessionStorage.setItem(cacheKey, "1");
+      sessionStorage.setItem("ctc_data_" + apiKey, JSON.stringify(lastResult));
+    } catch(e) {}
+
+    try {
+      window.dispatchEvent(new CustomEvent('ctc:verified', { detail: lastResult }));
+    } catch(e) {}
+    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
+
     // Strict HTTP 404 enforcement
     if (data.action === "404" || data.statusCode === 404 || data.statusAction === "404" || data.destination === "404") {
-      document.body.innerHTML = "<div style='font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;'><h1 style='font-size:32px;margin-bottom:8px;'>404 Not Found</h1><p style='color:#64748b;'>The requested resource was not found.</p></div>";
+      document.body.innerHTML = "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;'><h1 style='font-size:32px;font-weight:700;margin-bottom:8px;'>404 Not Found</h1><p style='color:#64748b;font-size:16px;'>The requested resource was not found on this server.</p></div>";
       return;
     }
 
     // Strict HTTP 403 enforcement
     if (data.action === "403" || data.statusCode === 403 || data.statusAction === "403" || data.destination === "403") {
-      document.body.innerHTML = "<div style='font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;'><h1 style='font-size:32px;margin-bottom:8px;'>403 Forbidden</h1><p style='color:#64748b;'>Access to this resource is denied.</p></div>";
+      document.body.innerHTML = "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;'><h1 style='font-size:32px;font-weight:700;margin-bottom:8px;'>403 Forbidden</h1><p style='color:#64748b;font-size:16px;'>Access to this resource is denied.</p></div>";
       return;
     }
 
-    // Redirect human visitor or custom bot URL
-    if (data.destination) {
+    // Smart Traffic Routing: Redirect if destination URL is configured
+    if (data.destination && data.destination !== '404' && data.destination !== '403') {
       var dest = data.destination;
       if (qs) {
         dest += (dest.indexOf('?') !== -1 ? '&' : '?') + qs;
@@ -614,19 +805,14 @@ export function generateJsSnippet(options: GeneratorOptions): {
       return;
     }
 
-    // Clean allow
-    sessionStorage.setItem("ctc_verified", "1");
-    if (overlay && overlay.parentNode) {
-      overlay.parentNode.removeChild(overlay);
-    }
+    // In-Place Landing Page Protection: Smoothly dismiss overlay, visitor continues browsing
+    dismissOverlay();
   })
   .catch(function() {
     // Fail-safe pass-through on error or network timeout
-    if (overlay && overlay.parentNode) {
-      overlay.parentNode.removeChild(overlay);
-    }
+    dismissOverlay();
   });
-})();
+})(window, document);
 </script>`;
 
   return { embedTag, inlineScript };
@@ -635,7 +821,8 @@ export function generateJsSnippet(options: GeneratorOptions): {
 /**
  * 3. WordPress Plugin (.php source)
  * Packaged as a standard WordPress single-file plugin
- * Supports both Interstitial Loading Screen Mode and Transparent Inline Mode.
+ * Supports both In-Place Landing Page Protection and Interstitial Loading Screen Mode.
+ * Enqueues client-side hardware entropy probe for 100% Device ID parity.
  */
 export function generateWordPressPluginPhp(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
@@ -646,16 +833,16 @@ export function generateWordPressPluginPhp(options: GeneratorOptions): string {
 
   return `<?php
 /**
- * Plugin Name: CleanTraffic Security Shield
+ * Plugin Name: CleanTraffic Security Shield & Verification Gateway
  * Plugin URI: https://cleantraffic.io
- * Description: Deterministic real-time bot protection, ad attribution, and cloaking shield for WordPress & WooCommerce.
- * Version: 2.2.0
+ * Description: Real-time bot protection, visitor identification, and traffic security gateway for WordPress & WooCommerce.
+ * Version: 2.5.0
  * Author: CleanTraffic
  * Author URI: https://cleantraffic.io
  * License: GPLv2 or later
  * 
- * MODE: ${enableLoading ? "Interstitial Loading Screen" : "Transparent Inline Guard"}
- * ERROR HANDLING: Strict 404/403 support, expired/revoked key protection, ad token preservation.
+ * MODE: ${enableLoading ? "Interstitial Loading Screen & Client Hardware Probe" : "Transparent Inline Guard"}
+ * CORE FEATURES: In-Place Landing Page Protection, Strict 404/403 support, hardware entropy, UTM preservation.
  */
 
 if (!defined('ABSPATH')) {
@@ -669,6 +856,16 @@ class CleanTrafficShield {
 
     public function __construct() {
         add_action('init', array($this, 'inspect_traffic'), 1);
+        if ($this->enableLoading) {
+            add_action('wp_head', array($this, 'inject_hardware_probe'), 1);
+        }
+    }
+
+    public function inject_hardware_probe() {
+        if (is_admin() || (isset($_COOKIE['ctc_verified']) && $_COOKIE['ctc_verified'] === '1')) {
+            return;
+        }
+        echo '<script src="' . esc_url($this->apiEndpoint . '/v1/protect.js') . '" data-api-key="' . esc_attr($this->apiKey) . '" data-loading="true" data-heading="${heading.replace(/"/g, '\\"')}" data-subnote="${subnote.replace(/"/g, '\\"')}" async></script>';
     }
 
     public function inspect_traffic() {
@@ -696,7 +893,7 @@ class CleanTrafficShield {
             'headers'     => array(
                 'Content-Type' => 'application/json; charset=utf-8',
                 'X-API-Key'    => $this->apiKey,
-                'User-Agent'   => 'CleanTraffic-WordPress-Shield/2.2'
+                'User-Agent'   => 'CleanTraffic-WordPress-Shield/2.5'
             ),
             'body'        => wp_json_encode(array(
                 'apiKey'      => $this->apiKey,
@@ -746,7 +943,7 @@ class CleanTrafficShield {
                     exit;
                 }
 
-                // Redirect human visitor or custom bot URL with preserved query parameters
+                // Smart Traffic Routing: Redirect if destination URL is configured
                 if (!empty($dest) && $dest !== '404' && $dest !== '403') {
                     if (!empty($queryString)) {
                         $dest .= (strpos($dest, '?') !== false ? '&' : '?') . $queryString;
@@ -758,7 +955,7 @@ class CleanTrafficShield {
             }
         }
 
-        // Cache verification for 1 hour on clean allow
+        // In-Place Landing Page Protection: Cache verification for 1 hour on clean allow
         setcookie('ctc_verified', '1', time() + 3600, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
     }
 
