@@ -35,7 +35,8 @@ import {
   Shield, 
   HelpCircle, 
   Search,
-  Filter
+  Filter,
+  AlertCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1153,13 +1154,24 @@ export function UserIntegrationTab({
                   </p>
                 </div>
 
-                <Button
-                  onClick={handleDownloadCloudflareWorker}
-                  className="bg-[#F6821F] hover:bg-[#E06D0C] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shrink-0"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span>Download worker.js</span>
-                </Button>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                  <Button
+                    onClick={() => handleCopyCurrentCode(cloudflareWorkerCode, "Cloudflare Worker")}
+                    className="bg-[#F6821F] hover:bg-[#E06D0C] text-white text-xs font-bold px-4 h-9 rounded-lg gap-1.5 shrink-0 shadow-xs"
+                  >
+                    {copiedCode ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    <span>{copiedCode ? "Code Copied!" : "Copy Worker Code"}</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleDownloadCloudflareWorker}
+                    className="text-xs text-[#0F172A] border-[#D5DFD9] bg-white hover:bg-slate-50 font-semibold px-3 h-9 rounded-lg gap-1.5 shrink-0"
+                    title="For CLI users deploying with Wrangler"
+                  >
+                    <Download className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Download (for Wrangler CLI)</span>
+                  </Button>
+                </div>
               </div>
 
               {/* Step-by-Step Guide */}
@@ -1170,17 +1182,17 @@ export function UserIntegrationTab({
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                   <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">1</span>
-                    <div className="font-bold text-slate-900">Create Worker</div>
+                    <div className="font-bold text-slate-900">Create Worker (Not Pages)</div>
                     <p className="text-[#64748B] text-[11px] leading-relaxed">
-                      Log in to Cloudflare &rarr; <strong>Workers &amp; Pages</strong> &rarr; Click <strong>Create Worker</strong>.
+                      Go to Cloudflare &rarr; <strong>Workers &amp; Pages</strong> &rarr; Select tab <strong>Workers</strong> (do not click Pages) &rarr; Click <strong>Create Worker</strong> &rarr; <strong>Deploy</strong>.
                     </p>
                   </div>
 
                   <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">2</span>
-                    <div className="font-bold text-slate-900">Paste Script</div>
+                    <div className="font-bold text-slate-900">Paste in Quick Edit</div>
                     <p className="text-[#64748B] text-[11px] leading-relaxed">
-                      Click <strong>Quick Edit</strong>, paste the script below (with your active API key), and click <strong>Save and Deploy</strong>.
+                      Click <strong>Edit code</strong> (or <strong>Quick Edit</strong>). Select all starter code, replace it with the copied worker code below, and click <strong>Save and deploy</strong>.
                     </p>
                   </div>
 
@@ -1197,7 +1209,18 @@ export function UserIntegrationTab({
                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">4</span>
                     <div className="font-bold text-slate-900">Live Protection</div>
                     <p className="text-[#64748B] text-[11px] leading-relaxed">
-                      Traffic is now filtered at Cloudflare&apos;s nearest edge server. Bots receive authentic 403/404, humans pass with zero delay.
+                      Edge inspection runs immediately. Bots and scrapers receive authentic 403/404, legitimate human visitors pass instantly, and all hits appear in your Live Traffic logs.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Troubleshooting Callout for Upload Error */}
+                <div className="bg-amber-50/80 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold text-amber-950">Important: Cloudflare Workers do NOT use file uploaders</span>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      If you see <em>&quot;This uploader does not yet support projects that require a build process... Please use wrangler deploy instead&quot;</em>, you accidentally opened Cloudflare Pages&apos; static asset drag-and-drop uploader. Workers are deployed directly in the browser by clicking <strong>Edit code</strong> (or <strong>Quick Edit</strong>), pasting the code into the online editor, and clicking <strong>Save and deploy</strong>.
                     </p>
                   </div>
                 </div>

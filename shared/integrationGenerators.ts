@@ -398,30 +398,36 @@ export default {
  * - Ad Click Token Forwarding: Passes fbclid, gclid, ttclid, msclkid, UTMs seamlessly.
  * - Fail-Safe Resiliency: 2.5-second timeout ensures visitors are never stranded.
  * 
- * DEPLOYMENT INSTRUCTIONS:
+ * DEPLOYMENT INSTRUCTIONS (Quick Web Browser Setup):
  * 1. Log in to your Cloudflare Dashboard (https://dash.cloudflare.com)
- * 2. Go to "Workers & Pages" -> "Create Application" -> "Create Worker"
- * 3. Replace all default code with this script and click "Deploy"
- * 4. Go to "Settings" -> "Domains & Routes" -> "Add Route"
+ * 2. Go to "Workers & Pages" -> "Create Application" -> Select tab "Workers" (NOT Pages!)
+ * 3. Click "Create Worker" -> Click "Deploy" (to initialize)
+ * 4. Click "Edit code" (or "Quick Edit") directly in your browser
+ * 5. Delete the default sample code, PASTE this script, and click "Save and deploy"
+ * 6. Go to Worker Settings -> "Domains & Routes" -> "Add Route"
  *    - Route pattern: *yourdomain.com/*
  *    - Zone: select your domain
- * 5. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
+ * 7. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
+ * 
+ * NOTE: Do NOT use the Cloudflare Pages "Upload assets" drag-and-drop tool.
+ * Workers do not use file uploaders; code is pasted directly into the Quick Edit browser editor.
  * 
  * STANDALONE PROXY MODE (OPTIONAL):
  * If using this worker on *.workers.dev directly as an ad campaign link, set ORIGIN_URL
  * below to your target website (e.g. "https://yourwebsite.com").
  */
 
-// Target origin for standalone workers.dev proxy mode (optional)
-// Leave as empty string "" if using as a Route (*yourdomain.com/*) on a Cloudflare-managed domain.
-const ORIGIN_URL = "${humanTargetUrl}";
+// Target origin ONLY for standalone workers.dev proxy mode.
+// For live domains (Shopify, Wix, WordPress, VPS) with Cloudflare Routes, leave as empty string ""
+// so Cloudflare automatically proxies verified visitors to your live web host.
+const ORIGIN_URL = "";
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // 1. Bypass static assets (images, CSS, JS, fonts, media) to save API calls
-    const isStaticAsset = /\\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf)$/i.test(url.pathname);
+    const isStaticAsset = /\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf)$/i.test(url.pathname);
     if (isStaticAsset) {
       return fetch(request);
     }
@@ -437,7 +443,10 @@ export default {
       }
     }
 
-    // 3. Extract real visitor client IP and request metadata
+    // 3. Resolve API Key: supports Cloudflare Secret (env.CLEANTRAFFIC_API_KEY) or pre-configured key
+    const activeApiKey = (env && env.CLEANTRAFFIC_API_KEY) ? env.CLEANTRAFFIC_API_KEY : '${apiKey}';
+
+    // 4. Extract real visitor client IP and request metadata
     const clientIp = request.headers.get('cf-connecting-ip') 
       || request.headers.get('x-real-ip') 
       || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
@@ -447,7 +456,7 @@ export default {
     const referer = request.headers.get('referer') || '';
     const queryString = url.search ? url.search.substring(1) : '';
 
-    // 4. Query CleanTraffic Intelligence Engine with strict 2.5s fail-safe timeout
+    // 5. Query CleanTraffic Intelligence Engine with strict 2.5s fail-safe timeout
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 2500);
@@ -456,11 +465,11 @@ export default {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': '${apiKey}',
+          'X-API-Key': activeApiKey,
           'User-Agent': 'CleanTraffic-Cloudflare-Worker-Inline/2.0'
         },
         body: JSON.stringify({
-          apiKey: '${apiKey}',
+          apiKey: activeApiKey,
           ip: clientIp,
           userAgent: userAgent,
           queryString: queryString,
@@ -472,7 +481,7 @@ export default {
 
       clearTimeout(timeoutId);
 
-      // Key revoked, expired, or unauthorized -> Fail closed safely without exposing targets
+      // Key revoked, expired, or unauthorized -> Fail closed safely
       if (response.status === 401 || response.status === 403) {
         return new Response('503 Service Unavailable - Security Gateway Configuration Required', {
           status: 503,
@@ -482,32 +491,32 @@ export default {
 
       if (response.ok) {
         const verdict = await response.json();
-        const action = verdict.action || '';
-        const dest = verdict.destination || '';
+        const action = String(verdict.action || '');
+        const statusCode = verdict.statusCode;
+        const statusAction = String(verdict.statusAction || '');
 
-        // Strict HTTP 404 enforcement
-        if (action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || dest === '404') {
+        // ── BOT & CRAWLER INTERCEPTION ──
+        // Cloudflare Worker strictly serves 404 or 403 directly on the requested URL.
+        // No external redirect or separate fallback URL is used here (fallback redirects remain in PHP).
+        if (!verdict.isHuman || action === 'Blocked') {
+          if (action === '403' || statusCode === 403 || statusAction === '403') {
+            return new Response('403 Forbidden - Access Denied', {
+              status: 403,
+              headers: { 
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Cache-Control': 'no-store, no-cache, must-revalidate'
+              }
+            });
+          }
+
+          // Default strict 404 Not Found directly on the requested domain URL
           return new Response('404 Not Found', {
             status: 404,
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+            headers: { 
+              'Content-Type': 'text/plain; charset=utf-8',
+              'Cache-Control': 'no-store, no-cache, must-revalidate'
+            }
           });
-        }
-
-        // Strict HTTP 403 enforcement
-        if (action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || dest === '403' || (!verdict.isHuman && !dest)) {
-          return new Response('403 Forbidden - Access Denied', {
-            status: 403,
-            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-          });
-        }
-
-        // Redirect human visitor or custom bot URL with preserved query parameters
-        if (dest && dest !== '404' && dest !== '403') {
-          let targetUrl = dest;
-          if (queryString) {
-            targetUrl += (targetUrl.includes('?') ? '&' : '?') + queryString;
-          }
-          return Response.redirect(targetUrl, 302);
         }
       }
     } catch (err) {
