@@ -3,4 +3,11 @@ dist
 .DS_Store
 server/public
 vite.config.ts.*
-*.tar.gzserver/.api-key
+*.tar.gz
+server/.api-key
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
