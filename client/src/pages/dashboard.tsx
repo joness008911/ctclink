@@ -49,6 +49,7 @@ import WhitelabelDomainSettings from "@/components/whitelabel-domain-settings";
 import EmailManagement from "@/components/email-management";
 import ThemeManagement from "@/components/theme-management";
 import AdIntelligenceManagement from "@/components/ad-intelligence-management";
+import AdminMonitoringDashboard from "@/components/admin-monitoring-dashboard";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -265,6 +266,7 @@ export default function Dashboard() {
     {
       group: "System & Compliance",
       items: [
+        { id: "monitoring", label: "Health & Alerts", icon: Activity, testId: "tab-monitoring", badge: "Sentinel" },
         { id: "settings", label: "System Settings", icon: Settings, testId: "tab-settings" },
         { id: "audit-log", label: "Audit Log", icon: ScrollText, testId: "tab-audit-log" },
       ],
@@ -868,6 +870,10 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+            </TabsContent>
+
+            <TabsContent value="monitoring" className="mt-0 space-y-6">
+              <AdminMonitoringDashboard />
             </TabsContent>
           </div>
         </main>

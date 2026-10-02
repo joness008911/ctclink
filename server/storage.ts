@@ -61,7 +61,7 @@ import { FirestoreStorage } from "./firestoreStorage";
 import { eq, desc, sql, count, lt, or, and, inArray } from "drizzle-orm";
 import { getTierCallLimit } from "@shared/subscription";
 
-// IP2Geo Cache for performance optimization
+// IP2Geo Cache for performance optimization (24-hour fast RAM memory store)
 interface CachedIPData {
   data: any;
   timestamp: number;
@@ -70,9 +70,16 @@ interface CachedIPData {
 
 class IP2GeoCache {
   private cache = new Map<string, CachedIPData>();
-  private readonly DEFAULT_TTL = 30 * 60 * 1000; // 30 minutes
+  private readonly DEFAULT_TTL = 24 * 60 * 60 * 1000; // 24 hours high-speed retention
+  private readonly MAX_ENTRIES = 50000; // Capacity limit to protect server memory
   
   set(ip: string, data: any, ttl = this.DEFAULT_TTL): void {
+    if (this.cache.size >= this.MAX_ENTRIES) {
+      // Evict oldest entry when capacity is reached
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey) this.cache.delete(oldestKey);
+    }
+
     this.cache.set(ip, {
       data,
       timestamp: Date.now(),
@@ -2478,9 +2485,17 @@ export class DatabaseStorage {
   }
 }
 
-// Primary storage: Cloud Firestore for persistent storage, fallback to SQL database or MemStorage
-export const storage: IStorage = isFirestoreAvailable
-  ? new FirestoreStorage()
-  : (isDatabaseConfigured && db !== null)
-  ? new DatabaseStorage()
-  : new MemStorage();
+// Configurable storage backend: 'supabase' (or 'postgres'), 'firestore', or fallback
+const configuredBackend = (process.env.STORAGE_BACKEND || "").toLowerCase().trim();
+
+export const storage: IStorage = 
+  (configuredBackend === "supabase" || configuredBackend === "postgres" || configuredBackend === "database") && isDatabaseConfigured && db !== null
+    ? new DatabaseStorage()
+    : (configuredBackend === "firestore" && isFirestoreAvailable)
+    ? new FirestoreStorage()
+    : isFirestoreAvailable
+    ? new FirestoreStorage()
+    : (isDatabaseConfigured && db !== null)
+    ? new DatabaseStorage()
+    : new MemStorage();
+

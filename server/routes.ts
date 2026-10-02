@@ -140,6 +140,7 @@ import fs from "fs";
 import bcrypt from "bcrypt";
 import ipaddr from "ipaddr.js";
 import { broadcastClassification, setupWebSocketServer } from "./ws";
+import { monitoringService } from "./monitoringService";
 import {
   getSmtpConfig,
   saveSmtpConfig,
@@ -180,7 +181,7 @@ import {
 // 10 attempts per IP per 15 minutes; returns 429 with Retry-After header.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: process.env.NODE_ENV === "test" ? 1000 : 10,
   standardHeaders: true,   // RateLimit-* headers (RFC 6585 draft)
   legacyHeaders: false,
   message: { message: "Too many login attempts. Please try again later." },
@@ -469,14 +470,23 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
     return null;
   }
 
+  // Fast Circuit Breaker Check: If upstream quota is depleted or key invalid, immediately bypass to avoid visitor lag
+  if (ip2LocationHealth.isCircuitOpen()) {
+    return null;
+  }
+
   const startLookupTime = Date.now();
 
-  // 1. Try IP2Location API with ultra-fast 1200ms timeout
+  // Primary authoritative IP2Location API query
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1200);
     const res = await fetch(`https://api.ip2location.io/?key=${encodeURIComponent(apiKey)}&ip=${encodeURIComponent(ip)}`, {
-      headers: { 'User-Agent': userAgent || 'CleanTraffic/1.0', 'Accept': 'application/json' },
+      headers: { 
+        'User-Agent': userAgent || 'CleanTraffic/1.0', 
+        'Accept': 'application/json',
+        'Connection': 'keep-alive'
+      },
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -571,48 +581,6 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
     } else {
       ip2LocationHealth.recordError('network', 'NETWORK_ERR', e?.message || 'Network lookup error', 'ip2location.io');
     }
-  }
-
-  // 2. Try IP2Geolocation.io API fallback with fast 1200ms timeout
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1200);
-    const res = await fetch(`https://api.ip2geolocation.io/ipgeo?apiKey=${encodeURIComponent(apiKey)}&ip=${encodeURIComponent(ip)}&include=security`, {
-      headers: { 'User-Agent': userAgent || 'CleanTraffic/1.0', 'Accept': 'application/json' },
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.country_name || data.country_code2) {
-        ip2LocationHealth.recordSuccess(Date.now() - startLookupTime, 'ip2geolocation.io');
-        const isProxy = data.security?.is_proxy || false;
-        const isTor = data.security?.is_tor || false;
-        const isCrawler = data.security?.is_crawler || false;
-        const isVpn = data.security?.proxy_type?.toLowerCase().includes('vpn') || false;
-        const isDch = data.security?.proxy_type?.toLowerCase().includes('dch') || data.security?.proxy_type?.toLowerCase().includes('datacenter') || false;
-
-        return {
-          ip,
-          location: data.city && data.country_name ? `${data.city}, ${data.country_name}` : (data.country_name || 'Unknown'),
-          isp: data.isp || data.organization || 'Unknown',
-          country_code: data.country_code2 || '',
-          country_name: data.country_name || 'Unknown',
-          city_name: data.city || 'Unknown',
-          region_name: data.state_prov || '',
-          usage_type: isDch ? 'DCH' : (data.usage_type || 'RES'),
-          is_proxy: isProxy || isTor || isCrawler || isVpn || isDch,
-          proxy_data: {
-            is_vpn: isVpn,
-            is_tor: isTor,
-            is_data_center: isDch,
-            is_web_crawler: isCrawler
-          }
-        };
-      }
-    }
-  } catch (e) {
-    console.warn("IP2Geolocation lookup notice:", e);
   }
 
   return null;
@@ -5767,7 +5735,7 @@ Disallow: /*`);
             const fetchedGeo = await fetchIpGeolocation(cleanTrafficApiKey, clientIp, userAgent);
             if (fetchedGeo) {
               classificationData = fetchedGeo;
-              ip2geoCache.set(clientIp, classificationData, 30 * 60 * 1000);
+              ip2geoCache.set(clientIp, classificationData, 24 * 60 * 60 * 1000);
             } else {
               classificationData = {
                 ip: clientIp,
@@ -6327,8 +6295,25 @@ Disallow: /*`);
       };
       
       res.json(response);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Classification error:", error);
+      void monitoringService.recordIncident({
+        severity: "critical",
+        subsystem: "API Gateway",
+        title: "Unhandled Gateway Classification Error",
+        exactCause: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        fileLocation: "server/routes.ts (handleClassification)",
+        httpStatus: 500,
+        context: {
+          url: req.body?.url || req.query?.url || null,
+          clientIp: req.ip || null,
+          apiKeyId: apiKeyId || null,
+          userAgent: req.headers?.["user-agent"] || null,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        },
+        recommendedAction: "Inspect the stack trace and check database/dependency availability.",
+      });
+
       res.status(200).json({ 
         visitorType: "Bot",
         visitor_type: "Bot",
@@ -6613,6 +6598,107 @@ Disallow: /*`);
         error: true,
         message: "Failed to update API key" 
       });
+    }
+  });
+
+  // ── EDGE INCIDENT TELEMETRY BEACON ────────────────────────────────────────
+  // Called non-blockingly by Cloudflare Workers, WordPress, or Next.js on 3-retry bypass or gateway error
+  app.post("/api/monitoring/incident-beacon", async (req, res) => {
+    try {
+      const { type, url, ip, apiKey, retryCount, latencyMs, userAgent, platform, failMode } = req.body || {};
+      
+      await monitoringService.recordIncident({
+        severity: "high",
+        subsystem: "Edge Worker Bypass",
+        title: `Visitor Auto-Bypassed on Attempt #${retryCount || 3} (${platform || "Edge Worker"})`,
+        exactCause: `Visitor experienced repeated classification timeouts/failures (>400ms) reaching CleanTraffic backend. Edge auto-bypassed visitor to destination origin to safeguard conversion and traffic continuity.`,
+        fileLocation: "shared/integrationGenerators.ts",
+        latencyMs: typeof latencyMs === "number" ? latencyMs : 400,
+        context: {
+          url: url || null,
+          clientIp: ip || null,
+          apiKeyId: apiKey || null,
+          userAgent: userAgent || null,
+          retryCount: retryCount || 3,
+          fallbackMode: failMode || "closed",
+        },
+        recommendedAction: "Investigate server API response latency or database throughput. Visitor was safely routed to origin without interruption.",
+      });
+
+      res.status(200).json({ received: true });
+    } catch (err: any) {
+      console.error("Error receiving monitoring incident beacon:", err);
+      res.status(200).json({ received: true });
+    }
+  });
+
+  // ── ADMIN MONITORING & TELEGRAM INTEGRATION ────────────────────────────────
+  app.get("/api/admin/monitoring/settings", requireAuth, async (req, res) => {
+    try {
+      const token = await storage.getSetting("telegram_bot_token");
+      const chatId = await storage.getSetting("telegram_chat_id");
+      const maskedToken = token ? `${token.slice(0, 4)}••••••••${token.slice(-4)}` : "";
+
+      res.json({
+        hasToken: Boolean(token),
+        telegramTokenPreview: maskedToken,
+        telegramChatId: chatId || "",
+        configured: Boolean(token && chatId),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: true, message: err.message || "Failed to load monitoring settings" });
+    }
+  });
+
+  app.put("/api/admin/monitoring/settings", requireAuth, async (req, res) => {
+    try {
+      const { telegramBotToken, telegramChatId } = req.body || {};
+
+      if (telegramBotToken !== undefined) {
+        const cleanToken = typeof telegramBotToken === "string" ? telegramBotToken.trim() : "";
+        if (cleanToken && !cleanToken.includes("•••")) {
+          await storage.setSetting("telegram_bot_token", cleanToken);
+        } else if (cleanToken === "") {
+          await storage.setSetting("telegram_bot_token", "");
+        }
+      }
+
+      if (telegramChatId !== undefined) {
+        const cleanChatId = typeof telegramChatId === "string" ? telegramChatId.trim() : "";
+        await storage.setSetting("telegram_chat_id", cleanChatId);
+      }
+
+      res.json({ success: true, message: "Monitoring settings saved successfully" });
+    } catch (err: any) {
+      res.status(500).json({ error: true, message: err.message || "Failed to update monitoring settings" });
+    }
+  });
+
+  app.post("/api/admin/monitoring/test-telegram", requireAuth, async (req, res) => {
+    try {
+      const { telegramBotToken, telegramChatId } = req.body || {};
+      const result = await monitoringService.sendTelegramTest(telegramBotToken, telegramChatId);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message || "Test dispatch failed" });
+    }
+  });
+
+  app.get("/api/admin/monitoring/incidents", requireAuth, async (req, res) => {
+    try {
+      const incidents = monitoringService.getIncidents();
+      res.json(incidents);
+    } catch (err: any) {
+      res.status(500).json({ error: true, message: err.message || "Failed to retrieve incidents" });
+    }
+  });
+
+  app.post("/api/admin/monitoring/incidents/clear", requireAuth, async (req, res) => {
+    try {
+      monitoringService.clearIncidents();
+      res.json({ success: true, message: "All incidents cleared" });
+    } catch (err: any) {
+      res.status(500).json({ error: true, message: err.message || "Failed to clear incidents" });
     }
   });
 

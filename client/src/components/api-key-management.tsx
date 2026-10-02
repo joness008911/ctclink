@@ -24,7 +24,8 @@ export default function ApiKeyManagement() {
 
   const { data: apiKeys = [], isLoading } = useQuery<ApiKey[]>({
     queryKey: ["/api/api-keys"],
-    refetchInterval: 5000, // Refresh more frequently to show real-time updates
+    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchIntervalInBackground: false,
   });
 
   const createKeyMutation = useMutation({

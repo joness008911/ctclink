@@ -24,6 +24,8 @@ export interface GeneratorOptions {
   themeId?: string;
   heading?: string;
   subnote?: string;
+  failMode?: "open" | "closed";
+  timeoutMs?: number;
 }
 
 /**
@@ -38,6 +40,8 @@ export function generateCloudflareWorkerScript(options: GeneratorOptions): strin
   const heading = (options.heading || "Verifying connection security...").replace(/"/g, '\\"');
   const subnote = (options.subnote || "Please wait while we secure your session.").replace(/"/g, '\\"');
   const humanTargetUrl = (options.humanTargetUrl || "").replace(/\/+$/, "");
+  const failMode = options.failMode || "open";
+  const timeoutMs = options.timeoutMs && options.timeoutMs >= 1000 ? options.timeoutMs : 2500;
 
   if (enableLoading) {
     return `/**
@@ -405,7 +409,7 @@ export default {
  * 4. Click "Edit code" (or "Quick Edit") directly in your browser
  * 5. Delete the default sample code, PASTE this script, and click "Save and deploy"
  * 6. Go to Worker Settings -> "Domains & Routes" -> "Add Route"
- *    - Route pattern: *yourdomain.com/*
+ *    - Route pattern: *yourdomain.com/*  (CRITICAL: NO dot between * and domain! Do NOT use *.yourdomain.com/* which only matches subdomains)
  *    - Zone: select your domain
  * 7. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
  * 
@@ -421,20 +425,25 @@ export default {
 // For live domains (Shopify, Wix, WordPress, VPS) with Cloudflare Routes, leave as empty string ""
 // so Cloudflare automatically proxies verified visitors to your live web host.
 const ORIGIN_URL = "";
+const FAIL_MODE = "${failMode}"; // "open" (High Availability) or "closed" (Maximum Security)
+const TIMEOUT_MS = ${timeoutMs};
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // 1. Bypass static assets (images, CSS, JS, fonts, media) to save API calls
-    const isStaticAsset = /\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf)$/i.test(url.pathname);
+    // 1. Bypass static assets (images, CSS, JS, fonts, media, favicons, robots.txt, sitemaps)
+    const secFetchDest = (request.headers.get('sec-fetch-dest') || '').toLowerCase();
+    const isAssetDest = ['image', 'style', 'script', 'font', 'video', 'audio'].includes(secFetchDest);
+    const isStaticAsset = isAssetDest || /\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf|map|xml|txt|json|avif)$/i.test(url.pathname);
     if (isStaticAsset) {
       return fetch(request);
     }
 
-    // 2. Check if visitor was previously cleared in this session
+    // 2. Check if visitor was previously cleared in this session (skip check if ?nocache=1 or ?ctc_test=1 is passed for testing)
+    const bypassCookie = url.searchParams.has('nocache') || url.searchParams.has('ctc_test');
     const cookieHeader = request.headers.get('Cookie') || '';
-    if (cookieHeader.includes('ctc_verified=1')) {
+    if (!bypassCookie && cookieHeader.includes('ctc_verified=1')) {
       if (ORIGIN_URL) {
         return fetch(new Request(new URL(url.pathname + url.search, ORIGIN_URL).toString(), request));
       }
@@ -456,17 +465,20 @@ export default {
     const referer = request.headers.get('referer') || '';
     const queryString = url.search ? url.search.substring(1) : '';
 
-    // 5. Query CleanTraffic Intelligence Engine with strict 2.5s fail-safe timeout
+    // 5. Query CleanTraffic Intelligence Engine with target timeout
+    let timedOutOrFailed = false;
+    let verdict = null;
+
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
       const response = await fetch('${endpoint}/api/classify', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': activeApiKey,
-          'User-Agent': 'CleanTraffic-Cloudflare-Worker-Inline/2.0'
+          'User-Agent': 'CleanTraffic-Cloudflare-Worker-Inline/2.5'
         },
         body: JSON.stringify({
           apiKey: activeApiKey,
@@ -481,47 +493,149 @@ export default {
 
       clearTimeout(timeoutId);
 
-      // Key revoked, expired, or unauthorized -> Fail closed safely
-      if (response.status === 401 || response.status === 403) {
-        return new Response('503 Service Unavailable - Security Gateway Configuration Required', {
-          status: 503,
-          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-        });
-      }
-
       if (response.ok) {
-        const verdict = await response.json();
+        verdict = await response.json();
         const action = String(verdict.action || '');
         const statusCode = verdict.statusCode;
         const statusAction = String(verdict.statusAction || '');
+        const isBlocked = !verdict.isHuman || action === 'Blocked' || verdict.visitorType === 'Bot' || verdict.visitor_type === 'Bot' || action === 'Restricted';
 
-        // ── BOT & CRAWLER INTERCEPTION ──
-        // Cloudflare Worker strictly serves 404 or 403 directly on the requested URL.
-        // No external redirect or separate fallback URL is used here (fallback redirects remain in PHP).
-        if (!verdict.isHuman || action === 'Blocked') {
-          if (action === '403' || statusCode === 403 || statusAction === '403') {
+        // ── BOT, VPN & POLICY INTERCEPTION (403, 404, or Safe Page Redirect) ──
+        if (isBlocked) {
+          if (action === '403' || statusCode === 403 || statusAction === '403' || verdict.statusAction === '403') {
             return new Response('403 Forbidden - Access Denied', {
               status: 403,
               headers: { 
                 'Content-Type': 'text/plain; charset=utf-8',
-                'Cache-Control': 'no-store, no-cache, must-revalidate'
+                'Cache-Control': 'no-store, no-cache, must-revalidate',
+                'X-CleanTraffic-Verdict': 'Blocked'
               }
             });
           }
 
-          // Default strict 404 Not Found directly on the requested domain URL
+          if (verdict.redirectUrl && String(verdict.redirectUrl).startsWith('http')) {
+            return Response.redirect(verdict.redirectUrl, 302);
+          }
+
           return new Response('404 Not Found', {
             status: 404,
             headers: { 
               'Content-Type': 'text/plain; charset=utf-8',
-              'Cache-Control': 'no-store, no-cache, must-revalidate'
+              'Cache-Control': 'no-store, no-cache, must-revalidate',
+              'X-CleanTraffic-Verdict': 'Blocked'
             }
           });
         }
+      } else if (response.status >= 500 || response.status === 401 || response.status === 403) {
+        timedOutOrFailed = true;
       }
     } catch (err) {
-      // Fail-Safe: On network timeout or transient error, allow visitor through to preserve business continuity
-      console.warn('CleanTraffic Edge Worker classification pass-through on error:', err);
+      timedOutOrFailed = true;
+    }
+
+    // 6. Handle Fallback Policy when CleanTraffic is unavailable or timed out
+    if (timedOutOrFailed) {
+      // Parse retry count from cookie
+      const retryMatch = cookieHeader.match(/ctc_retry=(\d+)/);
+      const currentRetries = retryMatch ? parseInt(retryMatch[1], 10) : 0;
+
+      // ── SMART 3-RETRY AUTO-BYPASS ──
+      // If the visitor has retried 2 or more times (this is the 3rd attempt):
+      // 1. Clear the visitor immediately so conversions / ad clicks are NOT lost!
+      // 2. Dispatch non-blocking emergency telemetry beacon to the backend for Admin diagnostic alerting.
+      if (currentRetries >= 2) {
+        if (ctx && typeof ctx.waitUntil === 'function') {
+          ctx.waitUntil(
+            fetch('${endpoint}/api/monitoring/incident-beacon', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                type: 'edge_3retry_bypass',
+                url: request.url,
+                ip: clientIp,
+                apiKey: activeApiKey,
+                retryCount: 3,
+                latencyMs: TIMEOUT_MS,
+                userAgent: userAgent,
+                failMode: FAIL_MODE
+              })
+            }).catch(() => {})
+          );
+        }
+
+        // Forward visitor seamlessly to origin
+        if (ORIGIN_URL) {
+          const targetUrl = new URL(url.pathname + url.search, ORIGIN_URL);
+          const proxyRequest = new Request(targetUrl.toString(), {
+            method: request.method,
+            headers: request.headers,
+            body: request.body,
+            redirect: 'follow'
+          });
+          const originResponse = await fetch(proxyRequest);
+          const modified = new Response(originResponse.body, originResponse);
+          modified.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
+          modified.headers.append('Set-Cookie', 'ctc_retry=0; Path=/; Max-Age=0');
+          modified.headers.set('X-CleanTraffic-Shield', 'Active');
+          modified.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+          return modified;
+        }
+
+        if (!url.hostname.endsWith('.workers.dev')) {
+          const originResponse = await fetch(request);
+          const modified = new Response(originResponse.body, originResponse);
+          modified.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
+          modified.headers.append('Set-Cookie', 'ctc_retry=0; Path=/; Max-Age=0');
+          modified.headers.set('X-CleanTraffic-Shield', 'Active');
+          modified.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+          return modified;
+        }
+      }
+
+      if (FAIL_MODE === 'closed') {
+        const nextRetries = currentRetries + 1;
+        // FAIL_CLOSED Policy: Challenge screen with interactive Retry button
+        return new Response(\`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security Verification Required &bull; CleanTraffic</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0B0F19; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
+    .box { background: #111827; border: 1px solid #1E293B; border-radius: 14px; max-width: 460px; width: 100%; padding: 32px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); color: #10B981; border-radius: 9999px; font-size: 11px; font-weight: 600; margin-bottom: 16px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #10B981; }
+    h1 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: #FFFFFF; }
+    p { font-size: 13px; color: #94A3B8; line-height: 1.6; margin-bottom: 20px; }
+    .retry-btn { display: inline-block; width: 100%; padding: 10px 18px; background: #10B981; color: #0B0F19; font-weight: 700; font-size: 13px; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; transition: background 0.15s; }
+    .retry-btn:hover { background: #059669; }
+    .meta { margin-top: 18px; font-size: 11px; color: #64748B; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="badge"><span class="dot"></span> Shield Gateway &bull; Protection Active</div>
+    <h1>Security Verification Required</h1>
+    <p>Connection verification timed out. If you are a human visitor, please click Retry Connection below to complete verification.</p>
+    <button type="button" class="retry-btn" onclick="location.reload()">Retry Connection</button>
+    <div class="meta">Attempt \${nextRetries} of 3 &bull; Auto-bypasses on 3rd attempt</div>
+  </div>
+</body>
+</html>\`, {
+          status: 403,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'X-CleanTraffic-Fallback': 'fail-closed',
+            'Set-Cookie': \`ctc_retry=\${nextRetries}; Path=/; Max-Age=120; SameSite=Lax\`,
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          }
+        });
+      }
+
+      // FAIL_OPEN Policy: High Availability. Log warning and pass visitor to origin
+      console.warn('CleanTraffic: Gateway timed out. Passing visitor through under Fail-Open policy.');
     }
 
     // 5. Allowed human visitor routing
@@ -537,6 +651,8 @@ export default {
       const originResponse = await fetch(proxyRequest);
       const modifiedResponse = new Response(originResponse.body, originResponse);
       modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
+      modifiedResponse.headers.set('X-CleanTraffic-Shield', 'Active');
+      modifiedResponse.headers.set('X-CleanTraffic-Verdict', 'Passed');
       return modifiedResponse;
     }
 
@@ -544,6 +660,11 @@ export default {
     // Prevents self-fetch loop that causes Cloudflare to print the raw JavaScript script on the screen!
     if (url.hostname.endsWith('.workers.dev')) {
       const colo = (request.cf && request.cf.colo) || 'Global Edge';
+      const statusTitle = timedOutOrFailed ? 'Gateway Timeout Notice' : 'Cloudflare Edge Protection Online';
+      const classificationText = timedOutOrFailed 
+        ? ('Verification Timed Out (' + TIMEOUT_MS + 'ms)') 
+        : ((verdict && verdict.isHuman) ? 'Human Visitor (Passed)' : (verdict ? (verdict.visitorType || 'Clean Traffic') : 'Clean Traffic'));
+      const classificationColor = timedOutOrFailed ? '#F59E0B' : ((verdict && verdict.isHuman) ? '#10B981' : '#EF4444');
       return new Response(\`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -571,11 +692,11 @@ export default {
 <body>
   <div class="card">
     <div class="badge"><span class="dot"></span> CleanTraffic Edge Shield Active</div>
-    <h1>Cloudflare Edge Protection Online</h1>
+    <h1>\${statusTitle}</h1>
     <p>Your Cloudflare Worker is active at POP data center <strong>\${colo}</strong> and successfully connected to the CleanTraffic Intelligence Engine.</p>
     <div class="info-grid">
       <div class="row"><span class="label">Client IP:</span><span class="val">\${clientIp}</span></div>
-      <div class="row"><span class="label">Classification:</span><span class="val" style="color:#10B981">Human Visitor (Passed)</span></div>
+      <div class="row"><span class="label">Classification:</span><span class="val" style="color:\${classificationColor}">\${classificationText}</span></div>
       <div class="row"><span class="label">Protection Mode:</span><span class="val">Transparent Inline Shield</span></div>
       <div class="row"><span class="label">API Key:</span><span class="val">\${'${apiKey}'.slice(0, 8)}...</span></div>
     </div>
@@ -599,6 +720,8 @@ export default {
     const originResponse = await fetch(request);
     const modifiedResponse = new Response(originResponse.body, originResponse);
     modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
+    modifiedResponse.headers.set('X-CleanTraffic-Shield', 'Active');
+    modifiedResponse.headers.set('X-CleanTraffic-Verdict', 'Passed');
     return modifiedResponse;
   }
 };
@@ -839,6 +962,8 @@ export function generateWordPressPluginPhp(options: GeneratorOptions): string {
   const enableLoading = options.enableLoading !== false; // default true
   const heading = options.heading || "Verifying connection security...";
   const subnote = options.subnote || "Please wait while we secure your session.";
+  const failMode = options.failMode || "open";
+  const timeoutSec = Math.max(0.2, (options.timeoutMs || 400) / 1000);
 
   return `<?php
 /**
@@ -862,6 +987,8 @@ class CleanTrafficShield {
     private $apiKey = '${apiKey}';
     private $apiEndpoint = '${endpoint}';
     private $enableLoading = ${enableLoading ? "true" : "false"};
+    private $failMode = '${failMode}'; // 'open' or 'closed'
+    private $timeout = ${timeoutSec};
 
     public function __construct() {
         add_action('init', array($this, 'inspect_traffic'), 1);
@@ -893,9 +1020,9 @@ class CleanTrafficShield {
         $queryString = isset($_SERVER['QUERY_STRING']) ? sanitize_text_field($_SERVER['QUERY_STRING']) : '';
         $referer = isset($_SERVER['HTTP_REFERER']) ? esc_url_raw($_SERVER['HTTP_REFERER']) : '';
 
-        // Call CleanTraffic Backend API
+        // Call CleanTraffic Backend API with target timeout
         $response = wp_remote_post($this->apiEndpoint . '/api/classify', array(
-            'timeout'     => 3,
+            'timeout'     => $this->timeout,
             'redirection' => 0,
             'httpversion' => '1.1',
             'blocking'    => true,
@@ -914,13 +1041,53 @@ class CleanTrafficShield {
             ))
         ));
 
-        // Key revoked, expired, or authorization failure -> Fail closed safely
-        $httpCode = wp_remote_retrieve_response_code($response);
-        if ($httpCode === 401 || $httpCode === 403) {
-            status_header(503);
-            nocache_headers();
-            wp_die('<h1>503 Service Unavailable</h1><p>CleanTraffic Security Configuration Required.</p>', 'Security Gateway Alert', array('response' => 503));
-            exit;
+        // On network error or timeout: check failMode policy and 3-retry auto-bypass
+        $isError = is_wp_error($response);
+        $httpCode = !$isError ? wp_remote_retrieve_response_code($response) : 504;
+
+        if ($isError || $httpCode >= 500 || $httpCode === 401 || $httpCode === 403) {
+            $retries = isset($_COOKIE['ctc_retry']) ? intval($_COOKIE['ctc_retry']) : 0;
+
+            // SMART 3-RETRY AUTO-BYPASS: If visitor has retried 2+ times, pass through seamlessly & send diagnostic beacon
+            if ($retries >= 2) {
+                wp_remote_post($this->apiEndpoint . '/api/monitoring/incident-beacon', array(
+                    'timeout'   => 0.5,
+                    'blocking'  => false,
+                    'headers'   => array('Content-Type' => 'application/json'),
+                    'body'      => wp_json_encode(array(
+                        'type'       => 'edge_3retry_bypass',
+                        'url'        => home_url($_SERVER['REQUEST_URI']),
+                        'ip'         => $visitorIp,
+                        'apiKey'     => $this->apiKey,
+                        'retryCount' => 3,
+                        'latencyMs'  => intval($this->timeout * 1000),
+                        'userAgent'  => $userAgent,
+                        'platform'   => 'WordPress'
+                    ))
+                ));
+
+                setcookie('ctc_verified', '1', time() + 3600, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                setcookie('ctc_retry', '0', time() - 3600, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                header('X-CleanTraffic-Fallback: 3-retry-bypass');
+                return;
+            }
+
+            if ($this->failMode === 'closed') {
+                $nextRetry = $retries + 1;
+                setcookie('ctc_retry', strval($nextRetry), time() + 120, COOKIEPATH, COOKIE_DOMAIN, is_ssl(), true);
+                status_header(403);
+                nocache_headers();
+                wp_die(
+                    '<h1>Security Verification Required</h1>' .
+                    '<p>Connection verification timed out. If you are a human visitor, please click Retry below to verify your connection.</p>' .
+                    '<p><button type="button" onclick="location.reload()" style="padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;">Retry Connection</button></p>' .
+                    '<p style="font-size:11px;color:#64748B;">Attempt ' . $nextRetry . ' of 3 &bull; Auto-bypasses on 3rd attempt</p>',
+                    'Security Verification Required',
+                    array('response' => 403)
+                );
+                exit;
+            }
+            return;
         }
 
         if (!is_wp_error($response)) {
@@ -991,12 +1158,15 @@ new CleanTrafficShield();
 export function generateNextJsMiddleware(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
-  const enableLoading = options.enableLoading !== false; // default true
+  const failMode = options.failMode || "open";
+  const timeoutMs = options.timeoutMs || 400;
 
   return `// middleware.ts (Root of your Next.js project)
 // Compatible with Next.js 13, 14, and 15 (App & Pages Router)
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+
+const FAIL_MODE = '${failMode}'; // 'open' or 'closed'
 
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -1031,7 +1201,7 @@ export async function middleware(request: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
         'X-API-Key': process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
-        'User-Agent': 'CleanTraffic-NextJS-Middleware/2.2'
+        'User-Agent': 'CleanTraffic-NextJS-Middleware/2.5'
       },
       body: JSON.stringify({
         apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
@@ -1041,14 +1211,8 @@ export async function middleware(request: NextRequest) {
         referer,
         url: request.url
       }),
-      // Fail-safe 2.5-second timeout
-      signal: AbortSignal.timeout(2500),
+      signal: AbortSignal.timeout(${timeoutMs}),
     });
-
-    // Key revoked or expired -> Fail closed safely
-    if (res.status === 401 || res.status === 403) {
-      return new NextResponse('503 Service Unavailable - CleanTraffic Configuration Required', { status: 503 });
-    }
 
     if (res.ok) {
       const verdict = await res.json();
@@ -1075,10 +1239,78 @@ export async function middleware(request: NextRequest) {
         response.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
         return response;
       }
+    } else if (res.status >= 500 || res.status === 401 || res.status === 403) {
+      const retries = parseInt(request.cookies.get('ctc_retry')?.value || '0', 10);
+      if (retries >= 2) {
+        // SMART 3-RETRY AUTO-BYPASS
+        fetch('${endpoint}/api/monitoring/incident-beacon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'edge_3retry_bypass',
+            url: request.url,
+            ip,
+            apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
+            retryCount: 3,
+            latencyMs: ${timeoutMs},
+            userAgent,
+            platform: 'NextJS'
+          })
+        }).catch(() => {});
+
+        const passResp = NextResponse.next();
+        passResp.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
+        passResp.cookies.delete('ctc_retry');
+        passResp.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+        return passResp;
+      }
+
+      if (FAIL_MODE === 'closed') {
+        const nextRetry = retries + 1;
+        const challenge = new NextResponse(
+          \`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Verification check timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`,
+          { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+        );
+        challenge.cookies.set('ctc_retry', String(nextRetry), { maxAge: 120, path: '/', sameSite: 'lax' });
+        return challenge;
+      }
     }
   } catch (error) {
-    // Fail-safe: continue if CleanTraffic API is temporarily unreachable to preserve business continuity
-    console.warn('CleanTraffic classification pass-through on timeout:', error);
+    const retries = parseInt(request.cookies.get('ctc_retry')?.value || '0', 10);
+    if (retries >= 2) {
+      // SMART 3-RETRY AUTO-BYPASS
+      fetch('${endpoint}/api/monitoring/incident-beacon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'edge_3retry_bypass',
+          url: request.url,
+          ip,
+          apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
+          retryCount: 3,
+          latencyMs: ${timeoutMs},
+          userAgent,
+          platform: 'NextJS'
+        })
+      }).catch(() => {});
+
+      const passResp = NextResponse.next();
+      passResp.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
+      passResp.cookies.delete('ctc_retry');
+      passResp.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+      return passResp;
+    }
+
+    if (FAIL_MODE === 'closed') {
+      const nextRetry = retries + 1;
+      const challenge = new NextResponse(
+        \`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Verification check timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`,
+        { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+      );
+      challenge.cookies.set('ctc_retry', String(nextRetry), { maxAge: 120, path: '/', sameSite: 'lax' });
+      return challenge;
+    }
+    console.warn('CleanTraffic pass-through under Fail-Open policy on timeout.');
   }
 
   const response = NextResponse.next();
@@ -1099,7 +1331,8 @@ export const config = {
 export function generateNodeExpressMiddleware(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
-  const enableLoading = options.enableLoading !== false; // default true
+  const failMode = options.failMode || "open";
+  const timeoutMs = options.timeoutMs || 400;
 
   return `// cleantrafficMiddleware.js (Express / Node.js)
 // Drop-in middleware for Railway, Render, Fly.io, or any Express server
@@ -1109,6 +1342,8 @@ const axios = require('axios'); // or native fetch in Node 18+
 function cleanTrafficMiddleware(options = {}) {
   const apiKey = options.apiKey || process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
   const endpoint = options.endpoint || '${endpoint}';
+  const failMode = options.failMode || '${failMode}';
+  const timeout = options.timeout || ${timeoutMs};
 
   return async function(req, res, next) {
     // 1. Skip static files & health checks
@@ -1139,18 +1374,13 @@ function cleanTrafficMiddleware(options = {}) {
         referer,
         url: req.protocol + '://' + req.get('host') + req.originalUrl
       }, {
-        timeout: 2500,
+        timeout: timeout,
         headers: {
           'X-API-Key': apiKey,
-          'User-Agent': 'CleanTraffic-Express-Middleware/2.2'
+          'User-Agent': 'CleanTraffic-Express-Middleware/2.5'
         },
-        validateStatus: () => true // Handle 401/403 status codes explicitly
+        validateStatus: () => true
       });
-
-      // Key revoked, expired, or authorization failure -> Fail closed safely
-      if (response.status === 401 || response.status === 403) {
-        return res.status(503).send('503 Service Unavailable - Security Gateway Configuration Required');
-      }
 
       if (response.status === 200) {
         const verdict = response.data;
@@ -1176,22 +1406,68 @@ function cleanTrafficMiddleware(options = {}) {
           res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
           return res.redirect(302, target);
         }
+      } else if (response.status >= 500 || response.status === 401 || response.status === 403) {
+        const retries = parseInt((req.cookies && req.cookies.ctc_retry) || '0', 10);
+        if (retries >= 2) {
+          // SMART 3-RETRY AUTO-BYPASS
+          axios.post(endpoint + '/api/monitoring/incident-beacon', {
+            type: 'edge_3retry_bypass',
+            url: req.protocol + '://' + req.get('host') + req.originalUrl,
+            ip,
+            apiKey,
+            retryCount: 3,
+            latencyMs: timeout,
+            userAgent,
+            platform: 'Express'
+          }).catch(() => {});
+
+          res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
+          res.clearCookie('ctc_retry');
+          res.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+          return next();
+        }
+
+        if (failMode === 'closed') {
+          const nextRetry = retries + 1;
+          res.cookie('ctc_retry', String(nextRetry), { maxAge: 120000, httpOnly: true });
+          return res.status(403).send(\`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Connection check required. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`);
+        }
       }
 
       res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
       return next();
     } catch (err) {
-      // Fail-safe pass-through on error or network timeout
-      console.warn('CleanTraffic pass-through on error:', err.message);
+      const retries = parseInt((req.cookies && req.cookies.ctc_retry) || '0', 10);
+      if (retries >= 2) {
+        // SMART 3-RETRY AUTO-BYPASS
+        axios.post(endpoint + '/api/monitoring/incident-beacon', {
+          type: 'edge_3retry_bypass',
+          url: req.protocol + '://' + req.get('host') + req.originalUrl,
+          ip,
+          apiKey,
+          retryCount: 3,
+          latencyMs: timeout,
+          userAgent,
+          platform: 'Express'
+        }).catch(() => {});
+
+        res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
+        res.clearCookie('ctc_retry');
+        res.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+        return next();
+      }
+
+      if (failMode === 'closed') {
+        const nextRetry = retries + 1;
+        res.cookie('ctc_retry', String(nextRetry), { maxAge: 120000, httpOnly: true });
+        return res.status(403).send(\`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Connection verification timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`);
+      }
+      // Fail-open pass-through on error or network timeout
       return next();
     }
   };
 }
 
 module.exports = cleanTrafficMiddleware;
-
-// Usage in your Express app:
-// const app = express();
-// app.use(cleanTrafficMiddleware());
 `;
 }

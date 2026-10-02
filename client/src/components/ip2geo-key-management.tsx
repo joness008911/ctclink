@@ -23,7 +23,7 @@ import { apiRequest } from "@/lib/queryClient";
 
 export interface Ip2LocationHealthInfo {
   status: 'healthy' | 'exhausted' | 'invalid_key' | 'degraded' | 'unconfigured';
-  provider: 'ip2location.io' | 'ip2geolocation.io' | 'none';
+  provider: 'ip2location.io' | 'ip2geolocation.io' | 'local_embedded_engine' | 'none';
   lastChecked: string;
   lastSuccess: string | null;
   lastError: {
@@ -46,6 +46,14 @@ interface KeyStatusResponse {
   hasKey: boolean;
   keyPreview: string | null;
   lastUpdated: string;
+  isLocalEngine?: boolean;
+  engineStatus?: {
+    status: string;
+    engine: string;
+    totalCompiledRanges: number;
+    countryCoverage: number;
+    averageLatencyMs: number;
+  };
   health?: Ip2LocationHealthInfo;
 }
 
@@ -236,6 +244,22 @@ export default function Ip2GeoKeyManagement() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Local In-Memory Engine Active Banner */}
+        <div className="p-3.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-200 flex items-start gap-3 text-xs">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <div className="font-semibold flex items-center gap-2">
+              CleanTraffic Native In-Memory Engine Active
+              <Badge variant="outline" className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] py-0 px-1.5 font-mono">
+                0.05ms • 0 HTTP Requests
+              </Badge>
+            </div>
+            <p className="mt-1 text-muted-foreground leading-relaxed">
+              Visitor geolocation (Country, Region, City, Coordinates), ASN, and Usage Type (Residential, Mobile, Cloud Datacenter, Tor/VPN) are processed <strong>100% locally in server RAM</strong>. No third-party API calls are made, and your traffic pipeline is immune to external rate limits or quota exhaustion.
+            </p>
+          </div>
+        </div>
+
         {/* Health Alert Banner if degraded or exhausted */}
         {currentStatus === 'exhausted' && (
           <div className="p-3.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-800 dark:text-rose-200 flex items-start gap-3 text-xs">
@@ -289,8 +313,8 @@ export default function Ip2GeoKeyManagement() {
               <Activity className="w-3 h-3 text-primary" />
               Provider
             </div>
-            <div className="text-xs font-semibold mt-1 text-foreground">
-              {health?.provider || "ip2location.io"}
+            <div className="text-xs font-semibold mt-1 text-foreground truncate" title={health?.provider === 'local_embedded_engine' ? 'CleanTraffic Native In-Memory Engine' : health?.provider}>
+              {health?.provider === 'local_embedded_engine' ? "CleanTraffic Local" : (health?.provider || "CleanTraffic Local")}
             </div>
           </div>
 

@@ -1,12 +1,14 @@
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import pg from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "@shared/schema";
 import dotenv from "dotenv";
 import { resolve } from "path";
 import * as fs from "fs";
 
-// Manually load .env file from the current working directory in production
-dotenv.config({ path: resolve(process.cwd(), ".env") });
+const { Pool } = pg;
+
+// Manually load .env file from the current working directory in production with override
+dotenv.config({ path: resolve(process.cwd(), ".env"), override: true });
 
 if (!process.env.DATABASE_URL) {
   // Fallback to reading the file directly if dotenv fails
@@ -44,13 +46,22 @@ export function isValidDatabaseUrl(url: string | undefined): boolean {
 export const isDatabaseConfigured = isValidDatabaseUrl(process.env.DATABASE_URL);
 
 let dbInstance: any = null;
+let poolInstance: pg.Pool | null = null;
+
 if (isDatabaseConfigured && process.env.DATABASE_URL) {
   try {
-    const sql = neon(process.env.DATABASE_URL.trim());
-    dbInstance = drizzle(sql, { schema });
+    poolInstance = new Pool({
+      connectionString: process.env.DATABASE_URL.trim(),
+      ssl: { rejectUnauthorized: false },
+      max: 20,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+    dbInstance = drizzle(poolInstance, { schema });
   } catch (err) {
-    console.warn("Failed to initialize Neon database connection:", err);
+    console.warn("Failed to initialize PostgreSQL connection pool:", err);
   }
 }
 
+export const pool = poolInstance;
 export const db = dbInstance;

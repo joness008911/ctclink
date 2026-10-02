@@ -112,6 +112,8 @@ export function UserIntegrationTab({
 
   // Themes state (for PHP Interstitial & Universal Loading)
   const [enableLoading, setEnableLoading] = useState<boolean>(true);
+  const [protectionFailMode, setProtectionFailMode] = useState<"open" | "closed">("open");
+  const [protectionTimeoutMs, setProtectionTimeoutMs] = useState<number>(2000);
   const [selectedThemeCategory, setSelectedThemeCategory] = useState<string>("All");
   const [selectedThemeId, setSelectedThemeId] = useState<string>("clean_light");
   const [customHeading, setCustomHeading] = useState<string>("Verifying your connection...");
@@ -179,6 +181,8 @@ export function UserIntegrationTab({
     enableLoading: false,
     humanTargetUrl: userSettings?.humanUrl || "",
     botTargetUrl: userSettings?.botUrl || "",
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
   });
 
   // 3. Generate JavaScript Snippet (Shopify / Wix / Webflow client-side protect tag)
@@ -198,6 +202,8 @@ export function UserIntegrationTab({
     enableLoading: false,
     heading: customHeading,
     subnote: customSubnote,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
   });
 
   // 5. Generate Next.js & Express Middleware (pure HTTP edge middleware, transparent inline)
@@ -205,12 +211,16 @@ export function UserIntegrationTab({
     apiKeyValue,
     effectiveEndpoint,
     enableLoading: false,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
   });
 
   const nodeExpressMiddlewareCode = generateNodeExpressMiddleware({
     apiKeyValue,
     effectiveEndpoint,
     enableLoading: false,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
   });
 
   // 6. Developer SDK Code (Fingerprint-Style Promise)
@@ -657,6 +667,104 @@ export function UserIntegrationTab({
             placeholder="https://your-domain.com"
             className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs font-mono h-8 focus:border-[#0A5C48]"
           />
+        </div>
+      </div>
+
+      {/* ── 2B. PROTECTION POLICY & GATEWAY TIMEOUT ── */}
+      <div className="bg-white border border-[#E2E8F0] rounded-lg p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-[#0A5C48]" />
+              <h3 className="text-sm font-semibold text-[#0F172A]">Edge Fallback Policy &amp; Gateway Timeout</h3>
+              <span className="text-slate-300" aria-hidden="true">·</span>
+              <span className="text-xs font-medium text-[#0A5C48]">Zero-Loss Failover</span>
+            </div>
+            <p className="text-xs text-[#64748B] mt-1">
+              Determines how edge workers and plugins route traffic if CleanTraffic is unreachable or exceeds the latency threshold.
+            </p>
+          </div>
+
+          {/* Timeout Selector */}
+          <div className="flex items-center gap-1 shrink-0 bg-slate-100 p-1 rounded-md">
+            <span className="text-xs text-slate-500 px-2 font-medium">Timeout:</span>
+            {[
+              { label: "250ms", val: 250 },
+              { label: "400ms (Recommended)", val: 400 },
+              { label: "600ms", val: 600 },
+            ].map((t) => (
+              <button
+                key={t.val}
+                type="button"
+                onClick={() => setProtectionTimeoutMs(t.val)}
+                className={`text-xs font-medium px-2.5 py-1 rounded transition-colors ${
+                  protectionTimeoutMs === t.val
+                    ? "bg-[#0A5C48] text-white"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          {/* Fail-Open Option */}
+          <button
+            type="button"
+            onClick={() => setProtectionFailMode("open")}
+            className={`text-left p-4 rounded-lg border transition-colors ${
+              protectionFailMode === "open"
+                ? "bg-[#F4F9F6] border-[#0A5C48]"
+                : "bg-white border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Zap className="h-4 w-4 text-[#0A5C48]" />
+                <span className="text-xs font-semibold text-[#0F172A]">Fail-Open (High Availability)</span>
+              </div>
+              {protectionFailMode === "open" ? (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#0A5C48]">
+                  <Check className="h-3.5 w-3.5" /> Active
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400">Select</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+              <strong>Best for Websites, Stores &amp; Media:</strong> If CleanTraffic is unreachable or exceeds {protectionTimeoutMs}ms, traffic silently passes through to your origin server without interruption.
+            </p>
+          </button>
+
+          {/* Fail-Closed Option */}
+          <button
+            type="button"
+            onClick={() => setProtectionFailMode("closed")}
+            className={`text-left p-4 rounded-lg border transition-colors ${
+              protectionFailMode === "closed"
+                ? "bg-[#F4F9F6] border-[#0A5C48]"
+                : "bg-white border-slate-200 hover:border-slate-300"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-[#0A5C48]" />
+                <span className="text-xs font-semibold text-[#0F172A]">Fail-Closed (Maximum Security with Challenge Retry)</span>
+              </div>
+              {protectionFailMode === "closed" ? (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#0A5C48]">
+                  <Check className="h-3.5 w-3.5" /> Active
+                </span>
+              ) : (
+                <span className="text-xs text-slate-400">Select</span>
+              )}
+            </div>
+            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+              <strong>Best for Fintech, Auth &amp; Attack Targets:</strong> If CleanTraffic is unreachable or exceeds {protectionTimeoutMs}ms, unverified traffic is held at the edge and served an interactive security screen with a <strong>Retry Connection</strong> button.
+            </p>
+          </button>
         </div>
       </div>
 
@@ -1198,10 +1306,10 @@ export function UserIntegrationTab({
 
                   <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-1 shadow-2xs">
                     <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">3</span>
-                    <div className="font-bold text-slate-900">Map Domain or Target</div>
+                    <div className="font-bold text-slate-900">Bind Domain &amp; Verify Proxy</div>
                     <p className="text-[#64748B] text-[11px] leading-relaxed">
-                      <strong>Option A (Domain):</strong> Go to <strong>Settings &rarr; Domains &amp; Routes</strong> &rarr; Add Route: <code className="bg-slate-100 px-1 rounded">*yourdomain.com/*</code>.<br />
-                      <strong>Option B (workers.dev):</strong> Set <code className="bg-slate-100 px-1 rounded">ORIGIN_URL</code> in the script to proxy verified visitors.
+                      In Worker &rarr; <strong>Settings &rarr; Domains &amp; Routes</strong> &rarr; Add Route: <code className="bg-slate-100 px-1 py-0.5 rounded font-bold text-[#F6821F]">*yourdomain.com/*</code><br />
+                      <strong className="text-amber-800">Critical:</strong> Make sure there is <u>NO dot</u> after the asterisk (use <code>*yourdomain.com/*</code>, NOT <code>*.yourdomain.com/*</code>, otherwise root domain visits will be ignored by Cloudflare). Ensure DNS is <strong>Proxied (Orange Cloud 🟧)</strong>.
                     </p>
                   </div>
 

@@ -1,7 +1,22 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, getDocs, collection, query, where, orderBy, limit, deleteDoc, updateDoc } from "firebase/firestore";
+import { getFirestore, setLogLevel, doc, getDoc, setDoc, getDocs, collection, query, where, orderBy, limit, deleteDoc, updateDoc } from "firebase/firestore";
 import fs from "fs";
 import path from "path";
+
+// Filter harmless internal Firestore idle stream timeout notices in Node.js
+const originalConsoleError = console.error;
+console.error = function (...args: any[]) {
+  if (
+    typeof args[0] === "string" &&
+    (args[0].includes("Disconnecting idle stream") || args[0].includes("Timed out waiting for new targets"))
+  ) {
+    // Benign internal Firestore client gRPC idle stream closure
+    return;
+  }
+  originalConsoleError.apply(console, args);
+};
+
+setLogLevel("error");
 
 let firebaseConfig: any = null;
 

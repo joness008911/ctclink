@@ -257,24 +257,18 @@ export async function authorizeApiKey(rawApiKey: string | null | undefined): Pro
   // Step 5: Associate with User Account (if any)
   let keyOwner = await storage.getClientUserByApiKey(apiKeyRecord.id);
 
-  // Fallback: If not linked directly, check if key is named for a user
-  if (!keyOwner) {
-    const allUsers = await storage.getAllClientUsers();
-    keyOwner = allUsers.find((u) =>
-      apiKeyRecord.keyName === `Trial - ${u.username}` ||
-      apiKeyRecord.keyName === `User - ${u.username}` ||
-      apiKeyRecord.keyName === `Trial - ${u.email}` ||
-      u.apiKeyId === apiKeyRecord.id ||
-      u.apiKeyId === apiKeyRecord.keyValue
-    );
-
-    // If found via fallback, heal the link on the user record
-    if (keyOwner && (!keyOwner.apiKeyId || keyOwner.apiKeyId !== apiKeyRecord.id)) {
-      try {
-        const updated = await storage.updateClientUser(keyOwner.id, { apiKeyId: apiKeyRecord.id, updatedAt: new Date() });
-        if (updated) keyOwner = updated;
-      } catch (err) {
-        console.error(`[AUTH_SERVICE] Failed to heal apiKeyId on user ${keyOwner.id}:`, err);
+  // Fallback: If not linked directly, check if key is named for a user (targeted lookup, no full collection scan)
+  if (!keyOwner && apiKeyRecord.keyName) {
+    if (apiKeyRecord.keyName.startsWith("Trial - ") || apiKeyRecord.keyName.startsWith("User - ")) {
+      const candidateName = apiKeyRecord.keyName.replace(/^(Trial - |User - )/, "").trim();
+      keyOwner = await storage.getClientUserByUsernameOrEmail(candidateName);
+      if (keyOwner && (!keyOwner.apiKeyId || keyOwner.apiKeyId !== apiKeyRecord.id)) {
+        try {
+          const updated = await storage.updateClientUser(keyOwner.id, { apiKeyId: apiKeyRecord.id, updatedAt: new Date() });
+          if (updated) keyOwner = updated;
+        } catch (err) {
+          console.error(`[AUTH_SERVICE] Failed to heal apiKeyId on user ${keyOwner.id}:`, err);
+        }
       }
     }
   }

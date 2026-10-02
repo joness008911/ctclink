@@ -20,12 +20,10 @@ import { test, describe, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { neon } from "@neondatabase/serverless";
 import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "../shared/schema.js";
 import { DatabaseStorage, MemStorage } from "../server/storage.js";
-import { isValidDatabaseUrl } from "../server/db.js";
+import { isValidDatabaseUrl, db, pool } from "../server/db.js";
 
 after(() => {
   setTimeout(() => process.exit(0), 100).unref();
@@ -92,26 +90,22 @@ describe("Billing columns present in database schema (live DB)", () => {
     return;
   }
 
-  const sqlFn = neon(dbUrl);
-  const db = drizzle(sqlFn, { schema });
-
   async function columnExists(tableName: string, columnName: string): Promise<boolean> {
-    const rows = await db.execute(
-      sql`SELECT 1 FROM information_schema.columns
-          WHERE table_name = ${tableName}
-            AND column_name = ${columnName}
-          LIMIT 1`
+    if (!pool) return false;
+    const res = await pool.query(
+      `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2 LIMIT 1`,
+      [tableName, columnName]
     );
-    return (rows.rowCount ?? 0) > 0;
+    return res.rows.length > 0;
   }
 
   async function tableExists(tableName: string): Promise<boolean> {
-    const rows = await db.execute(
-      sql`SELECT 1 FROM information_schema.tables
-          WHERE table_name = ${tableName}
-          LIMIT 1`
+    if (!pool) return false;
+    const res = await pool.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = $1 LIMIT 1`,
+      [tableName]
     );
-    return (rows.rowCount ?? 0) > 0;
+    return res.rows.length > 0;
   }
 
   const billingColumns = [

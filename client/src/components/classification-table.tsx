@@ -7,7 +7,8 @@ import type { Classification } from "@shared/schema";
 export default function ClassificationTable() {
   const { data: classifications = [], isLoading, refetch } = useQuery<Classification[]>({
     queryKey: ["/api/classifications?limit=1000"],
-    refetchInterval: 10000, // Refresh every 10 seconds
+    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchIntervalInBackground: false,
   });
 
   const formatTime = (timestamp: string | Date) => {

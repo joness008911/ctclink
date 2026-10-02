@@ -1,4 +1,5 @@
 import { storage } from "./storage";
+import { monitoringService } from "./monitoringService";
 
 export type Ip2LocationErrorType = 
   | 'quota_exhausted' 
@@ -56,6 +57,10 @@ class Ip2LocationHealthMonitor {
   private getEffectiveKeyFn: (() => Promise<string>) | null = null;
   private checkIntervalTimer: NodeJS.Timeout | null = null;
   private isChecking = false;
+
+  // Circuit breaker state: prevents callers from hanging when upstream is known to be dead or out of quota
+  private circuitBreakerUntil = 0;
+  private readonly CIRCUIT_BREAKER_DURATION_MS = 60000; // 60s cooldown
 
   constructor() {
     // Attempt to load persisted health snapshot on startup
@@ -126,6 +131,22 @@ class Ip2LocationHealthMonitor {
     return { ...this.state };
   }
 
+  // --- CIRCUIT BREAKER HELPERS ---
+  public isCircuitOpen(): boolean {
+    if (this.state.status === 'exhausted' || this.state.status === 'invalid_key') {
+      return true;
+    }
+    return Date.now() < this.circuitBreakerUntil;
+  }
+
+  public tripCircuitBreaker(durationMs: number = this.CIRCUIT_BREAKER_DURATION_MS): void {
+    this.circuitBreakerUntil = Date.now() + durationMs;
+  }
+
+  public resetCircuitBreaker(): void {
+    this.circuitBreakerUntil = 0;
+  }
+
   public recordSuccess(latencyMs: number, provider: 'ip2location.io' | 'ip2geolocation.io' = 'ip2location.io') {
     this.state.totalLookups++;
     this.state.successfulLookups++;
@@ -133,6 +154,7 @@ class Ip2LocationHealthMonitor {
     this.state.latencyMs = latencyMs;
     this.state.lastSuccess = new Date().toISOString();
     this.state.provider = provider;
+    this.resetCircuitBreaker();
     
     // If previously in error/degraded due to transient failures, restore healthy
     if (this.state.status === 'degraded' || this.state.status === 'exhausted' || this.state.status === 'invalid_key') {
@@ -161,19 +183,52 @@ class Ip2LocationHealthMonitor {
 
     if (errorType === 'quota_exhausted') {
       this.state.status = 'exhausted';
-      this.state.alertMessage = `IP2Location API quota limit reached: ${message || 'INSUFFICIENT_CREDIT'}. Geolocation fallback is active.`;
+      this.state.alertMessage = `IP2Location API quota limit reached: ${message || 'INSUFFICIENT_CREDIT'}. Upstream calls paused for 60s via circuit breaker.`;
       console.error(`🚨 [IP2Location Health Alert] QUOTA EXHAUSTED: ${message} (Code: ${code})`);
+      this.tripCircuitBreaker(60000);
       this.persistState();
+
+      // Dispatch critical instant alert to Telegram
+      void monitoringService.recordIncident({
+        severity: 'critical',
+        subsystem: 'External Lookup',
+        title: 'IP2Location Quota Exhausted',
+        exactCause: `IP2Location API credit balance depleted: ${message || 'INSUFFICIENT_CREDIT'} (Code: ${code}). Upstream requests temporarily paused to protect visitor latency.`,
+        fileLocation: 'server/ip2locationHealth.ts',
+        recommendedAction: 'Replenish IP2Location credits or upgrade plan at ip2location.io to restore external IP intelligence.',
+      });
     } else if (errorType === 'invalid_key') {
       this.state.status = 'invalid_key';
       this.state.alertMessage = `IP2Location API key is invalid or expired: ${message || 'INVALID_API_KEY'}. Please update your key.`;
       console.error(`🚨 [IP2Location Health Alert] INVALID KEY: ${message} (Code: ${code})`);
+      this.tripCircuitBreaker(60000);
       this.persistState();
+
+      // Dispatch high severity instant alert to Telegram
+      void monitoringService.recordIncident({
+        severity: 'high',
+        subsystem: 'External Lookup',
+        title: 'Invalid IP2Location API Key',
+        exactCause: `IP2Location rejected key: ${message || 'INVALID_API_KEY'} (Code: ${code}).`,
+        fileLocation: 'server/ip2locationHealth.ts',
+        recommendedAction: 'Verify and update your IP2Location API key in Admin Settings.',
+      });
     } else if (this.state.consecutiveFailures >= 3) {
       this.state.status = 'degraded';
       this.state.alertMessage = `IP2Location upstream connection degraded: ${message}. Failovers active.`;
       console.warn(`⚠️ [IP2Location Health Alert] Service Degraded: ${message} (Consecutive failures: ${this.state.consecutiveFailures})`);
+      this.tripCircuitBreaker(30000); // 30s circuit breaker for repeated network failures
       this.persistState();
+
+      // Dispatch warning alert to Telegram
+      void monitoringService.recordIncident({
+        severity: 'warning',
+        subsystem: 'External Lookup',
+        title: 'IP2Location Service Degraded',
+        exactCause: `3 consecutive lookups failed: ${message} (Code: ${code}). Upstream requests paused for 30s.`,
+        fileLocation: 'server/ip2locationHealth.ts',
+        recommendedAction: 'Check network connectivity or status.ip2location.com.',
+      });
     }
   }
 
@@ -205,7 +260,7 @@ class Ip2LocationHealthMonitor {
 
     const startTime = Date.now();
 
-    // 1. Test IP2Location.io first
+    // 1. Test IP2Location.io (Sole Authoritative Provider)
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -213,7 +268,7 @@ class Ip2LocationHealthMonitor {
       
       const res = await fetch(testUrl, {
         method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': 'CleanTraffic-HealthCheck/1.0' },
+        headers: { 'Accept': 'application/json', 'User-Agent': 'CleanTraffic-HealthCheck/1.0', 'Connection': 'keep-alive' },
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -234,6 +289,7 @@ class Ip2LocationHealthMonitor {
         this.state.alertMessage = null;
         this.state.lastSuccess = new Date().toISOString();
         this.state.consecutiveFailures = 0;
+        this.resetCircuitBreaker();
         await this.persistState();
 
         return {
@@ -290,66 +346,28 @@ class Ip2LocationHealthMonitor {
 
       if (res.status >= 500) {
         this.recordError('service_down', res.status, `Server error HTTP ${res.status}`, 'ip2location.io');
+        return {
+          success: false,
+          health: this.getState(),
+          message: `IP2Location upstream server error (HTTP ${res.status}).`,
+        };
       }
     } catch (e: any) {
       const isTimeout = e.name === 'AbortError';
       const msg = isTimeout ? 'Request timed out after 5000ms' : (e.message || 'Network error');
       this.recordError(isTimeout ? 'timeout' : 'network', isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR', msg, 'ip2location.io');
-    }
-
-    // 2. Secondary fallback test: IP2Geolocation.io
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const testUrl = `https://api.ip2geolocation.io/ipgeo?apiKey=${encodeURIComponent(trimmedKey)}&ip=8.8.8.8`;
-      
-      const res = await fetch(testUrl, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json', 'User-Agent': 'CleanTraffic-HealthCheck/1.0' },
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      const latency = Date.now() - startTime;
-      this.state.latencyMs = latency;
-
-      let body: any = null;
-      try {
-        body = await res.json();
-      } catch (parseErr) {
-        body = null;
-      }
-
-      if (res.ok && body && (body.country_name || body.country_code2)) {
-        this.state.status = 'healthy';
-        this.state.provider = 'ip2geolocation.io';
-        this.state.alertMessage = null;
-        this.state.lastSuccess = new Date().toISOString();
-        this.state.consecutiveFailures = 0;
-        await this.persistState();
-
-        return {
-          success: true,
-          health: this.getState(),
-          details: {
-            provider: 'ip2geolocation.io',
-            country: body.country_name,
-            city: body.city,
-            isp: body.isp,
-            latencyMs: latency,
-          },
-          message: `Verified successfully via secondary provider ip2geolocation.io (${latency}ms latency).`,
-        };
-      }
-    } catch (e) {
-      // Ignored
+      return {
+        success: false,
+        health: this.getState(),
+        message: `Connection error: ${msg}.`,
+      };
     }
 
     await this.persistState();
     return {
       success: false,
       health: this.getState(),
-      message: this.state.alertMessage || 'Failed to verify API key with IP2Location or IP2Geolocation.',
+      message: this.state.alertMessage || 'Failed to verify API key with IP2Location.',
     };
   }
 

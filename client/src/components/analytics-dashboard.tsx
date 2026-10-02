@@ -12,7 +12,8 @@ export default function AnalyticsDashboard() {
 
   const { data: classifications = [] } = useQuery<Classification[]>({
     queryKey: ["/api/classifications?limit=1000"],
-    refetchInterval: 10000,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
 
   // Color palette for charts

@@ -104,7 +104,8 @@ export default function UserDashboard() {
     adNetworks?: Record<string, { total: number; human: number; bot: number }>;
   }>({
     queryKey: ["/api/user/stats"],
-    refetchInterval: 15000,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
 
   const { data: redirectUrls } = useQuery<{
@@ -117,12 +118,14 @@ export default function UserDashboard() {
 
   const { data: classifications = [] } = useQuery<any[]>({
     queryKey: ["/api/user/classifications"],
-    refetchInterval: 10000,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
 
   const { data: apiKeyDetails } = useQuery<any>({
     queryKey: ["/api/user/api-key-details"],
-    refetchInterval: 20000,
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
 
   const { data: apiKeyValue } = useQuery<{ keyValue: string | null }>({
