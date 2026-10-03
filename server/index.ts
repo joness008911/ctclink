@@ -10,6 +10,11 @@ const app = express();
 // Trust reverse proxy for Cloud Run and dev environments (critical for secure cookies & client IP)
 app.set("trust proxy", 1);
 
+// Cloud Run & container healthcheck endpoints - must respond 200 OK immediately
+app.get(["/health", "/_ah/health", "/_health", "/api/health"], (_req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 // Security headers with Helmet - configured to allow iframe preview and inline scripts
 app.use(helmet({
   contentSecurityPolicy: {
@@ -41,20 +46,24 @@ const blockedUserAgents = [
   'whatsapp', 'whatsappbot',
   'telegram', 'telegrambot',
   'discordbot', 'discord',
-  'curl', 'wget', 'python-requests', 'python-urllib',
-  'postman', 'insomnia', 'httpie',
   'archive.org_bot', 'ia_archiver',
   'pinterest', 'pinterestbot',
   'embedly', 'outbrain', 'quora',
-  'applebot', 'bingpreview', 'googlebot', 'baiduspider',
+  'bingpreview', 'baiduspider',
   'yandexbot', 'seznambot', 'bingbot', 'duckduckbot',
 ];
 
 app.use((req, res, next) => {
   const userAgent = (req.headers['user-agent'] || '').toLowerCase();
   
+  const isHealthCheck = req.path === '/health' || req.path === '/_ah/health' || req.path === '/_health' || req.path === '/api/health';
+  const isProbe = userAgent.includes('googlehc') || userAgent.includes('kube-probe') || userAgent.includes('healthcheck');
   const isApiEndpoint = req.path.startsWith('/api/') || req.path === '/robots.txt';
   
+  if (isHealthCheck || isProbe) {
+    return next();
+  }
+
   if (process.env.NODE_ENV === 'production' && !isApiEndpoint) {
     for (const blocked of blockedUserAgents) {
       if (userAgent.includes(blocked)) {
@@ -145,7 +154,7 @@ process.on('uncaughtException', (error) => {
     // Run pending database migrations if a valid Postgres database is configured
     if (isValidDatabaseUrl(process.env.DATABASE_URL)) {
       try {
-        execSync("npx drizzle-kit migrate", { stdio: "pipe" });
+        execSync("npx drizzle-kit migrate", { stdio: "pipe", timeout: 8000 });
         log("Database migrations applied");
       } catch (err: any) {
         const msg = (err.stderr?.toString() || err.stdout?.toString() || err.message || String(err)).slice(0, 500);

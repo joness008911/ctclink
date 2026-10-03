@@ -45,25 +45,8 @@ export function generateCloudflareWorkerScript(options: GeneratorOptions): strin
 
   if (enableLoading) {
     return `/**
- * CleanTraffic - Cloudflare Edge Worker Shield (Interstitial Loading Mode)
- * Universal Edge Protection for Shopify, Wix, Vercel, WordPress & Custom Hosts
- * 
- * MODE: Interstitial Loading Screen (Enabled)
- * - Zero Blank Screens: Returns an ultra-fast security verification splash in <15ms directly from the Edge.
- * - Background Verification: Validates IP, device, browser, ASN, proxy, and ad click tokens asynchronously.
- * - Strict HTTP Status Codes: Returns authentic 403 Forbidden or 404 Not Found when configured rules trigger.
- * - Key Revocation Protection: Detects expired, revoked, or invalid API keys and fails closed safely.
- * - Fail-Safe Timeout & Retry: Displays interactive retry button if connection experiences network timeouts.
- * - Ad Click Token Preservation: Forwards all UTMs, fbclid, gclid, ttclid, msclkid, etc.
- * 
- * DEPLOYMENT INSTRUCTIONS:
- * 1. Log in to your Cloudflare Dashboard (https://dash.cloudflare.com)
- * 2. Go to "Workers & Pages" -> "Create Application" -> "Create Worker"
- * 3. Replace all default code with this script and click "Deploy"
- * 4. Go to "Settings" -> "Domains & Routes" -> "Add Route"
- *    - Route pattern: *yourdomain.com/*
- *    - Zone: select your domain
- * 5. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
+ * CleanTraffic - Cloudflare Edge Shield (Interstitial Mode)
+ * Edge security verification for Cloudflare-routed domains
  */
 
 export default {
@@ -392,70 +375,34 @@ export default {
 
   // TRANSPARENT / INLINE MODE (enableLoading === false)
   return `/**
- * CleanTraffic - Cloudflare Edge Worker Shield (Transparent Inline Mode)
- * Universal Edge Protection for Shopify, Wix, Vercel, WordPress & Custom Hosts
- * 
- * MODE: Transparent Inline Guard (No Interstitial Loading Screen)
- * - Zero Visual Loading Screen: Legitimate human visitors experience zero delay.
- * - Edge Inspection: Incoming traffic is verified at Cloudflare's Edge before reaching origin.
- * - Strict HTTP Status Codes: Bots and unauthorized traffic receive authentic 403 or 404 responses.
- * - Ad Click Token Forwarding: Passes fbclid, gclid, ttclid, msclkid, UTMs seamlessly.
- * - Fail-Safe Resiliency: 2.5-second timeout ensures visitors are never stranded.
- * 
- * DEPLOYMENT INSTRUCTIONS (Quick Web Browser Setup):
- * 1. Log in to your Cloudflare Dashboard (https://dash.cloudflare.com)
- * 2. Go to "Workers & Pages" -> "Create Application" -> Select tab "Workers" (NOT Pages!)
- * 3. Click "Create Worker" -> Click "Deploy" (to initialize)
- * 4. Click "Edit code" (or "Quick Edit") directly in your browser
- * 5. Delete the default sample code, PASTE this script, and click "Save and deploy"
- * 6. Go to Worker Settings -> "Domains & Routes" -> "Add Route"
- *    - Route pattern: *yourdomain.com/*  (CRITICAL: NO dot between * and domain! Do NOT use *.yourdomain.com/* which only matches subdomains)
- *    - Zone: select your domain
- * 7. Done! Traffic is now filtered at the Cloudflare Edge before reaching your host.
- * 
- * NOTE: Do NOT use the Cloudflare Pages "Upload assets" drag-and-drop tool.
- * Workers do not use file uploaders; code is pasted directly into the Quick Edit browser editor.
- * 
- * STANDALONE PROXY MODE (OPTIONAL):
- * If using this worker on *.workers.dev directly as an ad campaign link, set ORIGIN_URL
- * below to your target website (e.g. "https://yourwebsite.com").
+ * CleanTraffic - Cloudflare Edge Shield
+ * High-performance edge protection for Cloudflare-routed domains
  */
 
-// Target origin ONLY for standalone workers.dev proxy mode.
-// For live domains (Shopify, Wix, WordPress, VPS) with Cloudflare Routes, leave as empty string ""
-// so Cloudflare automatically proxies verified visitors to your live web host.
-const ORIGIN_URL = "";
-const FAIL_MODE = "${failMode}"; // "open" (High Availability) or "closed" (Maximum Security)
+const FAIL_MODE = "${failMode}"; // "open" (pass traffic on timeout) or "closed" (block on timeout)
 const TIMEOUT_MS = ${timeoutMs};
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // 1. Bypass static assets (images, CSS, JS, fonts, media, favicons, robots.txt, sitemaps)
-    const secFetchDest = (request.headers.get('sec-fetch-dest') || '').toLowerCase();
-    const isAssetDest = ['image', 'style', 'script', 'font', 'video', 'audio'].includes(secFetchDest);
-    const isStaticAsset = isAssetDest || /\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf|map|xml|txt|json|avif)$/i.test(url.pathname);
+    // 1. Bypass static assets (images, CSS, JS, fonts, media, icons)
+    const isStaticAsset = /\\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf|map|xml|txt|json|avif)$/i.test(url.pathname);
     if (isStaticAsset) {
       return fetch(request);
     }
 
-    // 2. Check if visitor was previously cleared in this session (skip check if ?nocache=1 or ?ctc_test=1 is passed for testing)
+    // 2. Fast pass for visitors already verified in this session
     const bypassCookie = url.searchParams.has('nocache') || url.searchParams.has('ctc_test');
     const cookieHeader = request.headers.get('Cookie') || '';
     if (!bypassCookie && cookieHeader.includes('ctc_verified=1')) {
-      if (ORIGIN_URL) {
-        return fetch(new Request(new URL(url.pathname + url.search, ORIGIN_URL).toString(), request));
-      }
-      if (!url.hostname.endsWith('.workers.dev')) {
-        return fetch(request);
-      }
+      return fetch(request);
     }
 
-    // 3. Resolve API Key: supports Cloudflare Secret (env.CLEANTRAFFIC_API_KEY) or pre-configured key
+    // 3. Resolve API Key (supports Cloudflare Secret CLEANTRAFFIC_API_KEY or pre-configured key)
     const activeApiKey = (env && env.CLEANTRAFFIC_API_KEY) ? env.CLEANTRAFFIC_API_KEY : '${apiKey}';
 
-    // 4. Extract real visitor client IP and request metadata
+    // 4. Extract real visitor metadata
     const clientIp = request.headers.get('cf-connecting-ip') 
       || request.headers.get('x-real-ip') 
       || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
@@ -465,10 +412,7 @@ export default {
     const referer = request.headers.get('referer') || '';
     const queryString = url.search ? url.search.substring(1) : '';
 
-    // 5. Query CleanTraffic Intelligence Engine with target timeout
-    let timedOutOrFailed = false;
-    let verdict = null;
-
+    // 5. Query CleanTraffic Intelligence Engine at the edge
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -478,7 +422,7 @@ export default {
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': activeApiKey,
-          'User-Agent': 'CleanTraffic-Cloudflare-Worker-Inline/2.5'
+          'User-Agent': 'CleanTraffic-Cloudflare-Worker'
         },
         body: JSON.stringify({
           apiKey: activeApiKey,
@@ -494,16 +438,19 @@ export default {
       clearTimeout(timeoutId);
 
       if (response.ok) {
-        verdict = await response.json();
+        const verdict = await response.json();
         const action = String(verdict.action || '');
         const statusCode = verdict.statusCode;
         const statusAction = String(verdict.statusAction || '');
         const isBlocked = !verdict.isHuman || action === 'Blocked' || verdict.visitorType === 'Bot' || verdict.visitor_type === 'Bot' || action === 'Restricted';
 
-        // ── BOT, VPN & POLICY INTERCEPTION (403, 404, or Safe Page Redirect) ──
+        // Bot or restricted traffic interception
         if (isBlocked) {
+          if (verdict.redirectUrl && String(verdict.redirectUrl).startsWith('http')) {
+            return Response.redirect(verdict.redirectUrl, 302);
+          }
           if (action === '403' || statusCode === 403 || statusAction === '403' || verdict.statusAction === '403') {
-            return new Response('403 Forbidden - Access Denied', {
+            return new Response('403 Forbidden', {
               status: 403,
               headers: { 
                 'Content-Type': 'text/plain; charset=utf-8',
@@ -512,11 +459,6 @@ export default {
               }
             });
           }
-
-          if (verdict.redirectUrl && String(verdict.redirectUrl).startsWith('http')) {
-            return Response.redirect(verdict.redirectUrl, 302);
-          }
-
           return new Response('404 Not Found', {
             status: 404,
             headers: { 
@@ -526,202 +468,18 @@ export default {
             }
           });
         }
-      } else if (response.status >= 500 || response.status === 401 || response.status === 403) {
-        timedOutOrFailed = true;
       }
     } catch (err) {
-      timedOutOrFailed = true;
-    }
-
-    // 6. Handle Fallback Policy when CleanTraffic is unavailable or timed out
-    if (timedOutOrFailed) {
-      // Parse retry count from cookie
-      const retryMatch = cookieHeader.match(/ctc_retry=(\d+)/);
-      const currentRetries = retryMatch ? parseInt(retryMatch[1], 10) : 0;
-
-      // ── SMART 3-RETRY AUTO-BYPASS ──
-      // If the visitor has retried 2 or more times (this is the 3rd attempt):
-      // 1. Clear the visitor immediately so conversions / ad clicks are NOT lost!
-      // 2. Dispatch non-blocking emergency telemetry beacon to the backend for Admin diagnostic alerting.
-      if (currentRetries >= 2) {
-        if (ctx && typeof ctx.waitUntil === 'function') {
-          ctx.waitUntil(
-            fetch('${endpoint}/api/monitoring/incident-beacon', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                type: 'edge_3retry_bypass',
-                url: request.url,
-                ip: clientIp,
-                apiKey: activeApiKey,
-                retryCount: 3,
-                latencyMs: TIMEOUT_MS,
-                userAgent: userAgent,
-                failMode: FAIL_MODE
-              })
-            }).catch(() => {})
-          );
-        }
-
-        // Forward visitor seamlessly to origin
-        if (ORIGIN_URL) {
-          const targetUrl = new URL(url.pathname + url.search, ORIGIN_URL);
-          const proxyRequest = new Request(targetUrl.toString(), {
-            method: request.method,
-            headers: request.headers,
-            body: request.body,
-            redirect: 'follow'
-          });
-          const originResponse = await fetch(proxyRequest);
-          const modified = new Response(originResponse.body, originResponse);
-          modified.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
-          modified.headers.append('Set-Cookie', 'ctc_retry=0; Path=/; Max-Age=0');
-          modified.headers.set('X-CleanTraffic-Shield', 'Active');
-          modified.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
-          return modified;
-        }
-
-        if (!url.hostname.endsWith('.workers.dev')) {
-          const originResponse = await fetch(request);
-          const modified = new Response(originResponse.body, originResponse);
-          modified.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
-          modified.headers.append('Set-Cookie', 'ctc_retry=0; Path=/; Max-Age=0');
-          modified.headers.set('X-CleanTraffic-Shield', 'Active');
-          modified.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
-          return modified;
-        }
-      }
-
       if (FAIL_MODE === 'closed') {
-        const nextRetries = currentRetries + 1;
-        // FAIL_CLOSED Policy: Challenge screen with interactive Retry button
-        return new Response(\`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Security Verification Required &bull; CleanTraffic</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0B0F19; color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
-    .box { background: #111827; border: 1px solid #1E293B; border-radius: 14px; max-width: 460px; width: 100%; padding: 32px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
-    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.25); color: #10B981; border-radius: 9999px; font-size: 11px; font-weight: 600; margin-bottom: 16px; }
-    .dot { width: 6px; height: 6px; border-radius: 50%; background: #10B981; }
-    h1 { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: #FFFFFF; }
-    p { font-size: 13px; color: #94A3B8; line-height: 1.6; margin-bottom: 20px; }
-    .retry-btn { display: inline-block; width: 100%; padding: 10px 18px; background: #10B981; color: #0B0F19; font-weight: 700; font-size: 13px; border: none; border-radius: 8px; cursor: pointer; text-decoration: none; transition: background 0.15s; }
-    .retry-btn:hover { background: #059669; }
-    .meta { margin-top: 18px; font-size: 11px; color: #64748B; font-family: monospace; }
-  </style>
-</head>
-<body>
-  <div class="box">
-    <div class="badge"><span class="dot"></span> Shield Gateway &bull; Protection Active</div>
-    <h1>Security Verification Required</h1>
-    <p>Connection verification timed out. If you are a human visitor, please click Retry Connection below to complete verification.</p>
-    <button type="button" class="retry-btn" onclick="location.reload()">Retry Connection</button>
-    <div class="meta">Attempt \${nextRetries} of 3 &bull; Auto-bypasses on 3rd attempt</div>
-  </div>
-</body>
-</html>\`, {
-          status: 403,
-          headers: {
-            'Content-Type': 'text/html; charset=utf-8',
-            'X-CleanTraffic-Fallback': 'fail-closed',
-            'Set-Cookie': \`ctc_retry=\${nextRetries}; Path=/; Max-Age=120; SameSite=Lax\`,
-            'Cache-Control': 'no-store, no-cache, must-revalidate',
-          }
-        });
+        return new Response('403 Forbidden', { status: 403 });
       }
-
-      // FAIL_OPEN Policy: High Availability. Log warning and pass visitor to origin
-      console.warn('CleanTraffic: Gateway timed out. Passing visitor through under Fail-Open policy.');
     }
 
-    // 5. Allowed human visitor routing
-    // Case A: Standalone Proxy mode with ORIGIN_URL configured
-    if (ORIGIN_URL) {
-      const targetUrl = new URL(url.pathname + url.search, ORIGIN_URL);
-      const proxyRequest = new Request(targetUrl.toString(), {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-        redirect: 'follow'
-      });
-      const originResponse = await fetch(proxyRequest);
-      const modifiedResponse = new Response(originResponse.body, originResponse);
-      modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
-      modifiedResponse.headers.set('X-CleanTraffic-Shield', 'Active');
-      modifiedResponse.headers.set('X-CleanTraffic-Verdict', 'Passed');
-      return modifiedResponse;
-    }
-
-    // Case B: Direct visit on *.workers.dev preview URL without custom domain route or ORIGIN_URL
-    // Prevents self-fetch loop that causes Cloudflare to print the raw JavaScript script on the screen!
-    if (url.hostname.endsWith('.workers.dev')) {
-      const colo = (request.cf && request.cf.colo) || 'Global Edge';
-      const statusTitle = timedOutOrFailed ? 'Gateway Timeout Notice' : 'Cloudflare Edge Protection Online';
-      const classificationText = timedOutOrFailed 
-        ? ('Verification Timed Out (' + TIMEOUT_MS + 'ms)') 
-        : ((verdict && verdict.isHuman) ? 'Human Visitor (Passed)' : (verdict ? (verdict.visitorType || 'Clean Traffic') : 'Clean Traffic'));
-      const classificationColor = timedOutOrFailed ? '#F59E0B' : ((verdict && verdict.isHuman) ? '#10B981' : '#EF4444');
-      return new Response(\`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CleanTraffic Edge Shield &bull; Active</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0B0F19; color: #F8FAFC; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-    .card { background: #111827; border: 1px solid #1F2937; border-radius: 16px; padding: 36px 32px; max-width: 520px; width: 100%; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #10B981; border-radius: 9999px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #10B981; box-shadow: 0 0 8px #10B981; }
-    h1 { font-size: 20px; font-weight: 700; color: #FFFFFF; margin-bottom: 8px; }
-    p { font-size: 13px; color: #94A3B8; line-height: 1.6; margin-bottom: 20px; }
-    .info-grid { background: #0B0F19; border: 1px solid #1F2937; border-radius: 10px; padding: 16px; margin-bottom: 20px; font-size: 12px; }
-    .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1E293B; }
-    .row:last-child { border-bottom: none; }
-    .label { color: #64748B; }
-    .val { color: #F1F5F9; font-weight: 600; font-family: monospace; }
-    .note { font-size: 12px; color: #38BDF8; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 8px; padding: 14px; line-height: 1.5; }
-    .steps { margin-top: 10px; font-size: 12px; color: #CBD5E1; line-height: 1.6; padding-left: 18px; }
-    code { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace; color: #F8FAFC; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="badge"><span class="dot"></span> CleanTraffic Edge Shield Active</div>
-    <h1>\${statusTitle}</h1>
-    <p>Your Cloudflare Worker is active at POP data center <strong>\${colo}</strong> and successfully connected to the CleanTraffic Intelligence Engine.</p>
-    <div class="info-grid">
-      <div class="row"><span class="label">Client IP:</span><span class="val">\${clientIp}</span></div>
-      <div class="row"><span class="label">Classification:</span><span class="val" style="color:\${classificationColor}">\${classificationText}</span></div>
-      <div class="row"><span class="label">Protection Mode:</span><span class="val">Transparent Inline Shield</span></div>
-      <div class="row"><span class="label">API Key:</span><span class="val">\${'${apiKey}'.slice(0, 8)}...</span></div>
-    </div>
-    <div class="note">
-      <strong>How to Protect Your Live Website:</strong>
-      <ol class="steps">
-        <li><strong>Custom Domain Route (Recommended):</strong> In Cloudflare, go to <strong>Workers &amp; Pages &rarr; Settings &rarr; Domains &amp; Routes &rarr; Add Route</strong> (e.g. <code>*yourdomain.com/*</code>).</li>
-        <li><strong>Or Standalone Proxy:</strong> Set <code>const ORIGIN_URL = "https://yourwebsite.com";</code> at line 20 of this worker script to proxy all verified visitors directly to your store or offer.</li>
-      </ol>
-    </div>
-  </div>
-</body>
-</html>\`, {
-        status: 200,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' }
-      });
-    }
-
-    // Case C: Custom Domain Route Pass-Through (e.g. *yourdomain.com/*)
-    // Traffic passes seamlessly to origin host (Shopify, Wix, Vercel, WordPress, etc.)
+    // 6. Verified human visitor: Forward to live website origin & set session cookie
     const originResponse = await fetch(request);
     const modifiedResponse = new Response(originResponse.body, originResponse);
     modifiedResponse.headers.append('Set-Cookie', 'ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax');
     modifiedResponse.headers.set('X-CleanTraffic-Shield', 'Active');
-    modifiedResponse.headers.set('X-CleanTraffic-Verdict', 'Passed');
     return modifiedResponse;
   }
 };

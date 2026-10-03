@@ -68,18 +68,32 @@ export async function setupVite(app: Express, server: Server) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(import.meta.dirname, "public");
+  const candidates = [
+    path.resolve(import.meta.dirname, "public"),
+    path.resolve(process.cwd(), "dist", "public"),
+    path.resolve(process.cwd(), "public"),
+    path.resolve(import.meta.dirname, "..", "dist", "public"),
+  ];
 
-  if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
-    );
+  const distPath = candidates.find((p) => fs.existsSync(p) && fs.existsSync(path.join(p, "index.html"))) || candidates.find((p) => fs.existsSync(p));
+
+  if (!distPath || !fs.existsSync(distPath)) {
+    console.warn(`[serveStatic] Warning: Could not find client build directory. Checked paths:`, candidates);
+    app.use("*", (_req, res) => {
+      res.status(200).send("CleanTraffic service is running. Client assets building.");
+    });
+    return;
   }
 
   app.use(express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
+    const indexPath = path.resolve(distPath, "index.html");
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.status(200).send("CleanTraffic service is running.");
+    }
   });
 }
