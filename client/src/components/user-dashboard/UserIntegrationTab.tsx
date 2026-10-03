@@ -61,22 +61,32 @@ import {
   generateNextJsMiddleware,
   generateNodeExpressMiddleware,
 } from "@shared/integrationGenerators";
+import {
+  CloudflareLogo,
+  ShopifyLogo,
+  WordPressLogo,
+  NextJsLogo,
+  NodeJsLogo,
+  PhpLogo,
+  ReactLogo,
+  JavaScriptLogo,
+  PythonLogo,
+  GoogleTagManagerLogo,
+} from "./IntegrationLogos";
 
 export type IntegrationStack = "shopify" | "wordpress" | "cloudflare" | "php" | "nodejs";
 export type IntegrationCategory = "all" | "nocode" | "integrations" | "web" | "cms" | "server";
 
 interface IntegrationItem {
-  id: IntegrationStack;
+  id: string;
+  targetStack: IntegrationStack;
   name: string;
   subtitle: string;
-  category: "nocode" | "integrations" | "web" | "cms" | "server";
-  badge: string;
-  badgeStyle: string;
-  iconBg: string;
-  iconColor: string;
-  icon: any;
+  category: "all" | "nocode" | "integrations" | "web" | "cms" | "server";
+  badge?: string;
+  badgeStyle?: string;
+  LogoComponent: React.ComponentType<{ className?: string }>;
   summary: string;
-  runtime: string;
   tags: string[];
 }
 
@@ -515,73 +525,123 @@ export function UserIntegrationTab({
   const integrationDirectory: IntegrationItem[] = useMemo(() => [
     {
       id: "cloudflare",
-      name: "Cloudflare No-Code Worker",
-      subtitle: "Universal 300+ Edge Location Shield",
+      targetStack: "cloudflare",
+      name: "Cloudflare",
+      subtitle: "Cloudflare No-Code Worker",
       category: "nocode",
       badge: "Active",
       badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      iconBg: "bg-orange-50 border-orange-200",
-      iconColor: "text-[#F6821F]",
-      icon: Globe,
-      summary: "Protect your website with CleanTraffic using Cloudflare Workers. Intercept bots at the global edge in <15ms before reaching your origin host.",
-      runtime: "Cloudflare Workers • Any Origin Host",
-      tags: ["Cloudflare", "Edge", "Vercel", "Shopify", "Custom Domain", "No-Code"],
+      LogoComponent: CloudflareLogo,
+      summary: "Protect your website with CleanTraffic using Cloudflare Workers at 300+ Edge locations.",
+      tags: ["Cloudflare", "Edge", "No-Code", "Worker"],
     },
     {
       id: "shopify",
-      name: "JavaScript Web Agent",
-      subtitle: "Shopify, Wix, Webflow, Squarespace & Carrd",
+      targetStack: "shopify",
+      name: "Shopify",
+      subtitle: "Storefront Web Agent",
       category: "web",
       badge: "Active",
       badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      iconBg: "bg-emerald-50 border-emerald-200",
-      iconColor: "text-emerald-700",
-      icon: ShoppingBag,
-      summary: "1-line client-side protection tag with WebGL GPU & 2D canvas entropy. Protects closed SaaS store builders and custom web pages in place.",
-      runtime: "Zero Server Needed • Browser & CDN",
-      tags: ["Shopify", "Webflow", "Wix", "Squarespace", "Carrd", "HTML", "Web"],
+      LogoComponent: ShopifyLogo,
+      summary: "Add CleanTraffic protection tag to your Shopify store with hardware entropy.",
+      tags: ["Shopify", "Store", "Liquid", "E-Commerce", "Web"],
     },
     {
       id: "wordpress",
-      name: "WordPress & WooCommerce",
-      subtitle: "Dedicated WordPress Plugin (.zip)",
+      targetStack: "wordpress",
+      name: "WordPress",
+      subtitle: "WordPress & WooCommerce",
       category: "cms",
-      badge: "1-Click Plugin",
+      badge: "1-Click",
       badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
-      iconBg: "bg-blue-50 border-blue-200",
-      iconColor: "text-[#0073AA]",
-      icon: Layers,
-      summary: "Hooks into WordPress request initialization before heavy themes load. Deflects card testers on WooCommerce and protects wp-login.",
-      runtime: "PHP 7.4+ • WordPress 5.0+ • WooCommerce",
+      LogoComponent: WordPressLogo,
+      summary: "Dedicated plugin (.zip) for blogs, landing pages, and checkout fraud protection.",
       tags: ["WordPress", "WooCommerce", "Plugin", "PHP", "CMS"],
     },
     {
-      id: "nodejs",
-      name: "Next.js & Express Middleware",
-      subtitle: "App Router, Pages Router & Node Server",
+      id: "nextjs",
+      targetStack: "nodejs",
+      name: "Next.js",
+      subtitle: "Edge Middleware",
       category: "server",
-      badge: "Full-Stack Edge",
+      badge: "Edge",
       badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
-      iconBg: "bg-slate-100 border-slate-200",
-      iconColor: "text-slate-800",
-      icon: Cpu,
-      summary: "Edge and HTTP middleware for Next.js 13/14/15 deployments on Vercel/Netlify and Node.js Express microservices on Railway or VPS.",
-      runtime: "Node.js 18+ • Next.js • Vercel • Railway",
-      tags: ["Next.js", "Express", "Vercel", "Node.js", "TypeScript", "Server"],
+      LogoComponent: NextJsLogo,
+      summary: "Edge and HTTP middleware for Next.js 13/14/15 App and Pages router on Vercel.",
+      tags: ["Next.js", "Vercel", "Edge", "React", "Server"],
+    },
+    {
+      id: "nodejs",
+      targetStack: "nodejs",
+      name: "Node.js",
+      subtitle: "Express Middleware",
+      category: "server",
+      badge: "Server",
+      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
+      LogoComponent: NodeJsLogo,
+      summary: "Integrate CleanTraffic with your Express.js or Node backend microservice.",
+      tags: ["Node.js", "Express", "Backend", "API", "Server"],
     },
     {
       id: "php",
-      name: "PHP Standalone (index.php)",
-      subtitle: "cPanel, CyberPanel, Apache & Nginx",
+      targetStack: "php",
+      name: "PHP",
+      subtitle: "index.php Shield",
       category: "server",
-      badge: "Self-Contained",
+      badge: "Standalone",
       badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
-      iconBg: "bg-emerald-50 border-emerald-200",
-      iconColor: "text-[#0A5C48]",
-      icon: Server,
-      summary: "Self-contained index.php deployment with optional customizable interstitial loading themes and direct cURL API communication.",
-      runtime: "cPanel • Apache • Nginx • PHP 7.4+",
-      tags: ["cPanel", "CyberPanel", "Apache", "Nginx", "Shared Hosting", "Server"],
+      LogoComponent: PhpLogo,
+      summary: "Integrate CleanTraffic with your PHP backend, cPanel, or CyberPanel.",
+      tags: ["PHP", "cPanel", "Apache", "CyberPanel", "Server"],
+    },
+    {
+      id: "react",
+      targetStack: "shopify",
+      name: "React",
+      subtitle: "Frontend SDK",
+      category: "web",
+      badge: "Active",
+      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      LogoComponent: ReactLogo,
+      summary: "Identify visitors and intercept bots on your React website.",
+      tags: ["React", "SPA", "Frontend", "SDK", "Web"],
+    },
+    {
+      id: "javascript",
+      targetStack: "shopify",
+      name: "JavaScript",
+      subtitle: "JS Agent",
+      category: "web",
+      badge: "Active",
+      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      LogoComponent: JavaScriptLogo,
+      summary: "Universal client-side protection snippet for custom websites and builders.",
+      tags: ["JavaScript", "HTML", "Webflow", "Wix", "Web"],
+    },
+    {
+      id: "gtm",
+      targetStack: "shopify",
+      name: "Google Tag Manager",
+      subtitle: "Web Tag",
+      category: "integrations",
+      badge: "Tag",
+      badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
+      LogoComponent: GoogleTagManagerLogo,
+      summary: "Add CleanTraffic to your website using Google Tag Manager custom HTML tags.",
+      tags: ["GTM", "Google", "Tag", "Analytics", "Integrations"],
+    },
+    {
+      id: "python",
+      targetStack: "nodejs",
+      name: "Python",
+      subtitle: "Backend Gateway",
+      category: "server",
+      badge: "Backend",
+      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
+      LogoComponent: PythonLogo,
+      summary: "Integrate CleanTraffic verification with your Python backend or API gateway.",
+      tags: ["Python", "FastAPI", "Flask", "Backend", "Server"],
     },
   ], []);
 
@@ -590,7 +650,7 @@ export function UserIntegrationTab({
     return integrationDirectory.filter((item) => {
       let matchesCategory = true;
       if (activeCategory === "nocode") matchesCategory = item.category === "nocode";
-      else if (activeCategory === "integrations") matchesCategory = item.category === "nocode" || item.id === "cloudflare";
+      else if (activeCategory === "integrations") matchesCategory = item.category === "nocode" || item.category === "integrations";
       else if (activeCategory === "web") matchesCategory = item.category === "web";
       else if (activeCategory === "cms") matchesCategory = item.category === "cms";
       else if (activeCategory === "server") matchesCategory = item.category === "server";
@@ -614,7 +674,7 @@ export function UserIntegrationTab({
   // Currently open integration item
   const currentItem = useMemo(() => {
     if (!selectedIntegration) return null;
-    return integrationDirectory.find(i => i.id === selectedIntegration) || null;
+    return integrationDirectory.find(i => i.targetStack === selectedIntegration) || null;
   }, [selectedIntegration, integrationDirectory]);
 
   return (
@@ -652,8 +712,8 @@ export function UserIntegrationTab({
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-orange-50 border border-orange-200 flex items-center justify-center text-[#F6821F] shrink-0">
-                        <Globe className="h-6 w-6" />
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <CloudflareLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -810,8 +870,8 @@ export function UserIntegrationTab({
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700 shrink-0">
-                        <ShoppingBag className="h-6 w-6" />
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <ShopifyLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1035,8 +1095,8 @@ export function UserIntegrationTab({
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0073AA] shrink-0">
-                        <Layers className="h-6 w-6" />
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <WordPressLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1163,8 +1223,8 @@ export function UserIntegrationTab({
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-[#0A5C48] shrink-0">
-                        <Server className="h-6 w-6" />
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <PhpLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1341,8 +1401,8 @@ export function UserIntegrationTab({
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-800 shrink-0">
-                        <Cpu className="h-6 w-6" />
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <NextJsLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -1649,189 +1709,47 @@ export function UserIntegrationTab({
             </div>
           </div>
 
-          {/* Categorized Sections (Fingerprint Style Layout) */}
-          <div className="space-y-8">
-            {/* Section 1: No-Code & Edge */}
-            {(activeCategory === "all" || activeCategory === "nocode" || activeCategory === "integrations") && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-[#0F172A]">No-Code &amp; Edge</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredIntegrations.filter(i => i.category === "nocode").map((item) => {
-                    const IconComponent = item.icon;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedIntegration(item.id)}
-                        className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between"
-                      >
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${item.iconBg} ${item.iconColor}`}>
-                              <IconComponent className="h-5 w-5" />
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <Badge className={`text-[10px] font-bold px-2 py-0.5 border ${item.badgeStyle}`}>
-                                {item.badge}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0A5C48] transition-colors">
-                              {item.name}
-                            </h4>
-                            <p className="text-[11px] font-medium text-[#64748B] mt-0.5">
-                              {item.subtitle}
-                            </p>
-                          </div>
-                          <p className="text-xs text-[#64748B] leading-relaxed line-clamp-3">
-                            {item.summary}
-                          </p>
-                        </div>
-                        <div className="pt-4 mt-4 border-t border-[#F1F5F9] flex items-center justify-between text-xs font-bold text-[#64748B] group-hover:text-[#0A5C48]">
-                          <span>Configure</span>
-                          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
+          {/* Unified Beside-Each-Other Grid (All sitting side by side matching screenshots) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredIntegrations.map((item) => {
+              const Logo = item.LogoComponent;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => {
+                    if (item.id === "react") setWebSubTab("sdk");
+                    else if (item.id === "javascript") setWebSubTab("inline");
+                    else if (item.id === "shopify" || item.id === "gtm") setWebSubTab("tag");
+                    else if (item.id === "nextjs") setNodeSubTab("nextjs");
+                    else if (item.id === "nodejs" || item.id === "python") setNodeSubTab("express");
+                    setSelectedIntegration(item.targetStack);
+                  }}
+                  className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between min-h-[145px]"
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      {/* Authentic Logo Container */}
+                      <div className="w-9 h-9 rounded-lg border border-slate-200/90 bg-white flex items-center justify-center p-1.5 shadow-2xs">
+                        <Logo className="h-5 w-5" />
                       </div>
-                    );
-                  })}
+                      {item.badge && (
+                        <Badge className={`text-[10px] font-bold px-2 py-0.5 border ${item.badgeStyle}`}>
+                          {item.badge}
+                        </Badge>
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0A5C48] transition-colors">
+                        {item.name}
+                      </h4>
+                      <p className="text-xs text-[#64748B] mt-1 leading-relaxed line-clamp-2">
+                        {item.summary}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {/* Section 2: Web Libraries */}
-            {(activeCategory === "all" || activeCategory === "web") && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-[#0F172A]">Web Libraries</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredIntegrations.filter(i => i.category === "web").map((item) => {
-                    const IconComponent = item.icon;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedIntegration(item.id)}
-                        className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between"
-                      >
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${item.iconBg} ${item.iconColor}`}>
-                              <IconComponent className="h-5 w-5" />
-                            </div>
-                            <Badge className={`text-[10px] font-bold px-2 py-0.5 border ${item.badgeStyle}`}>
-                              {item.badge}
-                            </Badge>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0A5C48] transition-colors">
-                              {item.name}
-                            </h4>
-                            <p className="text-[11px] font-medium text-[#64748B] mt-0.5">
-                              {item.subtitle}
-                            </p>
-                          </div>
-                          <p className="text-xs text-[#64748B] leading-relaxed line-clamp-3">
-                            {item.summary}
-                          </p>
-                        </div>
-                        <div className="pt-4 mt-4 border-t border-[#F1F5F9] flex items-center justify-between text-xs font-bold text-[#64748B] group-hover:text-[#0A5C48]">
-                          <span>Configure</span>
-                          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Section 3: CMS & E-Commerce */}
-            {(activeCategory === "all" || activeCategory === "cms") && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-[#0F172A]">CMS &amp; E-Commerce</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredIntegrations.filter(i => i.category === "cms").map((item) => {
-                    const IconComponent = item.icon;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedIntegration(item.id)}
-                        className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between"
-                      >
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${item.iconBg} ${item.iconColor}`}>
-                              <IconComponent className="h-5 w-5" />
-                            </div>
-                            <Badge className={`text-[10px] font-bold px-2 py-0.5 border ${item.badgeStyle}`}>
-                              {item.badge}
-                            </Badge>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0A5C48] transition-colors">
-                              {item.name}
-                            </h4>
-                            <p className="text-[11px] font-medium text-[#64748B] mt-0.5">
-                              {item.subtitle}
-                            </p>
-                          </div>
-                          <p className="text-xs text-[#64748B] leading-relaxed line-clamp-3">
-                            {item.summary}
-                          </p>
-                        </div>
-                        <div className="pt-4 mt-4 border-t border-[#F1F5F9] flex items-center justify-between text-xs font-bold text-[#64748B] group-hover:text-[#0A5C48]">
-                          <span>Configure</span>
-                          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Section 4: Server & Backend */}
-            {(activeCategory === "all" || activeCategory === "server") && (
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-[#0F172A]">Server &amp; Backend</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredIntegrations.filter(i => i.category === "server").map((item) => {
-                    const IconComponent = item.icon;
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => setSelectedIntegration(item.id)}
-                        className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between"
-                      >
-                        <div className="space-y-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border ${item.iconBg} ${item.iconColor}`}>
-                              <IconComponent className="h-5 w-5" />
-                            </div>
-                            <Badge className={`text-[10px] font-bold px-2 py-0.5 border ${item.badgeStyle}`}>
-                              {item.badge}
-                            </Badge>
-                          </div>
-                          <div>
-                            <h4 className="text-sm font-bold text-[#0F172A] group-hover:text-[#0A5C48] transition-colors">
-                              {item.name}
-                            </h4>
-                            <p className="text-[11px] font-medium text-[#64748B] mt-0.5">
-                              {item.subtitle}
-                            </p>
-                          </div>
-                          <p className="text-xs text-[#64748B] leading-relaxed line-clamp-3">
-                            {item.summary}
-                          </p>
-                        </div>
-                        <div className="pt-4 mt-4 border-t border-[#F1F5F9] flex items-center justify-between text-xs font-bold text-[#64748B] group-hover:text-[#0A5C48]">
-                          <span>Configure</span>
-                          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+              );
+            })}
           </div>
         </div>
       )}
