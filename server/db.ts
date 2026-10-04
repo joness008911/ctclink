@@ -23,43 +23,63 @@ if (!process.env.DATABASE_URL) {
   }
 }
 
-export function isValidDatabaseUrl(url: string | undefined): boolean {
-  if (!url || typeof url !== "string") return false;
-  const trimmed = url.trim();
+export function normalizeDatabaseUrl(url: string | undefined): string | null {
+  if (!url || typeof url !== "string") return null;
+  let cleaned = url.trim().replace(/^DATABASE_URL\s*=\s*/i, "").trim().replace(/\.+$/, "");
   if (
-    trimmed === "" ||
-    trimmed === "your_postgresql_url_here" ||
-    trimmed.includes("your_postgresql_url") ||
-    trimmed === "base" ||
-    trimmed.startsWith("base")
+    cleaned === "" ||
+    cleaned === "your_postgresql_url_here" ||
+    cleaned.includes("your_postgresql_url") ||
+    cleaned === "base" ||
+    cleaned.startsWith("base")
   ) {
-    return false;
+    return null;
   }
   try {
-    const parsed = new URL(trimmed);
-    return parsed.protocol === "postgres:" || parsed.protocol === "postgresql:";
+    const parsed = new URL(cleaned);
+    if (parsed.protocol === "postgres:" || parsed.protocol === "postgresql:") {
+      // Direct Supabase hostnames (db.[ref].supabase.co) resolve strictly to IPv6 AAAA records.
+      // Cloud Run and container sandbox environments cannot route outbound TCP on port 5432 over IPv6 (ECONNREFUSED).
+      // Detect this and fall back to Firestore to prevent application-wide 500 errors.
+      if (parsed.hostname.startsWith("db.") && parsed.hostname.endsWith(".supabase.co")) {
+        console.warn(`⚠️ [DATABASE] Direct Supabase host '${parsed.hostname}' is IPv6-only and unreachable from this container runtime. Routing storage to resilient Firestore.`);
+        return null;
+      }
+      return cleaned;
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-export const isDatabaseConfigured = isValidDatabaseUrl(process.env.DATABASE_URL);
+export function isValidDatabaseUrl(url: string | undefined): boolean {
+  return normalizeDatabaseUrl(url) !== null;
+}
+
+const cleanedDatabaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
+export const isDatabaseConfigured = cleanedDatabaseUrl !== null;
 
 let dbInstance: any = null;
 let poolInstance: pg.Pool | null = null;
 
-if (isDatabaseConfigured && process.env.DATABASE_URL) {
+if (isDatabaseConfigured && cleanedDatabaseUrl) {
   try {
     poolInstance = new Pool({
-      connectionString: process.env.DATABASE_URL.trim(),
+      connectionString: cleanedDatabaseUrl,
       ssl: { rejectUnauthorized: false },
       max: 20,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
+    });
+    poolInstance.on('error', (err) => {
+      console.warn('⚠️ [POSTGRES_POOL] Idle client error:', err.message);
     });
     dbInstance = drizzle(poolInstance, { schema });
-  } catch (err) {
-    console.warn("Failed to initialize PostgreSQL connection pool:", err);
+  } catch (err: any) {
+    console.warn("⚠️ Failed to initialize PostgreSQL pool:", err?.message || err);
+    poolInstance = null;
+    dbInstance = null;
   }
 }
 

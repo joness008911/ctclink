@@ -117,6 +117,7 @@ class ClassificationWriteBuffer {
     const isSupabase = (process.env.STORAGE_BACKEND || "").toLowerCase().trim() === "supabase" || 
                        (process.env.STORAGE_BACKEND || "").toLowerCase().trim() === "postgres";
 
+    let flushedToSupabase = false;
     if (isSupabase && pool) {
       try {
         for (const item of batchItems) {
@@ -173,13 +174,16 @@ class ClassificationWriteBuffer {
             d.timestamp ? new Date(d.timestamp) : new Date(),
           ]);
         }
+        flushedToSupabase = true;
       } catch (err: any) {
         console.warn(`[CLASSIFICATION_BUFFER] Failed to flush batch to Supabase:`, err?.message || err);
-      } finally {
-        this.isFlushing = false;
-        if (this.queue.length >= this.BATCH_SIZE_THRESHOLD) {
-          void this.flush();
-        }
+      }
+    }
+
+    if (flushedToSupabase) {
+      this.isFlushing = false;
+      if (this.queue.length >= this.BATCH_SIZE_THRESHOLD) {
+        void this.flush();
       }
       return;
     }

@@ -60,6 +60,7 @@ import {
   generateWordPressPluginPhp,
   generateNextJsMiddleware,
   generateNodeExpressMiddleware,
+  generateFastifyHook,
 } from "@shared/integrationGenerators";
 import {
   CloudflareLogo,
@@ -117,7 +118,7 @@ export function UserIntegrationTab({
   const [wpSubTab, setWpSubTab] = useState<"zip" | "code">("zip");
   const [cfSubTab, setCfSubTab] = useState<"quickedit" | "wrangler">("quickedit");
   const [phpSubTab, setPhpSubTab] = useState<"code" | "themes">("code");
-  const [nodeSubTab, setNodeSubTab] = useState<"nextjs" | "express">("nextjs");
+  const [nodeSubTab, setNodeSubTab] = useState<"express" | "nextjs" | "fastify">("express");
 
   // Copy & reveal states
   const [copiedCode, setCopiedCode] = useState(false);
@@ -236,6 +237,14 @@ export function UserIntegrationTab({
   });
 
   const nodeExpressMiddlewareCode = generateNodeExpressMiddleware({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading: false,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
+  });
+
+  const fastifyHookCode = generateFastifyHook({
     apiKeyValue,
     effectiveEndpoint,
     enableLoading: false,
@@ -1429,16 +1438,6 @@ export function UserIntegrationTab({
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                     <button
-                      onClick={() => setNodeSubTab("nextjs")}
-                      className={`text-xs font-bold pb-1.5 transition-colors ${
-                        nodeSubTab === "nextjs"
-                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
-                          : "text-[#64748B] hover:text-[#0F172A]"
-                      }`}
-                    >
-                      Next.js Edge Middleware (Vercel)
-                    </button>
-                    <button
                       onClick={() => setNodeSubTab("express")}
                       className={`text-xs font-bold pb-1.5 transition-colors ${
                         nodeSubTab === "express"
@@ -1446,7 +1445,27 @@ export function UserIntegrationTab({
                           : "text-[#64748B] hover:text-[#0F172A]"
                       }`}
                     >
-                      Express.js Server Middleware
+                      Express.js (Node 18+)
+                    </button>
+                    <button
+                      onClick={() => setNodeSubTab("nextjs")}
+                      className={`text-xs font-bold pb-1.5 transition-colors ${
+                        nodeSubTab === "nextjs"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Next.js Edge Middleware
+                    </button>
+                    <button
+                      onClick={() => setNodeSubTab("fastify")}
+                      className={`text-xs font-bold pb-1.5 transition-colors ${
+                        nodeSubTab === "fastify"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Fastify Plugin
                     </button>
                   </div>
 
@@ -1454,15 +1473,27 @@ export function UserIntegrationTab({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-[#0F172A]">
-                        {nodeSubTab === "nextjs" ? "middleware.ts (Root of Next.js Project)" : "middleware/cleantraffic.js"}
+                        {nodeSubTab === "nextjs"
+                          ? "middleware.ts (Root of Next.js Project)"
+                          : nodeSubTab === "fastify"
+                          ? "cleantrafficFastify.js"
+                          : "middleware/cleantraffic.js"}
                       </span>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() =>
                           handleCopyCurrentCode(
-                            nodeSubTab === "nextjs" ? nextJsMiddlewareCode : nodeExpressMiddlewareCode,
-                            nodeSubTab === "nextjs" ? "Next.js Middleware" : "Express Middleware"
+                            nodeSubTab === "nextjs"
+                              ? nextJsMiddlewareCode
+                              : nodeSubTab === "fastify"
+                              ? fastifyHookCode
+                              : nodeExpressMiddlewareCode,
+                            nodeSubTab === "nextjs"
+                              ? "Next.js Middleware"
+                              : nodeSubTab === "fastify"
+                              ? "Fastify Hook"
+                              : "Express Middleware"
                           )
                         }
                         className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
@@ -1473,18 +1504,74 @@ export function UserIntegrationTab({
                     </div>
                     <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
                       <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
-                        {nodeSubTab === "nextjs" ? nextJsMiddlewareCode : nodeExpressMiddlewareCode}
+                        {nodeSubTab === "nextjs"
+                          ? nextJsMiddlewareCode
+                          : nodeSubTab === "fastify"
+                          ? fastifyHookCode
+                          : nodeExpressMiddlewareCode}
                       </pre>
                     </div>
                   </div>
 
+                  {/* 2-Step Drop-in Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Quick Drop-in Setup (Zero Dependencies):
+                    </span>
+                    {nodeSubTab === "express" && (
+                      <div className="space-y-2 text-slate-700">
+                        <p className="text-[11px] text-[#64748B]">
+                          1. Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware/cleantraffic.js</code>.
+                        </p>
+                        <p className="text-[11px] text-[#64748B]">
+                          2. Register it in your <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">app.js</code> or <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">server.js</code>:
+                        </p>
+                        <div className="bg-[#0F172A] text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
+                          <div>const express = require('express');</div>
+                          <div>const cleanTraffic = require('./middleware/cleantraffic');</div>
+                          <div className="mt-1">const app = express();</div>
+                          <div className="text-emerald-400">app.use(cleanTraffic()); // Zero npm install needed (uses Node 18+ native fetch)</div>
+                          <div>app.get('/', (req, res) =&gt; res.send('Protected human landing page'));</div>
+                        </div>
+                      </div>
+                    )}
+                    {nodeSubTab === "nextjs" && (
+                      <div className="space-y-1 text-slate-700">
+                        <p className="text-[11px] text-[#64748B]">
+                          Save the code above as <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code> in the root folder of your Next.js project.
+                        </p>
+                        <p className="text-[11px] text-[#64748B]">
+                          Next.js and Vercel will automatically execute it on every incoming request at the edge before rendering pages or API routes.
+                        </p>
+                      </div>
+                    )}
+                    {nodeSubTab === "fastify" && (
+                      <div className="space-y-2 text-slate-700">
+                        <p className="text-[11px] text-[#64748B]">
+                          1. Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">cleantrafficFastify.js</code>.
+                        </p>
+                        <p className="text-[11px] text-[#64748B]">
+                          2. Register the plugin with your Fastify instance:
+                        </p>
+                        <div className="bg-[#0F172A] text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
+                          <div>const fastify = require('fastify')();</div>
+                          <div>const cleanTraffic = require('./cleantrafficFastify');</div>
+                          <div className="mt-1 text-emerald-400">fastify.register(cleanTraffic);</div>
+                          <div>{"fastify.get('/', async (req, reply) => ({ status: 'Welcome Human' }));"}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Benefits */}
                   <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Benefits</h3>
+                    <h3 className="text-sm font-bold text-[#0F172A]">Architecture Benefits</h3>
                     <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
-                      <li><strong>Vercel Edge Runtime:</strong> Executes in lightweight Vercel Edge compute before SSR or ISR rendering.</li>
-                      <li><strong>TypeScript First:</strong> Fully typed request and verdict handling for modern web apps.</li>
-                      <li><strong>Microservice Compatible:</strong> Protects standalone API routes and GraphQL servers effortlessly.</li>
+                      <li><strong>Zero External Dependencies:</strong> Built with native Node 18+ <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">fetch</code> and <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">AbortSignal</code>. No <code className="text-slate-800 font-mono text-[11px]">axios</code> or <code className="text-slate-800 font-mono text-[11px]">cookie-parser</code> required.</li>
+                      <li><strong>In-Memory Verdict Caching (0ms):</strong> Server-side LRU memory cache ensures repeat page requests resolve in 0.01ms without making external network calls.</li>
+                      <li><strong>No Redirects for Human Visitors:</strong> Legitimate traffic stays on <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">https://domain.com</code> (<code className="text-slate-800 font-mono text-[11px]">next()</code>), while scrapers and bots are cut off with authentic HTTP 403/404.</li>
+                      <li><strong>Tamper-Proof Security:</strong> Protection is verified in server memory by IP, completely immune to cookie-forgery bypasses.</li>
+                      <li><strong>Fail-Open High Availability:</strong> Sub-second timeout ensures visitors are never blocked or delayed if network connectivity fluctuates.</li>
                     </ul>
                   </div>
                 </div>

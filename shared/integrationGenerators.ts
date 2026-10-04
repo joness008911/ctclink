@@ -911,42 +911,45 @@ new CleanTrafficShield();
 
 /**
  * 4. Next.js Edge Middleware (for Vercel, Netlify, Railway)
- * Supports both Interstitial Loading Screen Mode and Transparent Inline Mode.
+ * Executes at the edge before route handlers or React Server Components render.
+ * Humans stay on https://domain.com (NextResponse.next()), bots receive 403/404.
  */
 export function generateNextJsMiddleware(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
   const failMode = options.failMode || "open";
-  const timeoutMs = options.timeoutMs || 400;
+  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
   return `// middleware.ts (Root of your Next.js project)
 // Compatible with Next.js 13, 14, and 15 (App & Pages Router)
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const FAIL_MODE = '${failMode}'; // 'open' or 'closed'
+const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
+const ENDPOINT = (process.env.CLEANTRAFFIC_ENDPOINT || '${endpoint}').replace(/\\/+$/, '');
+const TIMEOUT_MS = ${timeoutMs};
+const FAIL_MODE = '${failMode}'; // 'open' (allow traffic if API times out) or 'closed'
 
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
 
-  // 1. Skip static assets, Next.js internals, and favicon
+  // 1. Bypass static assets, Next.js internal bundles, and health endpoints
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
-    pathname.includes('.')
+    pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml' ||
+    pathname.match(/\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i)
   ) {
     return NextResponse.next();
   }
 
-  // 2. Skip if visitor was already cleared in this session
-  if (request.cookies.get('ctc_verified')?.value === '1') {
-    return NextResponse.next();
-  }
-
-  // 3. Extract visitor IP and headers
-  const ip = request.ip 
-    || request.headers.get('cf-connecting-ip')
+  // 2. Extract visitor IP and headers
+  const ip = request.headers.get('cf-connecting-ip')
+    || request.headers.get('x-real-ip')
     || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() 
+    || request.ip 
     || '127.0.0.1';
   
   const userAgent = request.headers.get('user-agent') || '';
@@ -954,126 +957,58 @@ export async function middleware(request: NextRequest) {
   const queryString = search ? search.substring(1) : '';
 
   try {
-    const res = await fetch('${endpoint}/api/classify', {
+    const res = await fetch(\`\${ENDPOINT}/api/classify\`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-API-Key': process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
-        'User-Agent': 'CleanTraffic-NextJS-Middleware/2.5'
+        'X-API-Key': API_KEY,
+        'User-Agent': 'CleanTraffic-NextJS-Middleware/3.0'
       },
       body: JSON.stringify({
-        apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
+        apiKey: API_KEY,
         ip,
         userAgent,
         queryString,
         referer,
         url: request.url
       }),
-      signal: AbortSignal.timeout(${timeoutMs}),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (res.ok) {
       const verdict = await res.json();
-      const action = verdict.action || '';
-      const dest = verdict.destination || '';
+      const isHuman = Boolean(verdict.isHuman || verdict.is_human || verdict.visitorType === 'Human');
+      const action = String(verdict.action || '');
+      const statusCode = verdict.statusCode || (action === '404' ? 404 : 403);
+      const isBlocked = !isHuman || action === 'Blocked' || action === 'Restricted' || action === '403' || action === '404';
 
-      // Strict HTTP 404 enforcement
-      if (action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || dest === '404') {
-        return new NextResponse('404 Not Found', { status: 404 });
-      }
-
-      // Strict HTTP 403 enforcement
-      if (action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || dest === '403') {
-        return new NextResponse('403 Forbidden - Access Denied', { status: 403 });
-      }
-
-      // Redirect human visitor or custom bot URL with preserved query parameters
-      if (dest && dest !== '404' && dest !== '403') {
-        const redirectUrl = new URL(dest, request.url);
-        if (queryString) {
-          redirectUrl.search = queryString;
+      // Blocked traffic (bot, scraper, or restricted network)
+      if (isBlocked) {
+        // If a custom bot deflection URL is explicitly configured, redirect only the bot
+        if (verdict.destination && verdict.destination !== '404' && verdict.destination !== '403' && verdict.destination.startsWith('http')) {
+          return NextResponse.redirect(new URL(verdict.destination, request.url));
         }
-        const response = NextResponse.redirect(redirectUrl);
-        response.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
-        return response;
-      }
-    } else if (res.status >= 500 || res.status === 401 || res.status === 403) {
-      const retries = parseInt(request.cookies.get('ctc_retry')?.value || '0', 10);
-      if (retries >= 2) {
-        // SMART 3-RETRY AUTO-BYPASS
-        fetch('${endpoint}/api/monitoring/incident-beacon', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'edge_3retry_bypass',
-            url: request.url,
-            ip,
-            apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
-            retryCount: 3,
-            latencyMs: ${timeoutMs},
-            userAgent,
-            platform: 'NextJS'
-          })
-        }).catch(() => {});
 
-        const passResp = NextResponse.next();
-        passResp.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
-        passResp.cookies.delete('ctc_retry');
-        passResp.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
-        return passResp;
-      }
-
-      if (FAIL_MODE === 'closed') {
-        const nextRetry = retries + 1;
-        const challenge = new NextResponse(
-          \`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Verification check timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`,
-          { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-        );
-        challenge.cookies.set('ctc_retry', String(nextRetry), { maxAge: 120, path: '/', sameSite: 'lax' });
-        return challenge;
+        const is404 = action === '404' || statusCode === 404;
+        return new NextResponse(is404 ? '404 Not Found' : '403 Forbidden - Access Denied', {
+          status: is404 ? 404 : 403,
+          headers: {
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'X-CleanTraffic-Shield': 'Blocked'
+          }
+        });
       }
     }
   } catch (error) {
-    const retries = parseInt(request.cookies.get('ctc_retry')?.value || '0', 10);
-    if (retries >= 2) {
-      // SMART 3-RETRY AUTO-BYPASS
-      fetch('${endpoint}/api/monitoring/incident-beacon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'edge_3retry_bypass',
-          url: request.url,
-          ip,
-          apiKey: process.env.CLEANTRAFFIC_API_KEY || '${apiKey}',
-          retryCount: 3,
-          latencyMs: ${timeoutMs},
-          userAgent,
-          platform: 'NextJS'
-        })
-      }).catch(() => {});
-
-      const passResp = NextResponse.next();
-      passResp.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
-      passResp.cookies.delete('ctc_retry');
-      passResp.headers.set('X-CleanTraffic-Fallback', '3-retry-bypass');
-      return passResp;
-    }
-
     if (FAIL_MODE === 'closed') {
-      const nextRetry = retries + 1;
-      const challenge = new NextResponse(
-        \`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Verification check timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`,
-        { status: 403, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-      );
-      challenge.cookies.set('ctc_retry', String(nextRetry), { maxAge: 120, path: '/', sameSite: 'lax' });
-      return challenge;
+      return new NextResponse('403 Forbidden - Security Verification Required', { status: 403 });
     }
-    console.warn('CleanTraffic pass-through under Fail-Open policy on timeout.');
+    // Fail-open: pass request through safely on network error or timeout
   }
 
-  const response = NextResponse.next();
-  response.cookies.set('ctc_verified', '1', { maxAge: 3600, path: '/', sameSite: 'lax' });
-  return response;
+  // Verified human: allow smoothly onto destination route without redirects
+  return NextResponse.next();
 }
 
 export const config = {
@@ -1084,148 +1019,240 @@ export const config = {
 
 /**
  * 5. Node.js & Express Middleware (for Railway, Render, Fly.io, Custom VPS)
- * Supports both Interstitial Loading Screen Mode and Transparent Inline Mode.
+ * Zero external dependencies (uses native Node 18+ fetch).
+ * In-memory verdict caching prevents external API delays on repeat requests.
+ * Humans stay on https://domain.com (next()), bots receive 403/404.
  */
 export function generateNodeExpressMiddleware(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
   const failMode = options.failMode || "open";
-  const timeoutMs = options.timeoutMs || 400;
+  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
-  return `// cleantrafficMiddleware.js (Express / Node.js)
-// Drop-in middleware for Railway, Render, Fly.io, or any Express server
+  return `// cleantraffic.js (Express / Node.js 18+)
+// Zero external dependencies (native fetch & built-in Map cache)
 
-const axios = require('axios'); // or native fetch in Node 18+
+const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
+const ENDPOINT = (process.env.CLEANTRAFFIC_ENDPOINT || '${endpoint}').replace(/\\/+$/, '');
+const FAIL_MODE = process.env.CLEANTRAFFIC_FAIL_MODE || '${failMode}'; // 'open' or 'closed'
+const TIMEOUT_MS = ${timeoutMs}; // Sub-second protection timeout
+const CACHE_TTL_MS = 3600 * 1000; // 1-hour in-memory cache (0ms latency for repeat visits)
+
+// Server-authoritative in-memory verdict cache (tamper-proof, immune to cookie forgery)
+const verdictCache = new Map();
+
+// Periodic garbage collection of expired entries every 15 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of verdictCache.entries()) {
+    if (entry.expires <= now) verdictCache.delete(ip);
+  }
+}, 15 * 60 * 1000).unref?.();
+
+// Static asset and health check bypass regex
+const STATIC_ASSET_REGEX = /\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i;
 
 function cleanTrafficMiddleware(options = {}) {
-  const apiKey = options.apiKey || process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
-  const endpoint = options.endpoint || '${endpoint}';
-  const failMode = options.failMode || '${failMode}';
-  const timeout = options.timeout || ${timeoutMs};
+  const apiKey = options.apiKey || API_KEY;
+  const endpoint = (options.endpoint || ENDPOINT).replace(/\\/+$/, '');
+  const timeoutMs = options.timeout || TIMEOUT_MS;
+  const failMode = options.failMode || FAIL_MODE;
 
   return async function(req, res, next) {
-    // 1. Skip static files & health checks
-    if (req.path.match(/\\.(css|js|png|jpg|svg|ico)$/) || req.path === '/health') {
+    // 1. Skip static assets & health checks
+    if (
+      STATIC_ASSET_REGEX.test(req.path) ||
+      req.path === '/health' ||
+      req.path === '/healthz' ||
+      req.path === '/favicon.ico' ||
+      req.path === '/robots.txt'
+    ) {
       return next();
     }
 
-    // 2. Skip if visitor was already cleared in this session
-    if (req.cookies && req.cookies.ctc_verified === '1') {
-      return next();
-    }
-
+    // 2. Extract visitor IP
     const ip = req.headers['cf-connecting-ip'] 
+      || req.headers['x-real-ip']
       || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
       || req.socket.remoteAddress 
       || '127.0.0.1';
 
+    // 3. Fast-path: Check server in-memory verdict cache (0ms latency)
+    const cached = verdictCache.get(ip);
+    if (cached && cached.expires > Date.now()) {
+      if (cached.isHuman) {
+        return next(); // Verified human: allow seamlessly on https://domain.com
+      } else {
+        return cached.statusCode === 404
+          ? res.status(404).send('404 Not Found')
+          : res.status(403).send('403 Forbidden - Access Denied');
+      }
+    }
+
+    // 4. Query CleanTraffic API via native Node 18+ fetch
     const userAgent = req.headers['user-agent'] || '';
     const referer = req.headers['referer'] || '';
     const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
+    const fullUrl = req.protocol + '://' + (req.get('host') || 'localhost') + req.originalUrl;
 
     try {
-      const response = await axios.post(endpoint + '/api/classify', {
-        apiKey,
-        ip,
-        userAgent,
-        queryString,
-        referer,
-        url: req.protocol + '://' + req.get('host') + req.originalUrl
-      }, {
-        timeout: timeout,
+      const response = await fetch(\`\${endpoint}/api/classify\`, {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'X-API-Key': apiKey,
-          'User-Agent': 'CleanTraffic-Express-Middleware/2.5'
+          'User-Agent': 'CleanTraffic-Express-Middleware/3.0'
         },
-        validateStatus: () => true
+        body: JSON.stringify({
+          apiKey,
+          ip,
+          userAgent,
+          queryString,
+          referer,
+          url: fullUrl
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
       });
 
-      if (response.status === 200) {
-        const verdict = response.data;
-        const action = verdict.action || '';
-        const dest = verdict.destination || '';
+      if (response.ok) {
+        const data = await response.json();
+        const isHuman = Boolean(data.isHuman || data.is_human || data.visitorType === 'Human');
+        const action = String(data.action || '');
+        const statusCode = data.statusCode || (action === '404' ? 404 : 403);
+        const isBlocked = !isHuman || action === 'Blocked' || action === 'Restricted' || action === '403' || action === '404';
 
-        // Strict HTTP 404 enforcement
-        if (action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || dest === '404') {
-          return res.status(404).send('404 Not Found');
-        }
+        // Cache the verdict in memory
+        verdictCache.set(ip, {
+          isHuman: !isBlocked,
+          statusCode,
+          expires: Date.now() + CACHE_TTL_MS
+        });
 
-        // Strict HTTP 403 enforcement
-        if (action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || dest === '403') {
-          return res.status(403).send('403 Forbidden - Access Denied');
-        }
-
-        // Redirect human visitor or custom bot URL with preserved query parameters
-        if (dest && dest !== '404' && dest !== '403') {
-          let target = dest;
-          if (queryString) {
-            target += (target.includes('?') ? '&' : '?') + queryString;
-          }
-          res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
-          return res.redirect(302, target);
-        }
-      } else if (response.status >= 500 || response.status === 401 || response.status === 403) {
-        const retries = parseInt((req.cookies && req.cookies.ctc_retry) || '0', 10);
-        if (retries >= 2) {
-          // SMART 3-RETRY AUTO-BYPASS
-          axios.post(endpoint + '/api/monitoring/incident-beacon', {
-            type: 'edge_3retry_bypass',
-            url: req.protocol + '://' + req.get('host') + req.originalUrl,
-            ip,
-            apiKey,
-            retryCount: 3,
-            latencyMs: timeout,
-            userAgent,
-            platform: 'Express'
-          }).catch(() => {});
-
-          res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
-          res.clearCookie('ctc_retry');
-          res.set('X-CleanTraffic-Fallback', '3-retry-bypass');
+        // If human: allow straight into the application without redirects
+        if (!isBlocked) {
           return next();
         }
 
-        if (failMode === 'closed') {
-          const nextRetry = retries + 1;
-          res.cookie('ctc_retry', String(nextRetry), { maxAge: 120000, httpOnly: true });
-          return res.status(403).send(\`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Connection check required. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`);
+        // If a custom bot redirect URL is configured, deflect only the bot
+        if (data.destination && data.destination !== '404' && data.destination !== '403' && data.destination.startsWith('http')) {
+          return res.redirect(302, data.destination);
         }
-      }
 
-      res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
-      return next();
+        // Return HTTP 404 or 403 at the edge
+        if (action === '404' || statusCode === 404) {
+          return res.status(404).send('404 Not Found');
+        }
+        return res.status(403).send('403 Forbidden - Access Denied');
+      }
     } catch (err) {
-      const retries = parseInt((req.cookies && req.cookies.ctc_retry) || '0', 10);
-      if (retries >= 2) {
-        // SMART 3-RETRY AUTO-BYPASS
-        axios.post(endpoint + '/api/monitoring/incident-beacon', {
-          type: 'edge_3retry_bypass',
-          url: req.protocol + '://' + req.get('host') + req.originalUrl,
-          ip,
-          apiKey,
-          retryCount: 3,
-          latencyMs: timeout,
-          userAgent,
-          platform: 'Express'
-        }).catch(() => {});
-
-        res.cookie('ctc_verified', '1', { maxAge: 3600000, httpOnly: true });
-        res.clearCookie('ctc_retry');
-        res.set('X-CleanTraffic-Fallback', '3-retry-bypass');
-        return next();
-      }
-
       if (failMode === 'closed') {
-        const nextRetry = retries + 1;
-        res.cookie('ctc_retry', String(nextRetry), { maxAge: 120000, httpOnly: true });
-        return res.status(403).send(\`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Security Verification Required</title><style>body{background:#0B0F19;color:#F8FAFC;font-family:sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0;}div{background:#111827;border:1px solid #1E293B;border-radius:12px;padding:32px;max-width:440px;text-align:center;}button{padding:10px 18px;background:#10B981;color:#0B0F19;font-weight:700;border:none;border-radius:8px;cursor:pointer;margin-top:14px;}</style></head><body><div><h2>Security Verification Required</h2><p>Connection verification timed out. Please click Retry below to verify your connection.</p><button onclick="location.reload()">Retry Connection</button><p style="margin-top:12px;font-size:11px;color:#64748B;">Attempt \${nextRetry} of 3 &bull; Auto-bypasses on 3rd attempt</p></div></body></html>\`);
+        return res.status(403).send('403 Forbidden - Security Check Required');
       }
-      // Fail-open pass-through on error or network timeout
-      return next();
+      // Fail-open: continue request smoothly without breaking user site
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[CleanTraffic] API check timeout, failing open:', err.message);
+      }
     }
+
+    return next();
   };
 }
 
 module.exports = cleanTrafficMiddleware;
+`;
+}
+
+/**
+ * 6. Fastify Hook (for modern ultra-fast Node.js backends)
+ * Zero external dependencies (native fetch & built-in Map cache).
+ */
+export function generateFastifyHook(options: GeneratorOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
+
+  return `// cleantrafficFastify.js (Fastify Plugin / Hook)
+// Zero external dependencies (Node 18+ native fetch)
+
+const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
+const ENDPOINT = (process.env.CLEANTRAFFIC_ENDPOINT || '${endpoint}').replace(/\\/+$/, '');
+const TIMEOUT_MS = ${timeoutMs};
+const CACHE_TTL_MS = 3600 * 1000;
+
+const verdictCache = new Map();
+const STATIC_ASSET_REGEX = /\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i;
+
+async function cleanTrafficPlugin(fastify, options) {
+  const apiKey = options?.apiKey || API_KEY;
+  const endpoint = (options?.endpoint || ENDPOINT).replace(/\\/+$/, '');
+  const timeoutMs = options?.timeout || TIMEOUT_MS;
+
+  fastify.addHook('onRequest', async (req, reply) => {
+    // 1. Skip static assets & health checks
+    if (STATIC_ASSET_REGEX.test(req.url) || req.url === '/health' || req.url === '/favicon.ico') {
+      return;
+    }
+
+    // 2. Extract visitor IP
+    const ip = req.headers['cf-connecting-ip'] 
+      || req.headers['x-real-ip']
+      || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
+      || req.ip 
+      || '127.0.0.1';
+
+    // 3. Fast-path: Check server in-memory verdict cache (0ms latency)
+    const cached = verdictCache.get(ip);
+    if (cached && cached.expires > Date.now()) {
+      if (!cached.isHuman) {
+        return reply.code(cached.statusCode || 403).send(
+          cached.statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
+        );
+      }
+      return;
+    }
+
+    try {
+      const response = await fetch(\`\${endpoint}/api/classify\`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+          'User-Agent': 'CleanTraffic-Fastify-Plugin/3.0'
+        },
+        body: JSON.stringify({
+          apiKey,
+          ip,
+          userAgent: req.headers['user-agent'] || '',
+          url: req.protocol + '://' + req.hostname + req.url
+        }),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const isHuman = Boolean(data.isHuman || data.is_human || data.visitorType === 'Human');
+        const action = String(data.action || '');
+        const statusCode = data.statusCode || (action === '404' ? 404 : 403);
+        const isBlocked = !isHuman || action === 'Blocked' || action === 'Restricted' || action === '403' || action === '404';
+
+        verdictCache.set(ip, {
+          isHuman: !isBlocked,
+          statusCode,
+          expires: Date.now() + CACHE_TTL_MS
+        });
+
+        if (isBlocked) {
+          return reply.code(statusCode).send(
+            statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
+          );
+        }
+      }
+    } catch (err) {
+      // Fail-open: allow request to proceed without interruption
+    }
+  });
+}
+
+module.exports = cleanTrafficPlugin;
 `;
 }

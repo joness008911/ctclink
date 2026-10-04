@@ -727,7 +727,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
   
   // Session middleware
-  const sessionSecret = process.env.SESSION_SECRET || "cleantraffic_dev_session_secret_2026_default_secure_key";
+  const sessionSecret = process.env.SESSION_SECRET || (
+    process.env.NODE_ENV === "production"
+      ? randomBytes(32).toString("hex")
+      : "cleantraffic_dev_session_secret_2026_default_secure_key"
+  );
 
   // Capture session middleware reference so we can authenticate WebSocket upgrade requests
   const sessionMw = session({

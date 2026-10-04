@@ -138,7 +138,7 @@ export class FirestoreStorage implements IStorage {
             title: "Firestore Free Daily Read Quota Exceeded",
             exactCause: "Quota metric 'Free daily read units per project (free tier database)' was exceeded on Google Cloud. Free tier databases reject further reads until the next daily reset window.",
             fileLocation: "server/firestoreStorage.ts",
-            recommendedAction: "Upgrade your database billing or wait for the daily quota reset. Database link: https://console.firebase.google.com/project/gen-lang-client-0790090988/firestore/databases/ai-studio-ctclink-331a0c8e-46fb-4ef6-8707-08c405e6e142/data?openUpgradeDialog=true",
+            recommendedAction: "Upgrade your database billing or wait for the daily quota reset in the Firebase/Google Cloud Console.",
           }).catch(() => {});
         }).catch(() => {});
       }
@@ -173,7 +173,8 @@ export class FirestoreStorage implements IStorage {
       const adminSnap = await getDocs(adminQ);
       if (adminSnap.empty) {
         const adminId = "default-admin-id";
-        const passwordHash = bcrypt.hashSync("admin123", 10);
+        const initialAdminPass = process.env.ADMIN_PASSWORD || "admin123";
+        const passwordHash = bcrypt.hashSync(initialAdminPass, 10);
         await setDoc(doc(this.db, "users", adminId), {
           id: adminId,
           username: "admin",

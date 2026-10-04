@@ -82,7 +82,7 @@ describe("Billing upgrade migration SQL (0001_billing_upgrade.sql)", () => {
 // ---------------------------------------------------------------------------
 
 describe("Billing columns present in database schema (live DB)", () => {
-  const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+  const dbUrl = process.env.DATABASE_URL;
 
   if (!dbUrl || !isValidDatabaseUrl(dbUrl)) {
     // Skip gracefully when no DB is available (CI without secrets)
@@ -172,7 +172,7 @@ describe("Webhook claim-release on customer lookup failure", () => {
     // The DatabaseStorage.getClientUserByStripeCustomerId only swallows the specific
     // neon-http null-map driver bug.  We verify the benign path (unknown customer)
     // returns undefined without throwing — the known good case in all environments.
-    const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+    const dbUrl = process.env.DATABASE_URL;
     if (!dbUrl || !isValidDatabaseUrl(dbUrl)) { return; } // skip if no DB
 
     const storage = new DatabaseStorage();
@@ -189,7 +189,7 @@ describe("Webhook claim-release on customer lookup failure", () => {
 // ---------------------------------------------------------------------------
 
 describe("DatabaseStorage billing query smoke test (live DB)", () => {
-  const dbUrl = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+  const dbUrl = process.env.DATABASE_URL;
 
   if (!dbUrl || !isValidDatabaseUrl(dbUrl)) {
     test("skip — DATABASE_URL not set or not configured", { skip: true }, () => {});

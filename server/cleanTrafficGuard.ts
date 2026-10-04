@@ -48,7 +48,7 @@ export function cleanTrafficGuard(options: {
 
     const apiKey = options.apiKey 
       || process.env.CLEANTRAFFIC_API_KEY 
-      || "ctc_fca5b021896139b43c92a52fb5b42c56";
+      || "";
 
     // CleanTraffic Gateway endpoint resolution
     const port = process.env.PORT || 3000;
@@ -56,7 +56,6 @@ export function cleanTrafficGuard(options: {
     const endpoint = (
       options.endpoint || 
       process.env.CLEANTRAFFIC_ENDPOINT || 
-      "https://ctclink-production.up.railway.app" || 
       defaultLocalEndpoint
     ).replace(/\/+$/, "");
 

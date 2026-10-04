@@ -1,13 +1,63 @@
-node_modules
-dist
-.DS_Store
-server/public
-vite.config.ts.*
-*.tar.gz
-server/.api-key
+# ==============================================================================
+# Git Ignore Configuration - CleanTraffic Private Repository
+# ==============================================================================
+
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Production build outputs
+dist/
+dist-ssr/
+*.local
+
+# Database, backups & exports (CRITICAL: Never commit customer data)
+backups/
+*.dump
+*.sql.gz
+*.json.gz
+
+# Local scratch files & attached assets
+attached_assets/
+docs/internal/
+*.cjs
+test-db.ts
+test-direct-db.ts
+test.js
+
+# Platform metadata
+.replit
+replit.md
+
+# Environment variables & secrets
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 *.cert
+service-account*.json
+
+# Logs & temporary files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS & IDE metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+server/.api-key
+server/public/
+vite.config.ts.*
+*.tar.gz
