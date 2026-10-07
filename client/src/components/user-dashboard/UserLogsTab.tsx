@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { getCountryFlag } from "@/lib/countries";
 import { VisitorDetailsDrawer } from "./VisitorDetailsDrawer";
 import { computeThreatScore, formatAsnDisplay } from "@/lib/threatScoring";
+import { detectBrowser, normalizeBrowserName } from "@shared/browserDetection";
 
 interface UserLogsTabProps {
   classifications: any[];
@@ -307,32 +308,30 @@ function getVisitorOS(c: any): { name: string; type: "windows" | "apple" | "andr
   return { name: "Linux", type: "linux" };
 }
 
-// Forensic Browser Resolution with accurate version
-function getVisitorBrowser(c: any): { name: string; type: "chrome" | "firefox" | "safari" | "edge" | "electron" | "other" } {
-  const b = (c.browser || "").toLowerCase();
-  const ua = (c.userAgent || c.user_agent || "").toLowerCase();
+// Forensic Browser Resolution using shared authoritative engine
+function getVisitorBrowser(c: any): { name: string; type: string } {
+  const rawBrowser = c.browser || "";
+  
+  // Re-run authoritative detection on userAgent and client signals if available
+  const detected = detectBrowser({
+    userAgent: c.userAgent || c.user_agent || null,
+    headers: c.requestHeaders || null,
+    clientTokens: c.clientSignals || null,
+    secChUa: (c.clientSignals as any)?.secChUa || (c.requestHeaders as any)?.["sec-ch-ua"] || null,
+  });
 
-  if (b.includes("electron") || ua.includes("electron")) {
-    const match = ua.match(/electron\/([0-9]+)/i);
-    return { name: match ? `Electron ${match[1]}` : (c.browser && c.browser !== "Unknown" ? c.browser : "Electron 42"), type: "electron" };
-  }
-  if (b.includes("chrome") || ua.includes("chrome") || ua.includes("crios")) {
-    const match = ua.match(/(?:chrome|crios)\/([0-9]+)/i);
-    return { name: match ? `Chrome ${match[1]}` : (c.browser && c.browser !== "Unknown" ? c.browser : "Chrome 154"), type: "chrome" };
-  }
-  if (b.includes("firefox") || ua.includes("firefox")) {
-    const match = ua.match(/firefox\/([0-9]+)/i);
-    return { name: match ? `Firefox ${match[1]}` : "Firefox", type: "firefox" };
-  }
-  if (b.includes("safari") || ua.includes("safari")) {
-    const match = ua.match(/version\/([0-9]+)/i);
-    return { name: match ? `Safari ${match[1]}` : "Safari", type: "safari" };
-  }
-  if (b.includes("edge") || ua.includes("edg")) {
-    const match = ua.match(/edg\/([0-9]+)/i);
-    return { name: match ? `Edge ${match[1]}` : "Edge", type: "edge" };
-  }
-  return { name: c.browser || "Chrome 154", type: "chrome" };
+  const finalBrowserName = detected.browser !== "Unknown" 
+    ? detected.browser 
+    : normalizeBrowserName(rawBrowser);
+
+  const cleanName = finalBrowserName || "Unknown";
+  let iconType = cleanName.toLowerCase().replace(/[\s_]+/g, "");
+  if (iconType === "samsunginternet") iconType = "samsung";
+
+  return {
+    name: cleanName,
+    type: iconType,
+  };
 }
 
 // Authentic OS SVG Icons matching reference design
@@ -379,6 +378,91 @@ function BrowserIcon({ type }: { type: string }) {
         <path d="M12 22A10 10 0 0 1 3.34 7H12z" fill="#4285F4" />
         <circle cx="12" cy="12" r="4.5" fill="#ffffff" />
         <circle cx="12" cy="12" r="3.5" fill="#1a73e8" />
+      </svg>
+    );
+  }
+  if (type === "brave") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 32 32">
+        <path
+          fill="#FB542B"
+          d="M16 2L4 6.5v8c0 8.5 5.5 14.5 12 17.5 6.5-3 12-9 12-17.5v-8L16 2zm0 5l7 2.5v5.5c0 5.5-3.5 10-7 12-3.5-2-7-6.5-7-12V9.5L16 7z"
+        />
+        <circle cx="16" cy="15" r="3" fill="#FB542B" />
+      </svg>
+    );
+  }
+  if (type === "safari") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#006CFF" />
+        <circle cx="12" cy="12" r="8.5" fill="#007AFF" stroke="#FFFFFF" strokeWidth="0.8" />
+        <polygon points="12,4 14.5,12 12,12" fill="#FFFFFF" />
+        <polygon points="12,20 9.5,12 12,12" fill="#FF3B30" />
+        <polygon points="12,4 9.5,12 12,12" fill="#E5E5EA" />
+        <polygon points="12,20 14.5,12 12,12" fill="#FF453A" />
+        <circle cx="12" cy="12" r="1" fill="#FFFFFF" />
+      </svg>
+    );
+  }
+  if (type === "edge") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <path
+          fill="#0078D7"
+          d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.07L8 15c-.63-.88-1-1.95-1-3.1 0-2.82 2.24-5.1 5-5.1 1.7 0 3.2.83 4.1 2.1l3.5-3.5C18.1 3.5 15.2 2 12 2z"
+        />
+        <path
+          fill="#00B294"
+          d="M12 22c5.52 0 10-4.48 10-10 0-1.85-.5-3.58-1.38-5.07L16 9c.63.88 1 1.95 1 3.1 0 2.82-2.24 5.1-5 5.1-1.7 0-3.2-.83-4.1-2.1l-3.5 3.5C6.9 20.5 9.8 22 12 22z"
+        />
+      </svg>
+    );
+  }
+  if (type === "firefox") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#FF7139" />
+        <path
+          fill="#9E2286"
+          d="M12 2C6.48 2 2 6.48 2 12c0 2.5 1 4.7 2.6 6.3C5.8 15.5 8 13.5 11 13.5c3.5 0 5.5 2.5 5.5 5.5 0 .7-.1 1.4-.4 2 3.6-1.6 5.9-5.2 5.9-9 0-5.52-4.48-10-10-10z"
+        />
+        <circle cx="12" cy="12" r="5" fill="#FFB703" />
+      </svg>
+    );
+  }
+  if (type === "opera") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#FF1B2D" />
+        <ellipse cx="12" cy="12" rx="4.5" ry="7.5" fill="#FFFFFF" />
+        <ellipse cx="12" cy="12" rx="2.5" ry="5.5" fill="#FF1B2D" />
+      </svg>
+    );
+  }
+  if (type === "samsung") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8" fill="#4352D0" />
+        <ellipse cx="12" cy="12" rx="10" ry="3.5" fill="none" stroke="#6878FF" strokeWidth="1.5" transform="rotate(-25 12 12)" />
+        <circle cx="12" cy="12" r="6" fill="#12279E" />
+      </svg>
+    );
+  }
+  if (type === "duckduckgo") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#DE5833" />
+        <circle cx="11" cy="10" r="3" fill="#FFFFFF" />
+        <polygon points="13,10 17,11 13,13" fill="#FF9500" />
+      </svg>
+    );
+  }
+  if (type === "vivaldi") {
+    return (
+      <svg className="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24">
+        <rect x="2" y="2" width="20" height="20" rx="5" fill="#EF3939" />
+        <path d="M8 8l4 8 4-8h-3l-1 3-1-3z" fill="#FFFFFF" />
       </svg>
     );
   }

@@ -268,7 +268,7 @@ export function VisitorDetailsDrawer({
       }
       return [
         `Residential ISP (${visitor.isp || "Verified Carrier"})`,
-        `Genuine ${visitor.browser || "Chrome"} Engine`,
+        `Genuine ${visitor.browser || "Browser"} Profile`,
         "Valid TLS / JA3 Fingerprint",
         "Clean IP Reputation",
         "Natural Interaction Trajectory",
@@ -589,7 +589,7 @@ export function VisitorDetailsDrawer({
                   <div className="flex items-center justify-between p-3">
                     <span className="text-slate-500 font-medium">Device & Browser</span>
                     <span className="font-medium text-slate-800">
-                      {visitor.deviceType || "Desktop Device"} • {visitor.browser || "Chrome Browser"}
+                      {visitor.deviceType || "Desktop Device"} • {visitor.browser || "Unknown"}
                     </span>
                   </div>
 

@@ -869,7 +869,7 @@ export function UserOverviewTab({
                           <Laptop className="h-4 w-4 text-slate-500" />
                         )}
                         <span className="text-[11px] font-medium text-slate-700">
-                          {item.browser || "Chrome"}
+                          {item.browser || "Unknown"}
                         </span>
                       </div>
                     </td>

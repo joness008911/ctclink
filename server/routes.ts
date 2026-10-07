@@ -135,6 +135,7 @@ const MemoryStore = createMemoryStore(session);
 import { insertClassificationSchema, type ClientUser, computeEffectiveAccountStatus, normalizeTier, getTierCallLimit, type AccountStatusSummary } from "@shared/schema";
 import { authorizeApiKey, syncClientUserSubscription, getEntitlementType, type AuthorizationResult } from "./authorizationService";
 import { UAParser } from "ua-parser-js";
+import { detectBrowser, normalizeBrowserName } from "@shared/browserDetection";
 import path from "path";
 import fs from "fs";
 import bcrypt from "bcrypt";
@@ -2727,7 +2728,9 @@ Disallow: /*`);
           detectionMethod: c.detectionMethod,
           connectionType: c.connectionType,
           isp: c.isp,
-          browser: c.browser,
+          browser: normalizeBrowserName(c.browser) !== "Unknown"
+            ? normalizeBrowserName(c.browser)
+            : (c.userAgent ? detectBrowser({ userAgent: c.userAgent, headers: c.requestHeaders as any, clientTokens: c.clientSignals as any }).browser : (c.browser || "Unknown")),
           deviceType: c.deviceType,
           os: (c as any).os || (c.clientSignals as any)?.os || (c.clientSignals as any)?.platform || null,
           action: (c as any).action || (c.visitorType === 'Human' && !c.detectionMethod?.toLowerCase().includes('restricted') && !c.detectionMethod?.toLowerCase().includes('block') ? 'Allowed' : 'Blocked'),
@@ -4574,8 +4577,21 @@ Disallow: /*`);
     untrustedEvent: false,
     timezoneOffset: new Date().getTimezoneOffset(),
     hardwareConcurrency: navigator.hardwareConcurrency || 0,
-    touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0)
+    touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0),
+    isBrave: Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function') || Boolean(window.chrome && window.chrome.brave),
+    brands: navigator.userAgentData && navigator.userAgentData.brands ? navigator.userAgentData.brands : null
   };
+
+  try {
+    if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
+      navigator.brave.isBrave().then(function(val) {
+        if (val) {
+          hwTokens.isBrave = true;
+          if (payload && payload.clientTokens) payload.clientTokens.isBrave = true;
+        }
+      });
+    }
+  } catch(e) {}
 
   // Passive WebGL unmasked GPU renderer probe
   try {
@@ -5403,22 +5419,34 @@ Disallow: /*`);
       // Extract email from request body (POST) or query parameters (GET)
       const email = req.body?.email || req.query.email || req.query.e || null;
       
-      // Parse user agent for browser and device info
+      // Parse OS and device info
       const parser = new UAParser();
       parser.setUA(userAgent);
-      const browserInfo = parser.getBrowser();
       const deviceInfo = parser.getDevice();
       const osInfo = parser.getOS();
-      
-      const browser = browserInfo.name ? `${browserInfo.name} ${browserInfo.version}` : 'Unknown';
       const deviceType = deviceInfo.type || (osInfo.name?.toLowerCase().includes('mobile') ? 'mobile' : 'desktop');
 
       // Synthesize high-precision Device ID & record activity (First Seen, Last Seen, Visit Count)
       const rawClientTokens = req.body?.clientTokens || req.body?.tokens || req.body?.hardwareTokens || null;
+      const effectiveReqHeaders = (req.body?.headers || req.headers) as Record<string, string | string[] | undefined>;
+      const secChUaHeader = req.body?.secChUa || req.body?.sec_ch_ua || req.headers?.['sec-ch-ua'] || req.headers?.['Sec-Ch-Ua'] || null;
+
+      // Authoritative multi-vector browser detection (Brave, Edge, Opera, Samsung Internet, Firefox, Safari, Chrome, Unknown)
+      const detectedBrowserInfo = detectBrowser({
+        userAgent,
+        headers: effectiveReqHeaders,
+        secChUa: typeof secChUaHeader === 'string' ? secChUaHeader : null,
+        clientTokens: rawClientTokens,
+      });
+
+      const browser = detectedBrowserInfo.browser;
+      const browserVersion = detectedBrowserInfo.version;
+      const browserEngine = detectedBrowserInfo.engine;
+
       const deviceSynthesis = synthesizeDeviceId({
         ip: clientIp,
         userAgent,
-        headers: (req.body?.headers || req.headers) as Record<string, string | string[] | undefined>,
+        headers: effectiveReqHeaders,
         clientTokens: rawClientTokens
       });
       const resolvedDeviceId = deviceSynthesis.deviceId;
@@ -6142,8 +6170,10 @@ Disallow: /*`);
         missingPlugins: rawClientTokens?.missingPluginsArray === true ? "True (Headless Environment Indicator)" : "False (Valid Plugins Array)",
         untrustedEvent: rawClientTokens?.untrustedEvent === true ? "True (Programmatic Event Spoofing)" : "False (Trusted User Input)",
         platformArchitecture: osInfo.name ? `${osInfo.name} ${osInfo.version || ''}`.trim() : (deviceType === 'mobile' ? "iOS / Android Mobile" : "Windows / macOS"),
-        browserEngine: browserInfo.name ? `${browserInfo.name} ${browserInfo.version || ''}`.trim() : (userAgent.includes("Chrome") ? "Chrome Chromium" : "Standard Browser Engine"),
-        isBrave: Boolean(isBrave),
+        browser,
+        browserVersion: browserVersion || null,
+        browserEngine,
+        isBrave: browser === "Brave" || Boolean(isBrave),
         proxyData: classificationData.proxy_data || null,
         isVpn: Boolean(classificationData.proxy_data?.is_vpn),
         isTor: Boolean(classificationData.proxy_data?.is_tor),

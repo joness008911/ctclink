@@ -70,7 +70,7 @@ export function UserSimulatorTab({ apiKey, humanUrl, botUrl }: UserSimulatorTabP
         ip: "73.189.201.44", // Comcast Residential IP
         userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1",
         acceptLanguage: "en-US,en;q=0.9",
-        secChUa: '"Not/A)Brand";v="8", "Chromium";v="126"',
+        secChUa: "",
         secChUaPlatform: '"iOS"',
         secChUaMobile: "?1",
         clientTokens: {
@@ -678,7 +678,7 @@ export function UserSimulatorTab({ apiKey, humanUrl, botUrl }: UserSimulatorTabP
                 <div className="flex items-center justify-between p-2.5">
                   <span className="text-slate-500">Device Architecture</span>
                   <span className="font-medium text-slate-900">
-                    {result.device_type || "Desktop"} • {result.browser || "Chrome"}
+                    {result.device_type || "Desktop"} • {result.browser || "Unknown"}
                   </span>
                 </div>
               </div>
