@@ -1752,8 +1752,11 @@ export class FirestoreStorage implements IStorage {
     wildcardSubdomains?: string;
     allowVpn?: boolean;
     allowSearchCrawlers?: string;
+    blockedSearchCrawlers?: string;
     blockAiCrawlers?: string;
     allowSocialPreviews?: string;
+    allowedAiBots?: string;
+    customAiBots?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1778,8 +1781,11 @@ export class FirestoreStorage implements IStorage {
       wildcardSubdomains: urls.wildcardSubdomains !== undefined ? urls.wildcardSubdomains : (existing?.wildcardSubdomains || "disabled"),
       allowVpn: urls.allowVpn !== undefined ? urls.allowVpn : (urls.blockVpn === "allow" ? true : (existing?.allowVpn ?? false)),
       allowSearchCrawlers: urls.allowSearchCrawlers !== undefined ? urls.allowSearchCrawlers : (existing?.allowSearchCrawlers || "allow"),
+      blockedSearchCrawlers: urls.blockedSearchCrawlers !== undefined ? urls.blockedSearchCrawlers : (existing?.blockedSearchCrawlers || ""),
       blockAiCrawlers: urls.blockAiCrawlers !== undefined ? urls.blockAiCrawlers : (existing?.blockAiCrawlers || "block"),
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
+      allowedAiBots: urls.allowedAiBots !== undefined ? urls.allowedAiBots : (existing?.allowedAiBots || ""),
+      customAiBots: urls.customAiBots !== undefined ? urls.customAiBots : (existing?.customAiBots || ""),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
       interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),

@@ -2525,6 +2525,8 @@ Disallow: /*`);
         allowSearchCrawlers,
         blockAiCrawlers,
         allowSocialPreviews,
+        allowedAiBots,
+        customAiBots,
         protectionMode,
         activeAdPlatforms,
         interstitialThemeId,
@@ -2532,25 +2534,24 @@ Disallow: /*`);
         interstitialSubnote
       } = req.body;
       
-      if (!humanUrl || !botUrl) {
-        return res.status(400).json({ message: "Both humanUrl and botUrl are required" });
-      }
+      const rawHuman = (humanUrl && typeof humanUrl === "string" && humanUrl.trim()) ? humanUrl.trim() : "https://yourdomain.com";
+      const rawBot = (botUrl && typeof botUrl === "string" && botUrl.trim()) ? botUrl.trim() : "403";
 
       // Human URL format validation
       let parsedHuman: URL;
       try {
-        parsedHuman = new URL(humanUrl.trim());
+        parsedHuman = new URL(rawHuman);
       } catch {
-        return res.status(400).json({ message: "Invalid Target Offer (Human URL) format" });
+        parsedHuman = new URL("https://yourdomain.com");
       }
 
       // Reject non-HTTP(S) protocols for human URL
       if (parsedHuman.protocol !== 'http:' && parsedHuman.protocol !== 'https:') {
-        return res.status(400).json({ message: "humanUrl must use http or https" });
+        parsedHuman = new URL("https://yourdomain.com");
       }
 
       // Bot action validation: Can be "404", "403" or a valid HTTP/HTTPS URL
-      const trimmedBot = botUrl.trim();
+      const trimmedBot = rawBot;
       const isHttpErrorCode = trimmedBot === "404" || trimmedBot === "403" || trimmedBot.startsWith("404") || trimmedBot.startsWith("403");
       let normalizedBotUrl = trimmedBot;
 
@@ -2668,6 +2669,8 @@ Disallow: /*`);
         allowSearchCrawlers: formattedAllowSearchCrawlers,
         blockAiCrawlers: formattedBlockAiCrawlers,
         allowSocialPreviews: formattedAllowSocialPreviews,
+        allowedAiBots: typeof allowedAiBots === "string" ? allowedAiBots.trim() : undefined,
+        customAiBots: typeof customAiBots === "string" ? customAiBots.trim() : undefined,
         protectionMode: formattedProtectionMode,
         activeAdPlatforms: formattedActiveAdPlatforms,
         interstitialThemeId: typeof interstitialThemeId === "string" ? interstitialThemeId.trim() : undefined,
@@ -2726,6 +2729,8 @@ Disallow: /*`);
           isp: c.isp,
           browser: c.browser,
           deviceType: c.deviceType,
+          os: (c as any).os || (c.clientSignals as any)?.os || (c.clientSignals as any)?.platform || null,
+          action: (c as any).action || (c.visitorType === 'Human' && !c.detectionMethod?.toLowerCase().includes('restricted') && !c.detectionMethod?.toLowerCase().includes('block') ? 'Allowed' : 'Blocked'),
           timestamp: c.timestamp,
           userAgent: c.userAgent || null,
           clientSignals: c.clientSignals || null,
@@ -4626,25 +4631,15 @@ Disallow: /*`);
     } catch(e) {}
     while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
 
-    // Strict 404 enforcement
+    // Strict 404 enforcement (Stealth drop)
     if (verdict.action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || verdict.destination === '404') {
       document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
       return;
     }
 
-    // Strict 403 enforcement
-    if (verdict.action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || verdict.destination === '403') {
+    // Strict 403 enforcement (Access denied in-place, no external redirect)
+    if (!verdict.isHuman || verdict.action === 'Blocked' || verdict.action === 'Restricted' || verdict.action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || verdict.destination === '403') {
       document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
-      return;
-    }
-
-    // Smart Routing: Redirect if destination URL is configured and different from current page
-    if (verdict.destination && verdict.destination !== '404' && verdict.destination !== '403') {
-      var dest = verdict.destination;
-      if (qs) {
-        dest += (dest.indexOf('?') !== -1 ? '&' : '?') + qs;
-      }
-      window.location.replace(dest);
       return;
     }
 
@@ -5428,7 +5423,9 @@ Disallow: /*`);
       let ownerWildcardSubdomains: string = "disabled";
       let ownerAllowVpn: boolean = false;
       let ownerAllowSearchCrawlers: string = "allow";
+      let ownerBlockedSearchCrawlers: string = "";
       let ownerBlockAiCrawlers: string = "block";
+      let ownerAllowedAiBots: string = "";
       let ownerAllowSocialPreviews: string = "allow";
       let ownerProtectionMode: string = "hybrid";
       let ownerActiveAdPlatforms: string[] = ["google", "meta", "tiktok", "microsoft", "x"];
@@ -5461,7 +5458,9 @@ Disallow: /*`);
               ownerWildcardSubdomains = redirectUrls.wildcardSubdomains || "disabled";
               ownerAllowVpn = ownerBlockVpn === "allow";
               ownerAllowSearchCrawlers = redirectUrls.allowSearchCrawlers || "allow";
+              ownerBlockedSearchCrawlers = (redirectUrls as any).blockedSearchCrawlers || "";
               ownerBlockAiCrawlers = redirectUrls.blockAiCrawlers || "block";
+              ownerAllowedAiBots = redirectUrls.allowedAiBots || "";
               ownerAllowSocialPreviews = redirectUrls.allowSocialPreviews || "allow";
               ownerProtectionMode = redirectUrls.protectionMode || "hybrid";
               if (redirectUrls.activeAdPlatforms && redirectUrls.activeAdPlatforms.trim()) {
@@ -5547,9 +5546,29 @@ Disallow: /*`);
         let isAllowedCrawler = isVerifiedAdReviewer;
         if (visitorType !== 'Bot' && !isVerifiedAdReviewer && crawlerCheck.isBot) {
           if (crawlerCheck.crawlerType === 'search_engine') {
-            if (ownerAllowSearchCrawlers === 'allow') {
+            const blockedSearchList = (ownerBlockedSearchCrawlers || "")
+              .toLowerCase()
+              .split(",")
+              .map(s => s.trim())
+              .filter(Boolean);
+            const opKey = (crawlerCheck as any).operatorKey?.toLowerCase() || "";
+            const botName = (crawlerCheck.name || "").toLowerCase();
+            const rawUa = (userAgent || "").toLowerCase();
+            const isSpecificallyBlocked = blockedSearchList.some(token => {
+              const cleanToken = token.replace(/_/g, '.');
+              const dashToken = token.replace(/_/g, '-');
+              return (
+                (opKey && (opKey === token || opKey.includes(token) || token.includes(opKey))) || 
+                (botName && (botName.includes(token) || token.includes(botName))) ||
+                rawUa.includes(token) ||
+                rawUa.includes(cleanToken) ||
+                rawUa.includes(dashToken)
+              );
+            });
+
+            if (ownerAllowSearchCrawlers === 'allow' && !isSpecificallyBlocked) {
               visitorType = 'Human';
-              detectionMethod = 'Verified Search Indexer (SEO)';
+              detectionMethod = `Verified Search Indexer (${crawlerCheck.name || 'SEO'})`;
               isAllowedCrawler = true;
               console.log(`✅ ALLOWED (Search Engine Indexer): ${clientIp} - ${crawlerCheck.name} allowed per owner SEO policy`);
             } else {
@@ -5559,15 +5578,35 @@ Disallow: /*`);
               console.log(`🚫 BLOCKED (Tier 1 - Search Crawler Policy): ${clientIp} - ${crawlerCheck.name}`);
             }
           } else if (crawlerCheck.crawlerType === 'ai_crawler') {
-            if (ownerBlockAiCrawlers === 'allow') {
+            const allowedAiBotsList = (ownerAllowedAiBots || "")
+              .toLowerCase()
+              .split(",")
+              .map(s => s.trim())
+              .filter(Boolean);
+            const opKey = (crawlerCheck as any).operatorKey?.toLowerCase() || "";
+            const botName = (crawlerCheck.name || "").toLowerCase();
+            const rawUa = (userAgent || "").toLowerCase();
+            const isSpecificallyAllowed = allowedAiBotsList.some(token => {
+              const cleanToken = token.replace(/_/g, '.');
+              const dashToken = token.replace(/_/g, '-');
+              return (
+                (opKey && (opKey === token || opKey.includes(token) || token.includes(opKey))) || 
+                (botName && (botName.includes(token) || token.includes(botName))) ||
+                rawUa.includes(token) ||
+                rawUa.includes(cleanToken) ||
+                rawUa.includes(dashToken)
+              );
+            });
+
+            if (ownerBlockAiCrawlers === 'allow' || isSpecificallyAllowed) {
               visitorType = 'Human';
-              detectionMethod = 'Authorized AI Crawler';
+              detectionMethod = `Authorized AI Crawler (${crawlerCheck.name || 'AI Bot'})`;
               isAllowedCrawler = true;
-              console.log(`✅ ALLOWED (AI Crawler): ${clientIp} - ${crawlerCheck.name} permitted per owner policy`);
+              console.log(`✅ ALLOWED (AI Crawler): ${clientIp} - ${crawlerCheck.name} permitted per owner AI crawl control policy`);
             } else {
               visitorType = 'Bot';
               detectionMethod = crawlerCheck.category || 'AI Crawler';
-              blockReason = `${crawlerCheck.name || 'AI Crawler'} blocked by user AI scraping policy`;
+              blockReason = `${crawlerCheck.name || 'AI Crawler'} deflected by AI Crawl Control policy`;
               console.log(`🚫 BLOCKED (Tier 1 - AI Scraper Policy): ${clientIp} - ${crawlerCheck.name}`);
             }
           } else if (crawlerCheck.crawlerType === 'social_preview') {
@@ -5640,7 +5679,7 @@ Disallow: /*`);
 
         // TIER 1C: ACTIVE CLIENT-SIDE HARDWARE & HEADLESS INTEGRITY CHECK
         // If the interstitial verification gateway passes forward hardware/DOM verification tokens (e.g. from ?ctc_verify=1)
-        if (visitorType !== 'Bot' && !isVerifiedAdReviewer) {
+        if (visitorType !== 'Bot' && !isVerifiedAdReviewer && !isAllowedCrawler) {
           const clientTokens = req.body?.clientTokens || req.body?.tokens || req.body?.hardwareTokens || null;
           if (clientTokens) {
             const hwCheck = evaluateClientHardwareTokens(clientTokens, userAgent);
@@ -5887,7 +5926,7 @@ Disallow: /*`);
             proxyDetails.is_bogon
           );
 
-          if (visitorType !== 'Bot' && !isVerifiedAdReviewer && isDetectedAsProxyOrVpn) {
+          if (visitorType !== 'Bot' && !isVerifiedAdReviewer && !isAllowedCrawler && isDetectedAsProxyOrVpn) {
             const isApiForwarded = Boolean(req.body?.userAgent || req.body?.ip);
             const effectiveHeaders: Record<string, any> = isApiForwarded
               ? {
@@ -6187,7 +6226,7 @@ Disallow: /*`);
                 action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
                 connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
                 usageType: classificationData.usage_type || '',
-                riskScore: classificationData.risk_score,
+                riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 88),
                 trafficType: trafficType,
                 adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
                 clickToken: adClickInfo.clickToken || null,
@@ -6259,9 +6298,9 @@ Disallow: /*`);
         visitor_type: isHumanVisitor ? 'Human' : 'Bot',
         isHuman: isHumanVisitor,
         is_human: isHumanVisitor,
-        action: isHumanVisitor ? 'Allowed' : 'Blocked',
+        action: isHumanVisitor ? 'Allowed' : (isPolicyFilter ? 'Restricted' : 'Blocked'),
         statusAction: isErrorCode ? finalBotUrl : 'redirect',
-        statusCode: isErrorCode ? parseInt(finalBotUrl!) : 200,
+        statusCode: isErrorCode ? parseInt(finalBotUrl!) : (isHumanVisitor ? 200 : 403),
         detection_method: classificationData.detection_method || detectionMethod || 'IP Analysis',
         block_reason: blockReason || null,
         isp: classificationData.isp || 'Unknown',

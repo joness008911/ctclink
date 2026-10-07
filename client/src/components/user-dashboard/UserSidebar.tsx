@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { 
   LayoutDashboard, 
   Radio, 
@@ -21,7 +22,9 @@ import {
   MoreVertical,
   BookOpen,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  Bot,
+  Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { computeEffectiveAccountStatus } from "@shared/subscription";
@@ -58,11 +61,31 @@ export function UserSidebar({
     { id: "logs", label: "Visitor Logs", icon: FileText, testId: "tab-logs" },
     { id: "live", label: "Real-time", icon: Radio, testId: "tab-live", badge: "Live" },
     { id: "routing", label: "Rules & Policies", icon: SlidersHorizontal, testId: "tab-routing" },
+    { 
+      id: "aicrawl", 
+      label: "AI Crawl Control", 
+      icon: Bot, 
+      testId: "tab-aicrawl", 
+      badge: "Shield",
+      subItems: [
+        { id: "aicrawl-overview", label: "Overview" },
+        { id: "aicrawl-security", label: "Security" }
+      ]
+    },
+    { id: "seo-indexers", label: "Search Indexers", icon: Search, testId: "tab-seo-indexers", badge: "SEO" },
     { id: "simulator", label: "Bot Simulator", icon: Sparkles, testId: "tab-simulator", badge: "Test" },
     { id: "integration", label: "Integrations", icon: Code, testId: "tab-integration" },
     { id: "settings", label: "Settings", icon: Settings, testId: "tab-settings" },
     { id: "legal", label: "Compliance & Privacy", icon: Shield, testId: "tab-legal" },
   ];
+
+  const [aiCrawlOpen, setAiCrawlOpen] = useState(() => activeTab.startsWith("aicrawl"));
+
+  useEffect(() => {
+    if (activeTab.startsWith("aicrawl")) {
+      setAiCrawlOpen(true);
+    }
+  }, [activeTab]);
 
   const getInitials = (name?: string) => {
     if (!name) return "CT";
@@ -192,16 +215,28 @@ export function UserSidebar({
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isSelected = activeTab === item.id;
+            const isAiCrawlGroup = item.id === "aicrawl";
+            const isSelected = isAiCrawlGroup
+              ? activeTab === "aicrawl" || activeTab.startsWith("aicrawl-")
+              : activeTab === item.id;
 
             return (
-              <div key={item.id} className="relative group">
+              <div key={item.id} className="relative group space-y-0.5">
                 <button
                   type="button"
                   data-testid={item.testId}
                   onClick={() => {
-                    onTabChange(item.id);
-                    onCloseMobile();
+                    if (isAiCrawlGroup) {
+                      if (isCollapsed && onToggleCollapse) {
+                        onToggleCollapse();
+                        setAiCrawlOpen(true);
+                      } else {
+                        setAiCrawlOpen((prev) => !prev);
+                      }
+                    } else {
+                      onTabChange(item.id);
+                      onCloseMobile();
+                    }
                   }}
                   title={isCollapsed ? item.label : undefined}
                   className={`transition-all flex items-center rounded-xl ${
@@ -228,7 +263,7 @@ export function UserSidebar({
                   {!isCollapsed && (
                     <>
                       <span className="flex-1 truncate">{item.label}</span>
-                      {isSelected && (
+                      {isSelected && !item.subItems && (
                         <span className="w-1.5 h-1.5 rounded-full bg-[#0A5C48] shrink-0" />
                       )}
                       {item.badge && !isSelected && (
@@ -236,9 +271,49 @@ export function UserSidebar({
                           {item.badge}
                         </span>
                       )}
+                      {item.subItems && (
+                        <span className="text-slate-400 group-hover:text-slate-700 transition-colors">
+                          {aiCrawlOpen ? (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          )}
+                        </span>
+                      )}
                     </>
                   )}
                 </button>
+
+                {/* Sub-navigation items for AI Crawl Control (Overview & Security) */}
+                {item.subItems && !isCollapsed && aiCrawlOpen && (
+                  <div className="ml-7 pl-2.5 my-1 space-y-0.5 border-l-2 border-emerald-200/70 animate-in fade-in-50 duration-150">
+                    {item.subItems.map((sub) => {
+                      const isSubActive = 
+                        activeTab === sub.id || 
+                        (sub.id === "aicrawl-overview" && (activeTab === "aicrawl" || activeTab === "aicrawl-overview"));
+                      return (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          onClick={() => {
+                            onTabChange(sub.id);
+                            onCloseMobile();
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors flex items-center justify-between ${
+                            isSubActive
+                              ? "text-[#0A5C48] font-bold bg-[#E6F4EA]"
+                              : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span>{sub.label}</span>
+                          {isSubActive && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#0A5C48]" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Collapsed Tooltip */}
                 {isCollapsed && (

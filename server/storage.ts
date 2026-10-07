@@ -225,8 +225,11 @@ export interface IStorage {
     wildcardSubdomains?: string;
     allowVpn?: boolean;
     allowSearchCrawlers?: string;
+    blockedSearchCrawlers?: string;
     blockAiCrawlers?: string;
     allowSocialPreviews?: string;
+    allowedAiBots?: string;
+    customAiBots?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1008,8 +1011,11 @@ export class MemStorage implements IStorage {
     wildcardSubdomains?: string;
     allowVpn?: boolean;
     allowSearchCrawlers?: string;
+    blockedSearchCrawlers?: string;
     blockAiCrawlers?: string;
     allowSocialPreviews?: string;
+    allowedAiBots?: string;
+    customAiBots?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1033,8 +1039,11 @@ export class MemStorage implements IStorage {
       wildcardSubdomains: urls.wildcardSubdomains !== undefined ? urls.wildcardSubdomains : (existing?.wildcardSubdomains || "disabled"),
       allowVpn: urls.allowVpn !== undefined ? urls.allowVpn : (urls.blockVpn === "allow" ? true : (existing?.allowVpn ?? false)),
       allowSearchCrawlers: urls.allowSearchCrawlers !== undefined ? urls.allowSearchCrawlers : (existing?.allowSearchCrawlers || "allow"),
+      blockedSearchCrawlers: urls.blockedSearchCrawlers !== undefined ? urls.blockedSearchCrawlers : (existing?.blockedSearchCrawlers || ""),
       blockAiCrawlers: urls.blockAiCrawlers !== undefined ? urls.blockAiCrawlers : (existing?.blockAiCrawlers || "block"),
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
+      allowedAiBots: urls.allowedAiBots !== undefined ? urls.allowedAiBots : (existing?.allowedAiBots || ""),
+      customAiBots: urls.customAiBots !== undefined ? urls.customAiBots : (existing?.customAiBots || ""),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
       interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),
@@ -2056,8 +2065,11 @@ export class DatabaseStorage {
     wildcardSubdomains?: string;
     allowVpn?: boolean;
     allowSearchCrawlers?: string;
+    blockedSearchCrawlers?: string;
     blockAiCrawlers?: string;
     allowSocialPreviews?: string;
+    allowedAiBots?: string;
+    customAiBots?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -2081,8 +2093,11 @@ export class DatabaseStorage {
     if (urls.fingerprintActivate !== undefined) updatePayload.fingerprintActivate = urls.fingerprintActivate;
     if (urls.wildcardSubdomains !== undefined) updatePayload.wildcardSubdomains = urls.wildcardSubdomains;
     if (urls.allowSearchCrawlers !== undefined) updatePayload.allowSearchCrawlers = urls.allowSearchCrawlers;
+    if (urls.blockedSearchCrawlers !== undefined) updatePayload.blockedSearchCrawlers = urls.blockedSearchCrawlers;
     if (urls.blockAiCrawlers !== undefined) updatePayload.blockAiCrawlers = urls.blockAiCrawlers;
     if (urls.allowSocialPreviews !== undefined) updatePayload.allowSocialPreviews = urls.allowSocialPreviews;
+    if (urls.allowedAiBots !== undefined) updatePayload.allowedAiBots = urls.allowedAiBots;
+    if (urls.customAiBots !== undefined) updatePayload.customAiBots = urls.customAiBots;
     if (urls.protectionMode !== undefined) updatePayload.protectionMode = urls.protectionMode;
     if (urls.activeAdPlatforms !== undefined) updatePayload.activeAdPlatforms = urls.activeAdPlatforms;
     if (urls.interstitialEnabled !== undefined) updatePayload.interstitialEnabled = urls.interstitialEnabled;
@@ -2121,8 +2136,11 @@ export class DatabaseStorage {
           wildcardSubdomains: urls.wildcardSubdomains || "disabled",
           allowVpn: urls.allowVpn !== undefined ? urls.allowVpn : (urls.blockVpn === "allow"),
           allowSearchCrawlers: urls.allowSearchCrawlers || "allow",
+          blockedSearchCrawlers: urls.blockedSearchCrawlers || "",
           blockAiCrawlers: urls.blockAiCrawlers || "block",
           allowSocialPreviews: urls.allowSocialPreviews || "allow",
+          allowedAiBots: urls.allowedAiBots || "",
+          customAiBots: urls.customAiBots || "",
           protectionMode: urls.protectionMode || "hybrid",
           activeAdPlatforms: urls.activeAdPlatforms || "google,meta,tiktok,microsoft,x",
           interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : true,

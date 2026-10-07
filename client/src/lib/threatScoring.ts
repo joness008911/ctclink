@@ -15,13 +15,14 @@ export function computeThreatScore(item: any): ThreatScoreInfo {
   const isHuman = item.visitorType === "Human";
   const method = (item.detectionMethod || "").toLowerCase();
   const usageType = (item.usageType || "").toUpperCase();
+  const action = (item.action || "").toLowerCase();
 
   const isConsumerPrivacy = method.includes("consumer privacy") || method.includes("relay");
   const isVerifiedConsumerVpn = method.includes("verified consumer vpn") || method.includes("clean consumer vpn");
   const isDeviceRestricted = method.includes("device restricted");
   const isOsRestricted = method.includes("os restricted");
   const isGeoRestricted = method.includes("geo") || method.includes("country");
-  const isPolicyFilter = isDeviceRestricted || isOsRestricted || isGeoRestricted;
+  const isPolicyFilter = isDeviceRestricted || isOsRestricted || isGeoRestricted || method.includes("policy");
   const isTor = method.includes("tor") || usageType === "TOR";
   const isBotnet = method.includes("botnet") || method.includes("scanner") || method.includes("spammer") || method.includes("bogon");
   const isResidentialProxyPool = method.includes("residential proxy") || method.includes("scraping pool");
@@ -31,40 +32,52 @@ export function computeThreatScore(item: any): ThreatScoreInfo {
   const isProxy = method.includes("proxy");
   const isBotCrawler = method.includes("crawler") || method.includes("bot") || method.includes("synthetic") || method.includes("header") || method.includes("client hints");
   const isIpBlocklist = method.includes("blocklist") || method.includes("cidr");
+  const isSpoofed = method.includes("spoofed") || item.trafficType === "spoofed_ad_bot";
+
+  const isBlockedOrBot = !isHuman || action === "blocked" || isIpBlocklist || isTor || isBotnet || isResidentialProxyPool || isDatacenter || isProxy || isBotCrawler || isSpoofed || isPolicyFilter;
 
   let score: number;
-  if (item.riskScore !== undefined && item.riskScore !== null) {
-    score = Number(item.riskScore);
-  } else if (isHuman) {
-    score = (isConsumerPrivacy || isVerifiedConsumerVpn) ? 14 : 6;
+  const rawRisk = item.riskScore !== undefined && item.riskScore !== null ? Number(item.riskScore) : null;
+
+  if (rawRisk !== null && isBlockedOrBot && rawRisk > 25) {
+    score = rawRisk;
+  } else if (!isBlockedOrBot && isHuman) {
+    // Clean allowed human visitor
+    if (rawRisk !== null && rawRisk <= 20) {
+      score = rawRisk;
+    } else {
+      score = (isConsumerPrivacy || isVerifiedConsumerVpn) ? 14 : 6;
+    }
   } else if (isBotnet) {
     score = 99;
   } else if (isTor) {
     score = 98;
+  } else if (isSpoofed) {
+    score = 98;
   } else if (method.includes("client hints")) {
-    score = 96; // Spoofed OS/Client Hints mismatch is definitive scraper
+    score = 96;
   } else if (method.includes("headless")) {
-    score = 97; // Explicit automated headless browser engine
-  } else if (isResidentialProxyPool) {
-    score = 88;
-  } else if (isDeviceRestricted || isOsRestricted) {
-    score = 18; // Policy restriction, not an attacking threat
-  } else if (isGeoRestricted) {
-    score = 22; // Out of target geography
-  } else if (isRateLimit) {
-    score = 65;
-  } else if (isVpn) {
-    score = 72;
-  } else if (isProxy) {
-    score = 78;
-  } else if (isDatacenter) {
-    score = 88;
-  } else if (isBotCrawler) {
-    score = 94;
+    score = 97;
   } else if (isIpBlocklist) {
     score = 95;
+  } else if (isBotCrawler) {
+    score = 94;
+  } else if (isResidentialProxyPool) {
+    score = 88;
+  } else if (isDatacenter) {
+    score = 88;
+  } else if (isProxy) {
+    score = 78;
+  } else if (isVpn) {
+    score = 72;
+  } else if (isRateLimit) {
+    score = 65;
+  } else if (isGeoRestricted) {
+    score = 22; // Out of target geography policy deflection
+  } else if (isDeviceRestricted || isOsRestricted || isPolicyFilter) {
+    score = 18; // Policy restriction, not an attacking threat
   } else {
-    score = 80;
+    score = isBlockedOrBot ? 88 : 6;
   }
 
   // Determine threat level & styling

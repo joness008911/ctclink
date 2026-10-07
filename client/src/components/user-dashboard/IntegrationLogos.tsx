@@ -102,3 +102,29 @@ export function GoogleTagManagerLogo({ className = "h-5 w-5" }: { className?: st
     </svg>
   );
 }
+
+export function WebflowLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="20" fill="#146EF5"/>
+      <path d="M78 30L63.5 70H48.5L56 50H55.5C52.5 54 48 58 42.5 58C36 58 32.5 54 32.5 48V30H43.5V46C43.5 48.5 45 50 47.5 50C50.5 50 53 47 54.5 43V30H65.5V46C65.5 48.5 67 50 69.5 50C72.5 50 75 47 76.5 43V30H78Z" fill="white"/>
+    </svg>
+  );
+}
+
+export function FramerLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M4 2H20V9H12L20 16H12V23L4 16V9H12L4 2Z" fill="#0055FF"/>
+    </svg>
+  );
+}
+
+export function WixLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="64" height="64" rx="12" fill="#0C0C0C"/>
+      <path d="M12 44L17 20H23L27.5 35L32 20H38L42.5 35L47 20H53L48 44H41.5L37 29.5L32.5 44H26.5L22 29.5L17.5 44H12Z" fill="white"/>
+    </svg>
+  );
+}

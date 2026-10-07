@@ -24,51 +24,132 @@ import {
   Terminal,
   Code2,
   ArrowRight,
+  ShieldCheck,
+  Zap,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   generateUniversalAgentPrompt,
-  generateExpressAgentPrompt,
   generateNextJsAgentPrompt,
   generateCloudflareAgentPrompt,
   generatePhpAgentPrompt,
-  generateWebSnippetAgentPrompt,
+  generateWordPressAgentPrompt,
+  generateShopifyAgentPrompt,
+  generateWebflowAgentPrompt,
+  generateFramerAgentPrompt,
+  generateWixAgentPrompt,
+  generateReactAgentPrompt,
+  generateGtmAgentPrompt,
 } from "@shared/agenticPrompts";
+import { DeflectionControlBar } from "./DeflectionControlBar";
+
+export type SupportedAgentStack =
+  | "cloudflare"
+  | "nextjs"
+  | "webflow"
+  | "framer"
+  | "shopify"
+  | "wordpress"
+  | "wix"
+  | "php"
+  | "gtm"
+  | "react"
+  | "universal";
 
 interface AgentSetupViewProps {
   apiKeyValue: string;
   effectiveEndpoint: string;
-  targetStack?: "universal" | "nodejs" | "nextjs" | "fastify" | "cloudflare" | "php" | "wordpress" | "shopify" | "html";
+  targetStack?: string;
+  initialDeflection?: "403" | "404" | "redirect";
+  initialBotUrl?: string;
   title?: string;
   description?: string;
   onNavigateToLiveFeed?: () => void;
+  onDeflectionChange?: (action: "403" | "404" | "redirect", url?: string) => void;
 }
+
+const ARCHITECTURE_LIST: { id: string; label: string; tag: string }[] = [
+  { id: "cloudflare", label: "Cloudflare", tag: "Any Host / Worker" },
+  { id: "nextjs", label: "Next.js", tag: "Vercel / Render" },
+  { id: "webflow", label: "Webflow", tag: "Landing Pages" },
+  { id: "framer", label: "Framer", tag: "Startup Sites" },
+  { id: "shopify", label: "Shopify", tag: "Storefront" },
+  { id: "wordpress", label: "WordPress", tag: "Plugin" },
+  { id: "wix", label: "Wix & Squarespace", tag: "Builders" },
+  { id: "php", label: "PHP", tag: "index.php Shield" },
+  { id: "gtm", label: "Google Tag Manager", tag: "No-Code" },
+  { id: "react", label: "HTML / React", tag: "Static Web Tag" },
+];
 
 export function AgentSetupView({
   apiKeyValue,
   effectiveEndpoint,
-  targetStack = "universal",
+  targetStack = "cloudflare",
+  initialDeflection = "403",
+  initialBotUrl = "",
   title,
   description,
   onNavigateToLiveFeed,
+  onDeflectionChange,
 }: AgentSetupViewProps) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedSubStack, setSelectedSubStack] = useState<string>(
-    targetStack === "nodejs" ? "express" : targetStack
-  );
 
-  // Compute active prompt based on selected stack
+  // Normalize initial stack selection
+  const normalizeStack = (stack: string): string => {
+    if (stack === "universal") return "cloudflare";
+    if (stack === "html" || stack === "javascript") return "react";
+    if (stack === "nodejs" || stack === "express" || stack === "python") return "cloudflare";
+    return stack;
+  };
+
+  const [selectedSubStack, setSelectedSubStack] = useState<string>(() => normalizeStack(targetStack));
+
+  // PHP is the ONLY stack with custom redirect URL capability
+  const isPhpStack = selectedSubStack === "php";
+  const isClientTag = ["webflow", "framer", "shopify", "wix", "gtm", "react"].includes(selectedSubStack);
+
+  // Bot Deflection & Fallback Controls
+  const [deflectionAction, setDeflectionAction] = useState<"403" | "404" | "redirect">(() => {
+    if (!isPhpStack && initialDeflection === "redirect") {
+      return "403";
+    }
+    return initialDeflection;
+  });
+  const [botFallbackUrl, setBotFallbackUrl] = useState<string>(initialBotUrl || "https://google.com");
+
+  // Handle stack change: ensure non-PHP stacks don't remain in "redirect" mode
+  const handleStackChange = (newStack: string) => {
+    const normalized = normalizeStack(newStack);
+    setSelectedSubStack(normalized);
+    const newIsPhp = normalized === "php";
+    if (!newIsPhp && deflectionAction === "redirect") {
+      setDeflectionAction("403");
+    }
+  };
+
+  // Compute active prompt dynamically based on chosen stack & deflection controls
   const activePrompt = React.useMemo(() => {
-    const opts = { apiKeyValue, effectiveEndpoint };
-    if (selectedSubStack === "nextjs") return generateNextJsAgentPrompt(opts);
-    if (selectedSubStack === "express" || selectedSubStack === "nodejs") return generateExpressAgentPrompt(opts);
+    const opts = {
+      apiKeyValue,
+      effectiveEndpoint,
+      deflectionAction: isPhpStack ? deflectionAction : (deflectionAction === "redirect" ? "403" : deflectionAction),
+      botFallbackUrl: isPhpStack && deflectionAction === "redirect" ? botFallbackUrl : undefined,
+    };
+
     if (selectedSubStack === "cloudflare") return generateCloudflareAgentPrompt(opts);
-    if (selectedSubStack === "php" || selectedSubStack === "wordpress") return generatePhpAgentPrompt(opts);
-    if (selectedSubStack === "shopify" || selectedSubStack === "html") return generateWebSnippetAgentPrompt(opts);
-    return generateUniversalAgentPrompt(opts);
-  }, [selectedSubStack, apiKeyValue, effectiveEndpoint]);
+    if (selectedSubStack === "nextjs") return generateNextJsAgentPrompt(opts);
+    if (selectedSubStack === "webflow") return generateWebflowAgentPrompt(opts);
+    if (selectedSubStack === "framer") return generateFramerAgentPrompt(opts);
+    if (selectedSubStack === "shopify") return generateShopifyAgentPrompt(opts);
+    if (selectedSubStack === "wordpress") return generateWordPressAgentPrompt(opts);
+    if (selectedSubStack === "wix") return generateWixAgentPrompt(opts);
+    if (selectedSubStack === "php") return generatePhpAgentPrompt(opts);
+    if (selectedSubStack === "gtm") return generateGtmAgentPrompt(opts);
+    if (selectedSubStack === "react") return generateReactAgentPrompt(opts);
+    return generateCloudflareAgentPrompt(opts);
+  }, [selectedSubStack, isPhpStack, apiKeyValue, effectiveEndpoint, deflectionAction, botFallbackUrl]);
 
   const handleCopyPrompt = (toolName?: string) => {
     navigator.clipboard.writeText(activePrompt);
@@ -76,55 +157,88 @@ export function AgentSetupView({
     setTimeout(() => setCopied(false), 2200);
     toast({
       title: toolName ? `Copied for ${toolName}` : "Installation Prompt Copied",
-      description: "Paste into your AI coding assistant (Cursor, Claude Code, Windsurf, Copilot).",
+      description: `Configured for ${selectedSubStack.toUpperCase()} with ${deflectionAction.toUpperCase()} deflection. Paste into your AI coding assistant.`,
     });
   };
 
   const handleOpenCursor = () => {
     handleCopyPrompt("Cursor");
     try {
-      // Attempt cursor protocol
       window.location.href = `cursor://anysphere.cursor-always-local/`;
     } catch (e) {
-      // Fallback already copied to clipboard
+      // Fallback copied to clipboard
     }
   };
 
+  const activeStackObj = ARCHITECTURE_LIST.find(s => s.id === selectedSubStack) || ARCHITECTURE_LIST[0];
+
   return (
     <div className="space-y-6">
-      {/* Framework Selector (When Universal) */}
-      {targetStack === "universal" && (
-        <div className="flex items-center justify-between gap-3 flex-wrap bg-slate-50 border border-slate-200/80 p-3 rounded-xl">
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-            <Sparkles className="h-4 w-4 text-emerald-600" />
-            <span>Target Framework:</span>
+      
+      {/* ── 1. TARGET ARCHITECTURE COMES FIRST (100% Websites, Landing Pages & Modern Hosts) ── */}
+      <div className="bg-white border border-slate-200/90 p-4 rounded-xl shadow-2xs space-y-2.5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200/80 flex items-center justify-center text-[#0A5C48]">
+              <Sparkles className="h-4 w-4 text-[#F25A2A]" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-[#0F172A] tracking-tight">
+                Target Platform / Website Architecture:
+              </h4>
+              <p className="text-[11px] text-[#64748B]">
+                Choose your website platform, landing page builder, or edge reverse proxy (Cloudflare protects ANY host like Render, Railway, etc.).
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {[
-              { id: "universal", label: "Auto-Detect (Universal)" },
-              { id: "nextjs", label: "Next.js" },
-              { id: "express", label: "Express / Node" },
-              { id: "cloudflare", label: "Cloudflare Worker" },
-              { id: "php", label: "PHP" },
-              { id: "shopify", label: "Shopify / HTML" },
-            ].map((st) => (
-              <button
-                key={st.id}
-                onClick={() => setSelectedSubStack(st.id)}
-                className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
-                  selectedSubStack === st.id
-                    ? "bg-slate-900 text-white shadow-xs font-bold"
-                    : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-100"
-                }`}
-              >
-                {st.label}
-              </button>
-            ))}
+
+          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-lg">
+            <Zap className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+            <span>Real-time Cloud Sync (~12ms)</span>
           </div>
         </div>
-      )}
 
-      {/* Main 2-Column Layout (Matching Screenshot) */}
+        {/* 1:1 Architecture Selector matching every manual integration */}
+        <div className="flex items-center gap-1.5 flex-wrap pt-1">
+          {ARCHITECTURE_LIST.map((st) => {
+            const isSelected = selectedSubStack === st.id;
+            return (
+              <button
+                key={st.id}
+                onClick={() => handleStackChange(st.id)}
+                className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all flex items-center gap-1.5 ${
+                  isSelected
+                    ? "bg-[#0A5C48] text-white shadow-xs font-bold ring-1 ring-[#0A5C48]"
+                    : "bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <span>{st.label}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-normal ${
+                  isSelected ? "bg-white/20 text-white" : "bg-slate-200/70 text-slate-500"
+                }`}>
+                  {st.tag}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── 2. BOT & RULE DEFLECTION ACTION COMES SECOND ── */}
+      <DeflectionControlBar
+        isPhpStack={isPhpStack}
+        deflectionAction={deflectionAction}
+        botFallbackUrl={botFallbackUrl}
+        onDeflectionChange={(action, url) => {
+          setDeflectionAction(action);
+          if (url !== undefined) setBotFallbackUrl(url);
+          if (onDeflectionChange) {
+            onDeflectionChange(action, url);
+          }
+        }}
+      />
+
+      {/* ── 3. MAIN 2-COLUMN WORKFLOW ── */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
         {/* Left Column: 3 Numbered Steps Timeline */}
@@ -141,7 +255,13 @@ export function AgentSetupView({
                   Copy and run the prompt in your agent
                 </h4>
                 <p className="text-xs text-[#64748B] leading-relaxed">
-                  Install CleanTraffic in your app by detecting your framework. If no project exists, your agent asks what to scaffold and defaults to Next.js or Express. Your API key and endpoint are automatically included.
+                  Install CleanTraffic with zero external npm dependencies. The prompt embeds your active API key, endpoint, certified code, and your chosen{" "}
+                  {!isClientTag ? (
+                    <strong className="text-slate-800">{deflectionAction.toUpperCase()} deflection action</strong>
+                  ) : (
+                    <strong className="text-slate-800">non-blocking telemetry mode</strong>
+                  )}
+                  .
                 </p>
                 <div className="flex items-center gap-2 pt-1 flex-wrap">
                   <Button
@@ -200,7 +320,7 @@ export function AgentSetupView({
                   Follow the steps in your agent
                 </h4>
                 <p className="text-xs text-[#64748B] leading-relaxed">
-                  Review the steps proposed by your AI assistant and approve each change as it generates the zero-dependency middleware or edge worker.
+                  Your AI assistant acts as a reliable installer, creating the zero-dependency guard file and registering it in your application. Approve the diff.
                 </p>
               </div>
             </div>
@@ -212,30 +332,37 @@ export function AgentSetupView({
               </span>
               <div className="space-y-2">
                 <h4 className="text-sm font-bold text-[#0F172A]">
-                  Send your first event
+                  Test &amp; verify immediate protection
                 </h4>
                 <p className="text-xs text-[#64748B] leading-relaxed">
-                  Disable any <strong className="text-slate-800">ad blockers</strong> before testing, as local dev ad blockers may suppress analytics requests.
+                  Start your app and confirm real humans load normally while bots and policy rule restrictions trigger immediately:
                 </p>
                 <ol className="text-xs text-[#64748B] space-y-1.5 list-decimal pl-4 leading-relaxed">
-                  <li>Start your dev server (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">npm run dev</code>), or ask your agent to do so.</li>
-                  <li>Open your app locally in the browser (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">localhost:3000</code>).</li>
-                  <li>Check the developer console or visit the {onNavigateToLiveFeed ? (
+                  <li>Visit your local app in a browser (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">http://localhost:3000</code>) &rarr; Loads HTTP 200 OK.</li>
+                  {!isClientTag ? (
+                    <li>In terminal, test bot rejection: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">curl -i -A "Googlebot" http://localhost:3000/</code> &rarr; Returns {deflectionAction === '404' ? 'HTTP 404' : deflectionAction === 'redirect' ? 'HTTP 302' : 'HTTP 403'}.</li>
+                  ) : (
+                    <li>Open browser DevTools Console &rarr; Check that hardware entropy registers without blocking page rendering.</li>
+                  )}
+                  <li>Check the {onNavigateToLiveFeed ? (
                     <button onClick={onNavigateToLiveFeed} className="text-[#F25A2A] hover:underline font-bold inline-flex items-center gap-0.5">
                       Live Feed <ArrowRight className="h-3 w-3 inline" />
                     </button>
-                  ) : <span className="text-[#F25A2A] font-bold">Live Feed</span>} to view your first verified visitor event.</li>
+                  ) : <span className="text-[#F25A2A] font-bold">Live Feed</span>} to view real-time visitor evaluation logs.</li>
                 </ol>
-                <p className="text-[11px] text-slate-400 pt-1">
-                  Return to this page to verify threat protection and test automated bot blocking.
-                </p>
+                <div className="p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200/60 text-[11px] text-emerald-800 flex items-start gap-2 mt-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Rule Changes Take Effect Instantly:</strong> When you adjust Device filters (e.g. Block PC) or Country Geofencing in your CleanTraffic dashboard, cloud verdicts apply live in &lt;15ms without needing to reinstall code.
+                  </span>
+                </div>
               </div>
             </div>
 
           </div>
         </div>
 
-        {/* Right Column: Dark Prompt Card (Matching Screenshot) */}
+        {/* Right Column: Dark Prompt Card */}
         <div className="lg:col-span-6">
           <div className="bg-[#12161A] border border-slate-800 rounded-xl overflow-hidden shadow-md flex flex-col">
             
@@ -244,11 +371,17 @@ export function AgentSetupView({
               <div className="flex items-center gap-2">
                 <Terminal className="h-3.5 w-3.5 text-slate-400" />
                 <span className="font-mono text-[11px] font-bold text-slate-200 tracking-wide uppercase">
-                  Installation prompt
+                  Installation prompt ({activeStackObj.label})
                 </span>
-                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px] font-mono py-0 h-4">
-                  AI-Ready
-                </Badge>
+                {!isClientTag ? (
+                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px] font-mono py-0 h-4">
+                    {deflectionAction.toUpperCase()}
+                  </Badge>
+                ) : (
+                  <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[9px] font-mono py-0 h-4">
+                    TELEMETRY
+                  </Badge>
+                )}
               </div>
               <button
                 onClick={() => handleCopyPrompt()}
@@ -267,7 +400,7 @@ export function AgentSetupView({
             {/* Footer Bar */}
             <div className="bg-[#181D24] px-4 py-2 border-t border-slate-800 flex items-center justify-between text-xs">
               <span className="text-[11px] text-slate-400">
-                Includes API Key: <code className="text-emerald-400 font-mono text-[10px]">{apiKeyValue ? `${apiKeyValue.slice(0, 8)}...` : "ctc_live_..."}</code>
+                API Key: <code className="text-emerald-400 font-mono text-[10px]">{apiKeyValue ? `${apiKeyValue.slice(0, 8)}...` : "ctc_live_..."}</code>
               </span>
               <button
                 onClick={() => setIsModalOpen(true)}
@@ -288,7 +421,7 @@ export function AgentSetupView({
           <DialogHeader className="flex flex-row items-center justify-between pb-2 border-b border-slate-800">
             <DialogTitle className="text-sm font-bold text-white flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-emerald-400" />
-              <span>CleanTraffic Agentic Installation Prompt</span>
+              <span>CleanTraffic Agentic Installation Prompt ({activeStackObj.label})</span>
             </DialogTitle>
             <Button
               size="sm"

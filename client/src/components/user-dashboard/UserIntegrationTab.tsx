@@ -60,32 +60,43 @@ import {
   generateJsSnippet,
   generateWordPressPluginPhp,
   generateNextJsMiddleware,
-  generateNodeExpressMiddleware,
-  generateFastifyHook,
 } from "@shared/integrationGenerators";
 import {
   CloudflareLogo,
   ShopifyLogo,
   WordPressLogo,
   NextJsLogo,
-  NodeJsLogo,
   PhpLogo,
   ReactLogo,
   JavaScriptLogo,
-  PythonLogo,
   GoogleTagManagerLogo,
+  WebflowLogo,
+  FramerLogo,
+  WixLogo,
 } from "./IntegrationLogos";
 import { AgentSetupView } from "./AgentSetupView";
+import { DeflectionControlBar } from "./DeflectionControlBar";
 
-export type IntegrationStack = "shopify" | "wordpress" | "cloudflare" | "php" | "nodejs";
-export type IntegrationCategory = "all" | "nocode" | "integrations" | "web" | "cms" | "server";
+export type IntegrationStack =
+  | "cloudflare"
+  | "nextjs"
+  | "webflow"
+  | "framer"
+  | "shopify"
+  | "wordpress"
+  | "wix"
+  | "php"
+  | "gtm"
+  | "react";
+
+export type IntegrationCategory = "all" | "nocode" | "builders" | "web" | "cms" | "integrations";
 
 interface IntegrationItem {
   id: string;
   targetStack: IntegrationStack;
   name: string;
   subtitle: string;
-  category: "all" | "nocode" | "integrations" | "web" | "cms" | "server";
+  category: IntegrationCategory;
   badge?: string;
   badgeStyle?: string;
   LogoComponent: React.ComponentType<{ className?: string }>;
@@ -120,7 +131,7 @@ export function UserIntegrationTab({
   const [wpSubTab, setWpSubTab] = useState<"zip" | "code">("zip");
   const [cfSubTab, setCfSubTab] = useState<"quickedit" | "wrangler">("quickedit");
   const [phpSubTab, setPhpSubTab] = useState<"code" | "themes">("code");
-  const [nodeSubTab, setNodeSubTab] = useState<"express" | "nextjs" | "fastify">("express");
+  const [reactSubTab, setReactSubTab] = useState<"html" | "react">("html");
 
   // Segmented Setup Mode (Agent setup vs Manual setup - Fingerprint.com style)
   const [setupMode, setSetupMode] = useState<"agent" | "manual">("agent");
@@ -178,6 +189,62 @@ export function UserIntegrationTab({
     }
   }, [userSettings]);
 
+  // Manual Deflection State (Edge 403, 404, or PHP Fallback Redirect)
+  const [manualDeflectionAction, setManualDeflectionAction] = useState<"403" | "404" | "redirect">(() => {
+    return userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403");
+  });
+  const [manualBotFallbackUrl, setManualBotFallbackUrl] = useState<string>(
+    userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : "https://google.com"
+  );
+
+  useEffect(() => {
+    if (userSettings?.botUrl) {
+      if (userSettings.botUrl === "404") setManualDeflectionAction("404");
+      else if (userSettings.botUrl.startsWith("http")) {
+        setManualDeflectionAction("redirect");
+        setManualBotFallbackUrl(userSettings.botUrl);
+      } else {
+        setManualDeflectionAction("403");
+      }
+    }
+  }, [userSettings?.botUrl]);
+
+  const updateUrlsMutation = useMutation({
+    mutationFn: async (payload: { botUrl: string; humanUrl?: string }) => {
+      const res = await apiRequest("POST", "/api/user/urls", payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
+      toast({
+        title: "Deflection Action Updated",
+        description: "Your bot and rule deflection policy has been updated across all integrations.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to update deflection",
+        description: err.message || "Failed to persist deflection setting.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleManualDeflectionChange = (action: "403" | "404" | "redirect", url?: string) => {
+    setManualDeflectionAction(action);
+    const effectiveUrl = url !== undefined ? url : manualBotFallbackUrl;
+    if (url !== undefined) setManualBotFallbackUrl(url);
+
+    const payloadBot = action === "redirect" ? (effectiveUrl || "https://google.com") : action;
+    updateUrlsMutation.mutate({
+      botUrl: payloadBot,
+      humanUrl: userSettings?.humanUrl || "https://yourdomain.com",
+    });
+  };
+
+  const effectiveManualBotTarget = manualDeflectionAction === "redirect" ? manualBotFallbackUrl : manualDeflectionAction;
+
   // Current selected theme object
   const activeTheme = themes.find((t) => t.id === selectedThemeId) || themes[0] || DEFAULT_INTERSTITIAL_THEMES[0];
 
@@ -207,7 +274,7 @@ export function UserIntegrationTab({
     effectiveEndpoint,
     enableLoading: false,
     humanTargetUrl: userSettings?.humanUrl || "",
-    botTargetUrl: userSettings?.botUrl || "",
+    botTargetUrl: effectiveManualBotTarget,
     failMode: protectionFailMode,
     timeoutMs: protectionTimeoutMs,
   });
@@ -238,22 +305,7 @@ export function UserIntegrationTab({
     apiKeyValue,
     effectiveEndpoint,
     enableLoading: false,
-    failMode: protectionFailMode,
-    timeoutMs: protectionTimeoutMs,
-  });
-
-  const nodeExpressMiddlewareCode = generateNodeExpressMiddleware({
-    apiKeyValue,
-    effectiveEndpoint,
-    enableLoading: false,
-    failMode: protectionFailMode,
-    timeoutMs: protectionTimeoutMs,
-  });
-
-  const fastifyHookCode = generateFastifyHook({
-    apiKeyValue,
-    effectiveEndpoint,
-    enableLoading: false,
+    botTargetUrl: effectiveManualBotTarget,
     failMode: protectionFailMode,
     timeoutMs: protectionTimeoutMs,
   });
@@ -536,30 +588,66 @@ export function UserIntegrationTab({
     }
   };
 
-  // Directory integration items definition (matching Fingerprint structure)
+  // Directory integration items definition (100% Websites, Landing Pages & Modern Hosts)
   const integrationDirectory: IntegrationItem[] = useMemo(() => [
     {
       id: "cloudflare",
       targetStack: "cloudflare",
       name: "Cloudflare",
-      subtitle: "Cloudflare No-Code Worker",
+      subtitle: "Universal Edge Worker",
       category: "nocode",
-      badge: "Active",
-      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      badge: "Any Host",
+      badgeStyle: "bg-orange-50 text-orange-800 border-orange-200",
       LogoComponent: CloudflareLogo,
-      summary: "Protect your website with CleanTraffic using Cloudflare Workers at 300+ Edge locations.",
-      tags: ["Cloudflare", "Edge", "No-Code", "Worker"],
+      summary: "Deploy in front of ANY host (Render, Railway, VPS, Vercel) to stop bots at 300+ Edge POPs before they reach your origin.",
+      tags: ["Cloudflare", "Edge", "Render", "Railway", "VPS", "No-Code", "Worker"],
+    },
+    {
+      id: "nextjs",
+      targetStack: "nextjs",
+      name: "Next.js",
+      subtitle: "Edge Middleware",
+      category: "web",
+      badge: "Edge",
+      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
+      LogoComponent: NextJsLogo,
+      summary: "Edge and HTTP middleware for Next.js App & Pages Router on Vercel, Render, or Netlify.",
+      tags: ["Next.js", "Vercel", "Render", "Edge", "React", "Server"],
+    },
+    {
+      id: "webflow",
+      targetStack: "webflow",
+      name: "Webflow",
+      subtitle: "Marketing Landing Pages",
+      category: "builders",
+      badge: "No-Code",
+      badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
+      LogoComponent: WebflowLogo,
+      summary: "1-Click Custom Code integration for high-converting Webflow landing pages and marketing sites.",
+      tags: ["Webflow", "Landing Page", "Custom Code", "No-Code", "Builders"],
+    },
+    {
+      id: "framer",
+      targetStack: "framer",
+      name: "Framer",
+      subtitle: "Modern Startup Websites",
+      category: "builders",
+      badge: "1-Click",
+      badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
+      LogoComponent: FramerLogo,
+      summary: "Protect your Framer startup website or design portfolio from bot clicks and scrapers in <head>.",
+      tags: ["Framer", "Startup", "Landing Page", "Design", "Builders"],
     },
     {
       id: "shopify",
       targetStack: "shopify",
       name: "Shopify",
       subtitle: "Storefront Web Agent",
-      category: "web",
+      category: "cms",
       badge: "Active",
       badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
       LogoComponent: ShopifyLogo,
-      summary: "Add CleanTraffic protection tag to your Shopify store with hardware entropy.",
+      summary: "Add CleanTraffic protection tag to your Shopify store in theme.liquid to protect checkout & ad spend.",
       tags: ["Shopify", "Store", "Liquid", "E-Commerce", "Web"],
     },
     {
@@ -571,92 +659,56 @@ export function UserIntegrationTab({
       badge: "1-Click",
       badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
       LogoComponent: WordPressLogo,
-      summary: "Dedicated plugin (.zip) for blogs, landing pages, and checkout fraud protection.",
+      summary: "Dedicated Must-Use plugin (.zip) for blogs, landing pages, and WooCommerce fraud prevention.",
       tags: ["WordPress", "WooCommerce", "Plugin", "PHP", "CMS"],
     },
     {
-      id: "nextjs",
-      targetStack: "nodejs",
-      name: "Next.js",
-      subtitle: "Edge Middleware",
-      category: "server",
-      badge: "Edge",
+      id: "wix",
+      targetStack: "wix",
+      name: "Wix & Squarespace",
+      subtitle: "Website Builders",
+      category: "builders",
+      badge: "No-Code",
       badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
-      LogoComponent: NextJsLogo,
-      summary: "Edge and HTTP middleware for Next.js 13/14/15 App and Pages router on Vercel.",
-      tags: ["Next.js", "Vercel", "Edge", "React", "Server"],
-    },
-    {
-      id: "nodejs",
-      targetStack: "nodejs",
-      name: "Node.js",
-      subtitle: "Express Middleware",
-      category: "server",
-      badge: "Server",
-      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
-      LogoComponent: NodeJsLogo,
-      summary: "Integrate CleanTraffic with your Express.js or Node backend microservice.",
-      tags: ["Node.js", "Express", "Backend", "API", "Server"],
+      LogoComponent: WixLogo,
+      summary: "Add bot screening and hardware entropy visitor identification to Wix or Squarespace sites.",
+      tags: ["Wix", "Squarespace", "Website Builder", "Custom Code", "Builders"],
     },
     {
       id: "php",
       targetStack: "php",
       name: "PHP",
       subtitle: "index.php Shield",
-      category: "server",
-      badge: "Standalone",
-      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
+      category: "web",
+      badge: "Redirect Safe",
+      badgeStyle: "bg-purple-50 text-purple-800 border-purple-200",
       LogoComponent: PhpLogo,
-      summary: "Integrate CleanTraffic with your PHP backend, cPanel, or CyberPanel.",
-      tags: ["PHP", "cPanel", "Apache", "CyberPanel", "Server"],
-    },
-    {
-      id: "react",
-      targetStack: "shopify",
-      name: "React",
-      subtitle: "Frontend SDK",
-      category: "web",
-      badge: "Active",
-      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      LogoComponent: ReactLogo,
-      summary: "Identify visitors and intercept bots on your React website.",
-      tags: ["React", "SPA", "Frontend", "SDK", "Web"],
-    },
-    {
-      id: "javascript",
-      targetStack: "shopify",
-      name: "JavaScript",
-      subtitle: "JS Agent",
-      category: "web",
-      badge: "Active",
-      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      LogoComponent: JavaScriptLogo,
-      summary: "Universal client-side protection snippet for custom websites and builders.",
-      tags: ["JavaScript", "HTML", "Webflow", "Wix", "Web"],
+      summary: "Standalone PHP shield for direct landing page funnels, cPanel, or CyberPanel with custom Redirect URL Deflection.",
+      tags: ["PHP", "cPanel", "CyberPanel", "Landing Page", "Funnels"],
     },
     {
       id: "gtm",
-      targetStack: "shopify",
+      targetStack: "gtm",
       name: "Google Tag Manager",
-      subtitle: "Web Tag",
+      subtitle: "Universal Web Tag",
       category: "integrations",
       badge: "Tag",
       badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
       LogoComponent: GoogleTagManagerLogo,
-      summary: "Add CleanTraffic to your website using Google Tag Manager custom HTML tags.",
+      summary: "Add CleanTraffic to any website using Google Tag Manager custom HTML tags with zero code changes.",
       tags: ["GTM", "Google", "Tag", "Analytics", "Integrations"],
     },
     {
-      id: "python",
-      targetStack: "nodejs",
-      name: "Python",
-      subtitle: "Backend Gateway",
-      category: "server",
-      badge: "Backend",
-      badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
-      LogoComponent: PythonLogo,
-      summary: "Integrate CleanTraffic verification with your Python backend or API gateway.",
-      tags: ["Python", "FastAPI", "Flask", "Backend", "Server"],
+      id: "react",
+      targetStack: "react",
+      name: "HTML / React",
+      subtitle: "Static Web Tag & SDK",
+      category: "web",
+      badge: "Universal",
+      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      LogoComponent: ReactLogo,
+      summary: "Universal client-side protection snippet and React SDK for static sites, SPAs, and custom landing pages on Render/Railway/S3.",
+      tags: ["React", "HTML", "SPA", "Static", "Render", "Railway", "SDK"],
     },
   ], []);
 
@@ -665,10 +717,10 @@ export function UserIntegrationTab({
     return integrationDirectory.filter((item) => {
       let matchesCategory = true;
       if (activeCategory === "nocode") matchesCategory = item.category === "nocode";
-      else if (activeCategory === "integrations") matchesCategory = item.category === "nocode" || item.category === "integrations";
+      else if (activeCategory === "builders") matchesCategory = item.category === "builders" || item.category === "nocode";
       else if (activeCategory === "web") matchesCategory = item.category === "web";
       else if (activeCategory === "cms") matchesCategory = item.category === "cms";
-      else if (activeCategory === "server") matchesCategory = item.category === "server";
+      else if (activeCategory === "integrations") matchesCategory = item.category === "integrations";
 
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch = !q || 
@@ -764,11 +816,29 @@ export function UserIntegrationTab({
                     apiKeyValue={apiKeyValue || ""}
                     effectiveEndpoint={effectiveEndpoint}
                     targetStack={selectedIntegration}
+                    initialDeflection={userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403")}
+                    initialBotUrl={userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : ""}
                     onNavigateToLiveFeed={() => navigate("/dashboard?tab=traffic")}
+                    onDeflectionChange={handleManualDeflectionChange}
                   />
                 </div>
               ) : (
                 <>
+                  {/* Deflection Control Bar for Manual Mode */}
+                  {selectedIntegration && (
+                    <DeflectionControlBar
+                      isPhpStack={selectedIntegration === "php"}
+                      deflectionAction={
+                        (selectedIntegration !== "php" && manualDeflectionAction === "redirect")
+                          ? "403"
+                          : manualDeflectionAction
+                      }
+                      botFallbackUrl={manualBotFallbackUrl}
+                      onDeflectionChange={handleManualDeflectionChange}
+                      className="mb-2"
+                    />
+                  )}
+
                   {/* 1. CLOUDFLARE EDGE WORKER DETAIL PAGE */}
                   {selectedIntegration === "cloudflare" && (
                 <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
@@ -1458,8 +1528,8 @@ export function UserIntegrationTab({
                 </div>
               )}
 
-              {/* 5. NEXT.JS & EXPRESS MIDDLEWARE DETAIL PAGE */}
-              {selectedIntegration === "nodejs" && (
+              {/* 5. NEXT.JS EDGE MIDDLEWARE DETAIL PAGE */}
+              {selectedIntegration === "nextjs" && (
                 <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
@@ -1469,13 +1539,16 @@ export function UserIntegrationTab({
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h2 className="text-xl font-bold text-[#0F172A]">Next.js &amp; Express Middleware</h2>
+                          <h2 className="text-xl font-bold text-[#0F172A]">Next.js Edge Middleware</h2>
                           <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
-                            Full-Stack Edge
+                            Edge Native
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Next.js 13/14/15
                           </Badge>
                         </div>
                         <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                          Edge and HTTP middleware for Next.js 13/14/15 on Vercel/Netlify, or Node Express servers on Railway/VPS.
+                          Zero-latency Edge Middleware for Next.js App &amp; Pages Router on Vercel, Render, Netlify, or custom VPS. Intercepts bots at the edge before pages or signup/login routes render.
                         </p>
                       </div>
                     </div>
@@ -1485,69 +1558,544 @@ export function UserIntegrationTab({
                   <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
                     <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
                     <p className="text-xs text-[#64748B] leading-relaxed">
-                      Intercepts incoming HTTP requests at the edge before route handlers render. Inspects visitor IP, user-agent, and ad click tokens, passing legitimate traffic seamlessly to your Next.js pages or API routes.
+                      Next.js Edge Middleware executes on every incoming visitor request before pages, static bundles, or server actions run. Legitimate visitors pass through without any redirect or visual delay, while bots and scrapers are cut off at the edge with HTTP 403 Forbidden or 404 Stealth Drop.
+                    </p>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#0F172A]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          middleware.ts (Root of Next.js Project)
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleCopyCurrentCode(nextJsMiddlewareCode, "Next.js Middleware")}
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Middleware Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {nextJsMiddlewareCode}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Drop-in Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Quick Drop-in Setup (Zero External Dependencies):
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
+                      <li>
+                        Create or open <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code> in the root folder of your Next.js project (next to <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">package.json</code> or inside <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/</code>).
+                      </li>
+                      <li>
+                        Paste the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code>.
+                      </li>
+                      <li>
+                        Deploy to Vercel, Render, Netlify, or your host. Next.js runs this middleware automatically on every incoming request at the edge.
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Benefits */}
+                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Edge Protection Benefits</h3>
+                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
+                      <li><strong>Zero Backend Complexity:</strong> No npm packages or database hooks required. Uses native Next.js Edge Runtime <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">NextResponse</code>.</li>
+                      <li><strong>Protects Before Page Render:</strong> Bots are intercepted before they touch sign up forms, login pages, or expensive SSR routes.</li>
+                      <li><strong>No Redirects for Real Users:</strong> Legitimate visitors stay on the exact URL with 0ms visual delay.</li>
+                      <li><strong>Instant Deflection:</strong> Configurable 403 Forbidden or 404 Stealth Drop cuts off automated web scrapers.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 6. WEBFLOW MARKETING LANDING PAGES DETAIL PAGE */}
+              {selectedIntegration === "webflow" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <WebflowLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Webflow Marketing Landing Pages</h2>
+                          <Badge className="bg-blue-50 text-blue-800 border-blue-200 text-[10px] font-bold">
+                            No-Code
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Ad Fraud Defense
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          1-Click Custom Code integration for Webflow marketing sites, high-converting PPC landing pages, and lead forms.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Overview Text */}
+                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">
+                      CleanTraffic screens visitors on your Webflow landing pages using client-side hardware entropy and browser integrity verification. It stops automated bot clicks from draining your Google &amp; Meta ad spend and blocks spam submissions on Webflow forms without any code changes or visual changes to your layout.
+                    </p>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#146EF5]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          Webflow Head Code (Project Settings)
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            `<!-- CleanTraffic Webflow Landing Page Shield -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`,
+                            "Webflow Snippet"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Webflow Tag"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
+{`<!-- CleanTraffic Webflow Landing Page Shield -->
+<script src="${effectiveEndpoint}/v1/protect.js" 
+  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
+  async>
+</script>`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* 3-Step Drop-in Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      3-Step Webflow Integration:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
+                      <li>
+                        Log in to your <strong>Webflow Dashboard</strong> and click <strong>Project Settings</strong> (gear icon) on your site.
+                      </li>
+                      <li>
+                        Navigate to the <strong>Custom Code</strong> tab in the left sidebar.
+                      </li>
+                      <li>
+                        Paste the snippet above into the <strong>Head Code</strong> textarea, click <strong>Save Changes</strong>, and click <strong>Publish</strong> to all domains.
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Benefits */}
+                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Webflow Benefits</h3>
+                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
+                      <li><strong>Ad Spend Protection:</strong> Flags invalid traffic and click farms from Google Ads and Meta campaigns before they drain your budget.</li>
+                      <li><strong>Clean Form Submissions:</strong> Eliminates spam bot leads and automated CRM submissions.</li>
+                      <li><strong>Zero Layout Shifts:</strong> Executes asynchronously in the background with zero disruption to Webflow animations or styles.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 7. FRAMER STARTUP WEBSITES DETAIL PAGE */}
+              {selectedIntegration === "framer" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <FramerLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Framer Modern Startup Websites</h2>
+                          <Badge className="bg-blue-50 text-blue-800 border-blue-200 text-[10px] font-bold">
+                            1-Click
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Startup Sites
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Protect your Framer startup website, design portfolio, or product launch page from bot clicks, competitors, and scrapers.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Overview Text */}
+                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">
+                      Framer websites run as high-performance React frontends. Adding CleanTraffic into Framer&apos;s Custom Code head injects autonomous hardware identification to classify legitimate humans versus headless automated browsers.
+                    </p>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#0055FF]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          Framer Custom Code (Site Settings)
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            `<!-- CleanTraffic Framer Startup Site Shield -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`,
+                            "Framer Snippet"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Framer Tag"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
+{`<!-- CleanTraffic Framer Startup Site Shield -->
+<script src="${effectiveEndpoint}/v1/protect.js" 
+  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
+  async>
+</script>`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* 3-Step Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      3-Step Framer Integration:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
+                      <li>
+                        In Framer, open your project and click <strong>Site Settings</strong> (gear icon in the top toolbar).
+                      </li>
+                      <li>
+                        Under the <strong>General</strong> tab, scroll down to the <strong>Custom Code</strong> section.
+                      </li>
+                      <li>
+                        Paste the snippet into the <strong>Head Start</strong> box, click <strong>Save</strong>, and click <strong>Publish</strong>.
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Benefits */}
+                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Framer Benefits</h3>
+                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
+                      <li><strong>Instant Live Analytics:</strong> View visitor device entropy and bot attempts in real-time in your dashboard.</li>
+                      <li><strong>Zero Performance Degradation:</strong> Lightweight asynchronous agent never blocks visual rendering or CSS animations.</li>
+                      <li><strong>Click Fraud Prevention:</strong> Shields startup launch traffic on Product Hunt, X, and paid acquisition.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 8. WIX & SQUARESPACE DETAIL PAGE */}
+              {selectedIntegration === "wix" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <WixLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Wix &amp; Squarespace Website Builders</h2>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            No-Code
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Website Builders
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Add bot screening and hardware entropy visitor identification to Wix, Squarespace, and visual site builders.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Overview Text */}
+                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">
+                      Wix and Squarespace provide built-in Custom Code injection tools in their site dashboards. Adding CleanTraffic into your site head automatically runs client-side integrity checks on all incoming visitors across all pages.
+                    </p>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#0F172A]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          Custom Code Snippet (Head Injection)
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            `<!-- CleanTraffic Wix & Squarespace Shield -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`,
+                            "Wix & Squarespace Snippet"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Snippet"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
+{`<!-- CleanTraffic Wix & Squarespace Shield -->
+<script src="${effectiveEndpoint}/v1/protect.js" 
+  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
+  async>
+</script>`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Setup Instructions */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2">
+                      <span className="font-bold text-[#0F172A] uppercase tracking-wider block">Wix Setup:</span>
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>Go to your <strong>Wix Dashboard</strong> &gt; <strong>Settings</strong>.</li>
+                        <li>Click <strong>Custom Code</strong> in the Advanced section.</li>
+                        <li>Click <strong>+ Add Custom Code</strong>, paste the snippet, choose <strong>Head</strong> and <strong>All Pages</strong>.</li>
+                        <li>Click <strong>Apply</strong>.</li>
+                      </ol>
+                    </div>
+
+                    <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2">
+                      <span className="font-bold text-[#0F172A] uppercase tracking-wider block">Squarespace Setup:</span>
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>In Squarespace, go to <strong>Settings</strong> &gt; <strong>Developer Tools</strong>.</li>
+                        <li>Click <strong>Code Injection</strong>.</li>
+                        <li>Paste the snippet into the <strong>Header</strong> box.</li>
+                        <li>Click <strong>Save</strong> at the top.</li>
+                      </ol>
+                    </div>
+                  </div>
+
+                  {/* Benefits */}
+                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Platform Benefits</h3>
+                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
+                      <li><strong>Zero Coding:</strong> Works out of the box with standard dashboard custom code managers.</li>
+                      <li><strong>Store &amp; Booking Protection:</strong> Stops automated inventory scraping and fake bookings.</li>
+                      <li><strong>Geo &amp; VPN Detection:</strong> Enforces your security rules across all builder site pages.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 9. GOOGLE TAG MANAGER (GTM) DETAIL PAGE */}
+              {selectedIntegration === "gtm" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <GoogleTagManagerLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Google Tag Manager (GTM)</h2>
+                          <Badge className="bg-blue-50 text-blue-800 border-blue-200 text-[10px] font-bold">
+                            Tag Manager
+                          </Badge>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Zero Code Deploy
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Deploy CleanTraffic protection across any website, landing page, or multi-domain marketing campaign via GTM with zero code deployments.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Overview Text */}
+                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">
+                      If your website or landing pages already use Google Tag Manager, you can roll out CleanTraffic in under 60 seconds without redeploying your site codebase or waiting for developers.
+                    </p>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#246FDB]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          Custom HTML Tag (GTM Container)
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            `<!-- CleanTraffic Universal Protection Tag for GTM -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`,
+                            "GTM Tag"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy GTM Tag"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
+{`<!-- CleanTraffic Universal Protection Tag for GTM -->
+<script src="${effectiveEndpoint}/v1/protect.js" 
+  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
+  async>
+</script>`}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* 3-Step Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      3-Step GTM Deployment:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
+                      <li>
+                        In your <strong>Google Tag Manager Workspace</strong>, click <strong>Tags</strong> &gt; <strong>New</strong>.
+                      </li>
+                      <li>
+                        Click <strong>Tag Configuration</strong>, choose <strong>Custom HTML</strong>, and paste the code above.
+                      </li>
+                      <li>
+                        Click <strong>Triggering</strong>, choose <strong>Initialization - All Pages</strong> (or <strong>All Pages</strong>), save the tag, and click <strong>Submit</strong> to publish your container.
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Benefits */}
+                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">GTM Benefits</h3>
+                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
+                      <li><strong>Instant Multi-Domain Rollout:</strong> One tag protects all subdomains and marketing properties connected to your container.</li>
+                      <li><strong>No Engineering Deployments:</strong> Marketing teams can deploy and configure protection immediately.</li>
+                      <li><strong>Early Triggering:</strong> Initializing on &apos;Initialization - All Pages&apos; captures visitor entropy at the earliest possible stage.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* 10. HTML / REACT STATIC SITES & SDK DETAIL PAGE */}
+              {selectedIntegration === "react" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <ReactLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">HTML &amp; React Static Sites &amp; SDK</h2>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Universal Web
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            Render / Railway / S3 / Vite
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Universal client-side protection snippet and React hook for static websites, single page applications (SPAs), and custom landing pages hosted on Render, Railway, Vercel, Netlify, or AWS S3.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Overview Text */}
+                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
+                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
+                    <p className="text-xs text-[#64748B] leading-relaxed">
+                      Whether you deploy static HTML landing pages or a modern React / Vite SPA on Render or Railway, CleanTraffic provides a drop-in client tag or a React hook. It performs 100+ hardware entropy signals in the browser, identifying bots before they interact with signup buttons, login forms, or purchase flows.
                     </p>
                   </div>
 
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                     <button
-                      onClick={() => setNodeSubTab("express")}
-                      className={`text-xs font-bold pb-1.5 transition-colors ${
-                        nodeSubTab === "express"
+                      onClick={() => setReactSubTab("html")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        reactSubTab === "html"
                           ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
                           : "text-[#64748B] hover:text-[#0F172A]"
                       }`}
                     >
-                      Express.js (Node 18+)
+                      Static HTML Tag (&lt;head&gt;)
                     </button>
                     <button
-                      onClick={() => setNodeSubTab("nextjs")}
-                      className={`text-xs font-bold pb-1.5 transition-colors ${
-                        nodeSubTab === "nextjs"
+                      onClick={() => setReactSubTab("react")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        reactSubTab === "react"
                           ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
                           : "text-[#64748B] hover:text-[#0F172A]"
                       }`}
                     >
-                      Next.js Edge Middleware
-                    </button>
-                    <button
-                      onClick={() => setNodeSubTab("fastify")}
-                      className={`text-xs font-bold pb-1.5 transition-colors ${
-                        nodeSubTab === "fastify"
-                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
-                          : "text-[#64748B] hover:text-[#0F172A]"
-                      }`}
-                    >
-                      Fastify Plugin
+                      React Hook (useCleanTraffic)
                     </button>
                   </div>
 
                   {/* Code Box */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#0F172A]">
-                        {nodeSubTab === "nextjs"
-                          ? "middleware.ts (Root of Next.js Project)"
-                          : nodeSubTab === "fastify"
-                          ? "cleantrafficFastify.js"
-                          : "middleware/cleantraffic.js"}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#00D8FF]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {reactSubTab === "html" ? "index.html (<head> tag)" : "hooks/useCleanTraffic.ts"}
+                        </span>
+                      </div>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() =>
                           handleCopyCurrentCode(
-                            nodeSubTab === "nextjs"
-                              ? nextJsMiddlewareCode
-                              : nodeSubTab === "fastify"
-                              ? fastifyHookCode
-                              : nodeExpressMiddlewareCode,
-                            nodeSubTab === "nextjs"
-                              ? "Next.js Middleware"
-                              : nodeSubTab === "fastify"
-                              ? "Fastify Hook"
-                              : "Express Middleware"
+                            reactSubTab === "html"
+                              ? `<!-- CleanTraffic Universal Web Protection Tag -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`
+                              : `import { useEffect, useState } from "react";\n\nexport function useCleanTraffic() {\n  const [visitor, setVisitor] = useState(null);\n\n  useEffect(() => {\n    if (!document.getElementById("cleantraffic-agent")) {\n      const script = document.createElement("script");\n      script.id = "cleantraffic-agent";\n      script.src = "${effectiveEndpoint}/v1/protect.js";\n      script.setAttribute("data-api-key", "${apiKeyValue || "ctc_live_your_api_key_here"}");\n      script.async = true;\n      document.head.appendChild(script);\n    }\n\n    const check = setInterval(() => {\n      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {\n        clearInterval(check);\n        (window as any).CleanTraffic.get().then((res: any) => setVisitor(res));\n      }\n    }, 50);\n\n    return () => clearInterval(check);\n  }, []);\n\n  return visitor;\n}`,
+                            reactSubTab === "html" ? "HTML Tag" : "React Hook"
                           )
                         }
                         className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
@@ -1558,74 +2106,82 @@ export function UserIntegrationTab({
                     </div>
                     <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
                       <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
-                        {nodeSubTab === "nextjs"
-                          ? nextJsMiddlewareCode
-                          : nodeSubTab === "fastify"
-                          ? fastifyHookCode
-                          : nodeExpressMiddlewareCode}
+                        {reactSubTab === "html" ? (
+`<!-- CleanTraffic Universal Web Protection Tag (Place inside <head>) -->
+<script src="${effectiveEndpoint}/v1/protect.js" 
+  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
+  async>
+</script>`
+                        ) : (
+`import { useEffect, useState } from "react";
+
+// React hook for CleanTraffic visitor & device identification
+export function useCleanTraffic() {
+  const [visitor, setVisitor] = useState<{
+    visitorId?: string;
+    deviceId?: string;
+    isHuman?: boolean;
+    confidenceScore?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    // 1. Inject CleanTraffic agent if not already in document
+    if (!document.getElementById("cleantraffic-agent")) {
+      const script = document.createElement("script");
+      script.id = "cleantraffic-agent";
+      script.src = "${effectiveEndpoint}/v1/protect.js";
+      script.setAttribute("data-api-key", "${apiKeyValue || "ctc_live_your_api_key_here"}");
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    // 2. Resolve visitor hardware entropy asynchronously (Fingerprint style)
+    const check = setInterval(() => {
+      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {
+        clearInterval(check);
+        (window as any).CleanTraffic.get().then((res: any) => {
+          setVisitor(res);
+        });
+      }
+    }, 50);
+
+    return () => clearInterval(check);
+  }, []);
+
+  return visitor;
+}`
+                        )}
                       </pre>
                     </div>
                   </div>
 
-                  {/* 2-Step Drop-in Setup Instructions */}
+                  {/* Drop-in Setup Instructions */}
                   <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
                     <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
-                      Quick Drop-in Setup (Zero Dependencies):
+                      {reactSubTab === "html" ? "Static HTML Setup:" : "React App Setup:"}
                     </span>
-                    {nodeSubTab === "express" && (
-                      <div className="space-y-2 text-slate-700">
-                        <p className="text-[11px] text-[#64748B]">
-                          1. Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware/cleantraffic.js</code>.
-                        </p>
-                        <p className="text-[11px] text-[#64748B]">
-                          2. Register it in your <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">app.js</code> or <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">server.js</code>:
-                        </p>
-                        <div className="bg-[#0F172A] text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
-                          <div>const express = require('express');</div>
-                          <div>const cleanTraffic = require('./middleware/cleantraffic');</div>
-                          <div className="mt-1">const app = express();</div>
-                          <div className="text-emerald-400">app.use(cleanTraffic()); // Zero npm install needed (uses Node 18+ native fetch)</div>
-                          <div>app.get('/', (req, res) =&gt; res.send('Protected human landing page'));</div>
-                        </div>
-                      </div>
-                    )}
-                    {nodeSubTab === "nextjs" && (
-                      <div className="space-y-1 text-slate-700">
-                        <p className="text-[11px] text-[#64748B]">
-                          Save the code above as <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code> in the root folder of your Next.js project.
-                        </p>
-                        <p className="text-[11px] text-[#64748B]">
-                          Next.js and Vercel will automatically execute it on every incoming request at the edge before rendering pages or API routes.
-                        </p>
-                      </div>
-                    )}
-                    {nodeSubTab === "fastify" && (
-                      <div className="space-y-2 text-slate-700">
-                        <p className="text-[11px] text-[#64748B]">
-                          1. Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">cleantrafficFastify.js</code>.
-                        </p>
-                        <p className="text-[11px] text-[#64748B]">
-                          2. Register the plugin with your Fastify instance:
-                        </p>
-                        <div className="bg-[#0F172A] text-slate-200 p-2.5 rounded-lg font-mono text-[11px] overflow-x-auto">
-                          <div>const fastify = require('fastify')();</div>
-                          <div>const cleanTraffic = require('./cleantrafficFastify');</div>
-                          <div className="mt-1 text-emerald-400">fastify.register(cleanTraffic);</div>
-                          <div>{"fastify.get('/', async (req, reply) => ({ status: 'Welcome Human' }));"}</div>
-                        </div>
-                      </div>
+                    {reactSubTab === "html" ? (
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>Open your <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">index.html</code> file.</li>
+                        <li>Paste the tag above inside the <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">&lt;head&gt;</code> element.</li>
+                        <li>Deploy to Render, Railway, Vercel, S3, or your web host. Protection starts immediately.</li>
+                      </ol>
+                    ) : (
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/hooks/useCleanTraffic.ts</code>.</li>
+                        <li>Call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">const visitor = useCleanTraffic()</code> inside your signup page or protected component.</li>
+                        <li>Check <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">visitor?.isHuman</code> before allowing form submission.</li>
+                      </ol>
                     )}
                   </div>
 
                   {/* Benefits */}
                   <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Architecture Benefits</h3>
+                    <h3 className="text-sm font-bold text-[#0F172A]">Universal Benefits</h3>
                     <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
-                      <li><strong>Zero External Dependencies:</strong> Built with native Node 18+ <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">fetch</code> and <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">AbortSignal</code>. No <code className="text-slate-800 font-mono text-[11px]">axios</code> or <code className="text-slate-800 font-mono text-[11px]">cookie-parser</code> required.</li>
-                      <li><strong>In-Memory Verdict Caching (0ms):</strong> Server-side LRU memory cache ensures repeat page requests resolve in 0.01ms without making external network calls.</li>
-                      <li><strong>No Redirects for Human Visitors:</strong> Legitimate traffic stays on <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">https://domain.com</code> (<code className="text-slate-800 font-mono text-[11px]">next()</code>), while scrapers and bots are cut off with authentic HTTP 403/404.</li>
-                      <li><strong>Tamper-Proof Security:</strong> Protection is verified in server memory by IP, completely immune to cookie-forgery bypasses.</li>
-                      <li><strong>Fail-Open High Availability:</strong> Sub-second timeout ensures visitors are never blocked or delayed if network connectivity fluctuates.</li>
+                      <li><strong>Works Anywhere:</strong> Deploy on Render, Railway, GitHub Pages, Netlify, Vercel, S3, or custom hosting.</li>
+                      <li><strong>Zero Backend Architecture Required:</strong> Intercepts and screens bots on the frontend before any user resources are wasted.</li>
+                      <li><strong>Fingerprint-Style SDK API:</strong> Provides clean Promise-based async API <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">window.CleanTraffic.get()</code> for custom frontend checks.</li>
                     </ul>
                   </div>
                 </div>
@@ -1862,8 +2418,11 @@ export function UserIntegrationTab({
               <AgentSetupView
                 apiKeyValue={apiKeyValue || ""}
                 effectiveEndpoint={effectiveEndpoint}
-                targetStack="universal"
+                targetStack="nextjs"
+                initialDeflection={userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403")}
+                initialBotUrl={userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : ""}
                 onNavigateToLiveFeed={() => navigate("/dashboard?tab=traffic")}
+                onDeflectionChange={handleManualDeflectionChange}
               />
             </div>
           ) : (
@@ -1873,11 +2432,11 @@ export function UserIntegrationTab({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
               {[
                 { id: "all", label: "All" },
-                { id: "nocode", label: "No-Code" },
-                { id: "integrations", label: "Integrations" },
-                { id: "web", label: "Web" },
-                { id: "cms", label: "CMS" },
-                { id: "server", label: "Server" },
+                { id: "nocode", label: "Edge & No-Code" },
+                { id: "builders", label: "Website Builders" },
+                { id: "web", label: "Web Frameworks" },
+                { id: "cms", label: "E-Commerce & CMS" },
+                { id: "integrations", label: "Tag Managers" },
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -1913,11 +2472,7 @@ export function UserIntegrationTab({
                 <div
                   key={item.id}
                   onClick={() => {
-                    if (item.id === "react") setWebSubTab("sdk");
-                    else if (item.id === "javascript") setWebSubTab("inline");
-                    else if (item.id === "shopify" || item.id === "gtm") setWebSubTab("tag");
-                    else if (item.id === "nextjs") setNodeSubTab("nextjs");
-                    else if (item.id === "nodejs" || item.id === "python") setNodeSubTab("express");
+                    if (item.id === "react") setReactSubTab("html");
                     setSelectedIntegration(item.targetStack);
                   }}
                   className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between min-h-[145px]"

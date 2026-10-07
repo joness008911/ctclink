@@ -28,6 +28,8 @@ import { UserSidebar } from "@/components/user-dashboard/UserSidebar";
 import { UserOverviewTab } from "@/components/user-dashboard/UserOverviewTab";
 import { UserLiveEventsTab } from "@/components/user-dashboard/UserLiveEventsTab";
 import { UserRoutingTab } from "@/components/user-dashboard/UserRoutingTab";
+import { UserAiCrawlTab } from "@/components/user-dashboard/UserAiCrawlTab";
+import { UserSearchIndexersTab } from "@/components/user-dashboard/UserSearchIndexersTab";
 import { UserIntegrationTab } from "@/components/user-dashboard/UserIntegrationTab";
 import { UserLogsTab } from "@/components/user-dashboard/UserLogsTab";
 import { UserSimulatorTab } from "@/components/user-dashboard/UserSimulatorTab";
@@ -524,7 +526,20 @@ export default function UserDashboard() {
               complianceStatus={user?.complianceStatus || statusSummary.complianceStatus}
               statusReason={user?.statusReason || statusSummary.statusReason}
               onUpgradeClick={() => setActiveTab("settings")}
+              onNavigateToAiCrawl={() => setActiveTab("aicrawl-overview")}
+              onNavigateToSeoIndexers={() => setActiveTab("seo-indexers")}
             />
+          )}
+
+          {(activeTab === "aicrawl" || activeTab === "aicrawl-overview" || activeTab === "aicrawl-security") && (
+            <UserAiCrawlTab
+              currentSubTab={activeTab === "aicrawl-security" ? "security" : "overview"}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
+
+          {activeTab === "seo-indexers" && (
+            <UserSearchIndexersTab />
           )}
 
           {activeTab === "simulator" && (

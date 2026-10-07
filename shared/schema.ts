@@ -183,8 +183,11 @@ export const userRedirectUrls = pgTable("user_redirect_urls", {
   wildcardSubdomains: text("wildcard_subdomains").default("disabled"), // "disabled" | "enabled"
   allowVpn: boolean("allow_vpn").default(false).notNull(), // backwards-compatibility boolean
   allowSearchCrawlers: text("allow_search_crawlers").default("allow"), // "allow" | "block" (default: allow so SEO and indexing are preserved)
+  blockedSearchCrawlers: text("blocked_search_crawlers").default(""), // comma-separated search engine ids blocked by user e.g. "baidu,yandex"
   blockAiCrawlers: text("block_ai_crawlers").default("block"), // "block" | "allow" (default: block AI training scrapers)
   allowSocialPreviews: text("allow_social_previews").default("allow"), // "allow" | "block" (default: allow link preview crawlers)
+  allowedAiBots: text("allowed_ai_bots").default(""), // comma-separated operator ids allowed by user
+  customAiBots: text("custom_ai_bots").default(""), // JSON string of custom added bots
   protectionMode: text("protection_mode").default("hybrid"), // "website" | "ad_campaign" | "hybrid"
   activeAdPlatforms: text("active_ad_platforms").default("google,meta,tiktok,microsoft,x"), // comma-separated e.g. "google,meta"
   interstitialEnabled: boolean("interstitial_enabled").default(true),

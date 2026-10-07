@@ -5,20 +5,20 @@
  */
 
 // Monperrus & Curated Crawler User-Agent Patterns (Compiled Regex Array)
-const KNOWN_CRAWLER_PATTERNS: Array<{ pattern: RegExp; name: string; category: string }> = [
-  // Major Search Engine Crawlers
-  { pattern: /googlebot/i, name: "Googlebot", category: "Search Engine Crawler" },
-  { pattern: /google-inspectiontool/i, name: "Google Inspection Tool", category: "Search Engine Crawler" },
-  { pattern: /mediapartners-google/i, name: "Google Ads/AdSense Bot", category: "Ad Crawler" },
-  { pattern: /adsbot-google/i, name: "Google AdsBot", category: "Ad Crawler" },
-  { pattern: /bingbot/i, name: "Bingbot", category: "Search Engine Crawler" },
-  { pattern: /bingpreview/i, name: "Bing Preview", category: "Search Engine Crawler" },
-  { pattern: /adidxbot/i, name: "Bing AdsBot", category: "Ad Crawler" },
+const KNOWN_CRAWLER_PATTERNS: Array<{ pattern: RegExp; name: string; category: string; operatorKey?: string }> = [
+  // Major Search Engine & General Crawlers
+  { pattern: /google-inspectiontool/i, name: "Google Inspection Tool", category: "Search Engine Crawler", operatorKey: "google" },
+  { pattern: /mediapartners-google/i, name: "Google Ads/AdSense Bot", category: "Ad Crawler", operatorKey: "google" },
+  { pattern: /adsbot-google/i, name: "Google AdsBot", category: "Ad Crawler", operatorKey: "google" },
+  { pattern: /googlebot/i, name: "Googlebot", category: "Search Engine Crawler", operatorKey: "google" },
+  { pattern: /bingbot/i, name: "Bingbot", category: "Search Engine Crawler", operatorKey: "microsoft" },
+  { pattern: /bingpreview/i, name: "Bing Preview", category: "Search Engine Crawler", operatorKey: "microsoft" },
+  { pattern: /adidxbot/i, name: "Bing AdsBot", category: "Ad Crawler", operatorKey: "microsoft" },
   { pattern: /yandex(bot|images|video|media|blogs|favicons|metrika)/i, name: "Yandex Bot", category: "Search Engine Crawler" },
   { pattern: /baiduspider/i, name: "Baidu Spider", category: "Search Engine Crawler" },
-  { pattern: /duckduckbot/i, name: "DuckDuckGo Bot", category: "Search Engine Crawler" },
+  { pattern: /duckduckbot/i, name: "DuckDuckGo Bot", category: "Search Engine Crawler", operatorKey: "duckduckgo" },
   { pattern: /petalbot/i, name: "Huawei PetalBot", category: "Search Engine Crawler" },
-  { pattern: /applebot/i, name: "Applebot", category: "Search Engine Crawler" },
+  { pattern: /applebot/i, name: "Applebot", category: "AI Crawler", operatorKey: "apple" },
   { pattern: /sogou( spider| web spider| head spider)/i, name: "Sogou Spider", category: "Search Engine Crawler" },
   { pattern: /seznambot/i, name: "SeznamBot", category: "Search Engine Crawler" },
   { pattern: /naverbot|yeti/i, name: "Naver Yeti", category: "Search Engine Crawler" },
@@ -26,12 +26,12 @@ const KNOWN_CRAWLER_PATTERNS: Array<{ pattern: RegExp; name: string; category: s
   { pattern: /qwantify/i, name: "Qwantify", category: "Search Engine Crawler" },
   { pattern: /slurp/i, name: "Yahoo Slurp", category: "Search Engine Crawler" },
   { pattern: /exabot/i, name: "Exabot", category: "Search Engine Crawler" },
-  { pattern: /ia_archiver/i, name: "Alexa / Internet Archive", category: "Archiver" },
-  { pattern: /archive\.org_bot/i, name: "Wayback Machine Archive", category: "Archiver" },
+  { pattern: /ia_archiver/i, name: "Alexa / Internet Archive", category: "Archiver", operatorKey: "internet_archive" },
+  { pattern: /archive\.org_bot/i, name: "Wayback Machine Archive", category: "Archiver", operatorKey: "internet_archive" },
 
   // Social Media & Link Preview Bots
-  { pattern: /facebookexternalhit/i, name: "Facebook External Hit", category: "Social Preview Bot" },
-  { pattern: /facebot/i, name: "Facebot", category: "Social Preview Bot" },
+  { pattern: /facebookexternalhit/i, name: "Facebook External Hit", category: "Social Preview Bot", operatorKey: "meta" },
+  { pattern: /facebot/i, name: "Facebot", category: "Social Preview Bot", operatorKey: "meta" },
   { pattern: /twitterbot/i, name: "Twitterbot", category: "Social Preview Bot" },
   { pattern: /linkedinbot/i, name: "LinkedInBot", category: "Social Preview Bot" },
   { pattern: /pinterestbot|pinterest/i, name: "Pinterest Bot", category: "Social Preview Bot" },
@@ -43,20 +43,45 @@ const KNOWN_CRAWLER_PATTERNS: Array<{ pattern: RegExp; name: string; category: s
   { pattern: /skypeuripreview/i, name: "Skype URI Preview", category: "Social Preview Bot" },
   { pattern: /vkshare/i, name: "VK Share Bot", category: "Social Preview Bot" },
   { pattern: /tumblr/i, name: "Tumblr Bot", category: "Social Preview Bot" },
-  { pattern: /bytespider/i, name: "ByteDance / TikTok Spider", category: "Scraper" },
 
-  // AI & LLM Machine Learning Crawlers & Scrapers
-  { pattern: /gptbot/i, name: "ChatGPT / OpenAI GPTBot", category: "AI Crawler" },
-  { pattern: /chatgpt-user/i, name: "ChatGPT User Agent", category: "AI Crawler" },
-  { pattern: /oai-searchbot/i, name: "OpenAI SearchBot", category: "AI Crawler" },
-  { pattern: /claudebot|claude-web|anthropic-ai/i, name: "Anthropic ClaudeBot", category: "AI Crawler" },
-  { pattern: /perplexitybot/i, name: "PerplexityBot", category: "AI Crawler" },
-  { pattern: /ccbot/i, name: "Common Crawl Bot", category: "AI Crawler" },
-  { pattern: /cohere-ai/i, name: "Cohere AI Crawler", category: "AI Crawler" },
-  { pattern: /diffbot/i, name: "Diffbot AI Extractor", category: "AI Crawler" },
-  { pattern: /omgilibot/i, name: "Omgili AI Scraper", category: "AI Crawler" },
-  { pattern: /meta-externalagent/i, name: "Meta AI External Agent", category: "AI Crawler" },
-  { pattern: /google-extended/i, name: "Google-Extended (Gemini)", category: "AI Crawler" },
+  // AI & LLM Machine Learning Crawlers & Scrapers (Fine-Grained Governance)
+  { pattern: /gptbot/i, name: "ChatGPT / OpenAI GPTBot", category: "AI Crawler", operatorKey: "openai" },
+  { pattern: /chatgpt-user/i, name: "ChatGPT User Agent", category: "AI Assistant", operatorKey: "openai" },
+  { pattern: /oai-searchbot/i, name: "OpenAI SearchBot", category: "AI Search", operatorKey: "openai" },
+  { pattern: /claudebot|claude-web|anthropic-ai/i, name: "Anthropic ClaudeBot", category: "AI Crawler", operatorKey: "anthropic" },
+  { pattern: /claude-searchbot/i, name: "Claude-SearchBot", category: "AI Search", operatorKey: "anthropic" },
+  { pattern: /claude-user/i, name: "Claude-User", category: "AI Crawler", operatorKey: "anthropic" },
+  { pattern: /perplexitybot|perplexity-search/i, name: "PerplexityBot", category: "AI Search", operatorKey: "perplexity" },
+  { pattern: /perplexity-user/i, name: "Perplexity-User", category: "AI Assistant", operatorKey: "perplexity" },
+  { pattern: /bytespider/i, name: "ByteDance Bytespider", category: "AI Crawler", operatorKey: "bytedance" },
+  { pattern: /tiktok spider|tiktokspider/i, name: "TikTok Spider", category: "AI Crawler", operatorKey: "bytedance" },
+  { pattern: /ccbot/i, name: "Common Crawl Bot", category: "AI Crawler", operatorKey: "common_crawl" },
+  { pattern: /duckassistbot/i, name: "DuckDuckGo DuckAssistBot", category: "AI Assistant", operatorKey: "duckduckgo" },
+  { pattern: /amazonbot/i, name: "Amazonbot", category: "AI Crawler", operatorKey: "amazon" },
+  { pattern: /anchor browser|anchor\//i, name: "Anchor Browser", category: "AI Crawler", operatorKey: "anchor" },
+  { pattern: /arquivo-web-crawler|arquivo\.pt/i, name: "Arquivo Web Crawler", category: "Archiver", operatorKey: "arquivo" },
+  { pattern: /cloudflare-crawler|cf-crawl/i, name: "Cloudflare Crawler", category: "AI Crawler", operatorKey: "cloudflare" },
+  { pattern: /facebookbot/i, name: "FacebookBot", category: "AI Crawler", operatorKey: "meta" },
+  { pattern: /meta-externalagent/i, name: "Meta-ExternalAgent", category: "AI Crawler", operatorKey: "meta" },
+  { pattern: /meta-externalfetcher/i, name: "Meta-ExternalFetcher", category: "AI Assistant", operatorKey: "meta" },
+  { pattern: /google-cloudvertexbot/i, name: "Google-CloudVertexBot", category: "AI Crawler", operatorKey: "google" },
+  { pattern: /google-extended/i, name: "Google-Extended (Gemini)", category: "AI Crawler", operatorKey: "google" },
+  { pattern: /googleother/i, name: "GoogleOther AI Harvester", category: "AI Crawler", operatorKey: "google" },
+  { pattern: /manus bot|manus-bot/i, name: "Manus Bot", category: "AI Assistant", operatorKey: "manus" },
+  { pattern: /mistralai-user/i, name: "MistralAI-User", category: "AI Assistant", operatorKey: "mistral" },
+  { pattern: /mistralbot/i, name: "Mistral AI Bot", category: "AI Crawler", operatorKey: "mistral" },
+  { pattern: /novellum/i, name: "Novellum AI Crawl", category: "AI Crawler", operatorKey: "novellum" },
+  { pattern: /petalbot/i, name: "Huawei PetalBot", category: "AI Crawler", operatorKey: "huawei" },
+  { pattern: /proratainc|prorata/i, name: "ProRataInc", category: "AI Crawler", operatorKey: "prorata" },
+  { pattern: /terracotta bot|terracottabot/i, name: "Terracotta Bot", category: "Search Engine Crawler", operatorKey: "ceramic" },
+  { pattern: /timpibot/i, name: "Timpibot", category: "AI Crawler", operatorKey: "timpi" },
+  { pattern: /cohere-ai|cohere-training/i, name: "Cohere AI Crawler", category: "AI Crawler", operatorKey: "cohere" },
+  { pattern: /grokbot|xai-search/i, name: "xAI GrokBot", category: "AI Crawler", operatorKey: "xai" },
+  { pattern: /diffbot/i, name: "Diffbot AI Extractor", category: "AI Crawler", operatorKey: "diffbot" },
+  { pattern: /youbot/i, name: "You.com SearchBot", category: "AI Search", operatorKey: "you" },
+  { pattern: /semanticscholarbot/i, name: "Semantic Scholar Bot", category: "Archiver", operatorKey: "semanticscholar" },
+  { pattern: /omgilibot/i, name: "Omgili AI Scraper", category: "AI Crawler", operatorKey: "omgili" },
+  { pattern: /criteobot/i, name: "Criteo AI Scraper", category: "AI Crawler", operatorKey: "criteo" },
 
   // Commercial SEO, Content Scrapers & Monitoring Crawlers
   { pattern: /ahrefs(bot|siteaudit)/i, name: "AhrefsBot", category: "SEO Scraper" },
@@ -156,6 +181,7 @@ export function checkCrawlerUserAgent(userAgent: string | undefined | null): {
   isBot: boolean;
   name?: string;
   category?: string;
+  operatorKey?: string;
   crawlerType: CrawlerType;
   patternMatched?: string;
 } {
@@ -176,7 +202,12 @@ export function checkCrawlerUserAgent(userAgent: string | undefined | null): {
       let crawlerType: CrawlerType = 'malicious_bot';
       if (item.category === "Search Engine Crawler" || item.category === "Ad Crawler") {
         crawlerType = 'search_engine';
-      } else if (item.category === "AI Crawler") {
+      } else if (
+        item.category === "AI Crawler" || 
+        item.category === "AI Search" || 
+        item.category === "AI Assistant" || 
+        item.category === "Archiver"
+      ) {
         crawlerType = 'ai_crawler';
       } else if (item.category === "Social Preview Bot") {
         crawlerType = 'social_preview';
@@ -186,6 +217,7 @@ export function checkCrawlerUserAgent(userAgent: string | undefined | null): {
         isBot: true,
         name: item.name,
         category: item.category,
+        operatorKey: item.operatorKey,
         crawlerType,
         patternMatched: item.pattern.toString(),
       };

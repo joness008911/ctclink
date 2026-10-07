@@ -28,7 +28,9 @@ import {
   Clock,
   Layers,
   Megaphone,
-  Radio
+  Radio,
+  Zap,
+  ArrowRight
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,11 +78,15 @@ export const SUPPORTED_AD_PLATFORMS = [
 export function UserRoutingTab({
   isReadOnly = false,
   onUpgradeClick,
+  onNavigateToAiCrawl,
+  onNavigateToSeoIndexers,
   complianceStatus,
   statusReason,
 }: {
   isReadOnly?: boolean;
   onUpgradeClick?: () => void;
+  onNavigateToAiCrawl?: () => void;
+  onNavigateToSeoIndexers?: () => void;
   complianceStatus?: string;
   statusReason?: string | null;
 } = {}) {
@@ -331,22 +337,13 @@ export function UserRoutingTab({
   }, [countrySearch]);
 
   const handleSave = () => {
-    if (!humanUrl.trim() || !botUrl.trim()) {
-      toast({
-        title: "Missing Destination Configuration",
-        description: "Please specify both Target Offer (Human URL) and Bot Action (404, 403, or Safe URL).",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const countriesPayload = selectedCountries.length === 0 || selectedCountries.includes("ALL")
       ? "ALL"
       : selectedCountries.join(",");
 
     updateUrlsMutation.mutate({
-      humanUrl,
-      botUrl,
+      humanUrl: humanUrl || redirectUrls?.humanUrl || "https://yourdomain.com",
+      botUrl: botUrl || redirectUrls?.botUrl || "403",
       allowedCountries: countriesPayload,
       allowedDevices,
       desktopOsFilter,
@@ -1044,7 +1041,7 @@ export function UserRoutingTab({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 4: SEARCH INDEXERS & AI CRAWLER MANAGEMENT
+          SECTION 4: SEARCH INDEXERS & SOCIAL LINK PREVIEWS
       ───────────────────────────────────────────────────────────── */}
       <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
         <div className="flex items-center gap-2.5 border-b border-[#E5EAE7] pb-3.5">
@@ -1053,15 +1050,15 @@ export function UserRoutingTab({
           </div>
           <div>
             <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-              Search Indexers & AI Crawler Management
+              Search Indexers & Social Link Previews
             </h3>
             <p className="text-xs text-[#64748B]">
-              Distinguish legitimate search engines and social link previews from automated scrapers, bad bots, and AI training harvesters
+              Permit legitimate search engines for organic SEO indexation and social networks for rich Open Graph link previews
             </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Rule 1: Search Engine Crawlers */}
           <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex flex-col justify-between space-y-4">
             <div className="space-y-2">
@@ -1089,7 +1086,18 @@ export function UserRoutingTab({
             </div>
 
             <div className="pt-2 border-t border-[#E0E9E4] flex items-center justify-between">
-              <span className="text-xs font-medium text-[#2D3B35]">SEO Crawler Policy</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium text-[#2D3B35]">SEO Crawler Policy</span>
+                {onNavigateToSeoIndexers && (
+                  <button
+                    type="button"
+                    onClick={onNavigateToSeoIndexers}
+                    className="text-[11px] font-bold text-[#0A5C48] hover:underline flex items-center gap-0.5 cursor-pointer"
+                  >
+                    Manage Indexers &rarr;
+                  </button>
+                )}
+              </div>
               <div className="inline-flex rounded-lg border border-[#D5DFD9] bg-white p-0.5 shadow-2xs">
                 <button
                   type="button"
@@ -1117,62 +1125,7 @@ export function UserRoutingTab({
             </div>
           </div>
 
-          {/* Rule 2: AI & LLM Training Scrapers */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex flex-col justify-between space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 flex items-center justify-center">
-                    <Sparkles className="h-3.5 w-3.5" />
-                  </div>
-                  <h4 className="text-xs font-bold text-[#0F172A]">AI & LLM Scrapers</h4>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  blockAiCrawlers === "block"
-                    ? "bg-purple-50 text-purple-700 border-purple-200"
-                    : "bg-amber-50 text-amber-700 border-amber-200"
-                }`}>
-                  {blockAiCrawlers === "block" ? "Protected (Blocked)" : "Permitted"}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                Prevents AI models and web datasets from harvesting your content, copy, and competitive intelligence for model training.
-              </p>
-              <div className="text-[10px] font-mono text-purple-700 bg-purple-50/60 px-2 py-1 rounded border border-purple-200">
-                GPTBot, ClaudeBot, CCBot, PerplexityBot, Bytespider
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-[#E0E9E4] flex items-center justify-between">
-              <span className="text-xs font-medium text-[#2D3B35]">AI Scraper Policy</span>
-              <div className="inline-flex rounded-lg border border-[#D5DFD9] bg-white p-0.5 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setBlockAiCrawlers("block")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    blockAiCrawlers === "block"
-                      ? "bg-purple-700 text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Block AI
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBlockAiCrawlers("allow")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    blockAiCrawlers === "allow"
-                      ? "bg-amber-600 text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Allow AI
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Rule 3: Social Media Link Previews */}
+          {/* Rule 2: Social Media Link Previews */}
           <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex flex-col justify-between space-y-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1241,144 +1194,33 @@ export function UserRoutingTab({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 5: DESTINATION ENDPOINTS (HUMAN URL & BOT / ERROR ACTION)
+          INTEGRATION & DEFLECTION CONFIGURATION LINK
       ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
-        <div className="flex items-center gap-2.5 border-b border-[#E5EAE7] pb-3.5">
-          <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
-            <LinkIcon className="h-4 w-4" />
+      <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4.5 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[#F25A2A] shadow-2xs">
+            <Zap className="h-4 w-4" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-              Traffic Destinations & Bot Deflection Controls
-            </h3>
-            <p className="text-xs text-[#64748B]">
-              Define destination addresses for verified human visitors, and choose an error page or URL for blocked traffic
+            <h4 className="text-xs font-bold text-[#0F172A]">Bot Deflection &amp; Target Architecture</h4>
+            <p className="text-[11px] text-[#64748B]">
+              Configure your edge deflection action (403, 404, or Fallback Redirect) and view framework integration code under the Integration tab.
             </p>
           </div>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Target Offer (Human URL) */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] border border-[#CCE5DB] text-[#0A5C48] flex items-center justify-center">
-                  <Users className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-[#0F172A]">Target Destination (Human Visitors)</h4>
-                  <p className="text-[11px] text-[#64748B]">Approved users passing country, device & VPN rules</p>
-                </div>
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-[#E6F2ED] text-[#07382D] border border-[#CCE5DB]">
-                Target Page
-              </span>
-            </div>
-
-            <div className="space-y-1.5 pt-1">
-              <Input
-                type="url"
-                value={humanUrl}
-                onChange={(e) => setHumanUrl(e.target.value)}
-                placeholder="https://myoffer.com/landing-page"
-                className="bg-white border-[#D5DFD9] text-xs font-mono text-[#0F172A] h-10 placeholder:text-[#94A3B8] focus:border-[#0A5C48] focus:ring-1 focus:ring-[#0A5C48]"
-              />
-              <p className="text-[11px] text-[#64748B]">
-                Query parameters and tracking tokens are forwarded automatically.
-              </p>
-            </div>
-          </div>
-
-          {/* Threat Fallback & Bot Action */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center">
-                  <Bot className="h-4 w-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-[#0F172A]">Bot & Filtered Traffic Action</h4>
-                  <p className="text-[11px] text-[#64748B]">Enter 404, 403, or a Fallback / Block Page URL</p>
-                </div>
-              </div>
-              {isBot404 ? (
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
-                  HTTP 404 NOT FOUND
-                </span>
-              ) : isBot403 ? (
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
-                  HTTP 403 FORBIDDEN
-                </span>
-              ) : isBotUrl ? (
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                  FALLBACK REDIRECT URL
-                </span>
-              ) : (
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                  BOT ACTION
-                </span>
-              )}
-            </div>
-
-            {/* Quick Action Presets (404, 403, URL) */}
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setBotUrl("404")}
-                className={`text-[11px] font-bold px-2.5 py-1 rounded-md border transition-all ${
-                  isBot404
-                    ? "bg-rose-50 text-rose-700 border-rose-300"
-                    : "bg-white text-[#64748B] border-[#D5DFD9] hover:text-[#0F172A] hover:border-[#82928A]"
-                }`}
-              >
-                404 Not Found
-              </button>
-              <button
-                type="button"
-                onClick={() => setBotUrl("403")}
-                className={`text-[11px] font-bold px-2.5 py-1 rounded-md border transition-all ${
-                  isBot403
-                    ? "bg-amber-50 text-amber-700 border-amber-300"
-                    : "bg-white text-[#64748B] border-[#D5DFD9] hover:text-[#0F172A] hover:border-[#82928A]"
-                }`}
-              >
-                403 Forbidden
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (isBot404 || isBot403 || !botUrl) {
-                    setBotUrl("https://");
-                  }
-                }}
-                className={`text-[11px] font-bold px-2.5 py-1 rounded-md border transition-all ${
-                  isBotUrl
-                    ? "bg-blue-50 text-blue-700 border-blue-300"
-                    : "bg-white text-[#64748B] border-[#D5DFD9] hover:text-[#0F172A] hover:border-[#82928A]"
-                }`}
-              >
-                Custom Safe URL
-              </button>
-            </div>
-
-            <div className="space-y-1.5 pt-1">
-              <Input
-                type="text"
-                value={botUrl}
-                onChange={(e) => setBotUrl(e.target.value)}
-                placeholder="Enter 404, 403, or https://example.com/safe"
-                className="bg-white border-[#D5DFD9] text-xs font-mono text-[#0F172A] h-10 placeholder:text-[#94A3B8] focus:border-[#0A5C48] focus:ring-1 focus:ring-[#0A5C48]"
-              />
-              <p className="text-[11px] text-[#64748B]">
-                {isBot404 && "Visitors failing checks will see your server's native 404 Not Found error page."}
-                {isBot403 && "Visitors failing checks will see your server's native 403 Forbidden error page."}
-                {isBotUrl && "Visitors failing checks will be seamlessly redirected to your Safe Landing URL."}
-                {!isBot404 && !isBot403 && !isBotUrl && "Enter 404 or 403 to block bots with an error page, or a full URL (https://…) to send them elsewhere."}
-              </p>
-            </div>
-          </div>
-        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            const tabsTrigger = document.querySelector('[value="integrations"]') as HTMLElement;
+            if (tabsTrigger) tabsTrigger.click();
+          }}
+          className="text-xs font-bold text-[#0A5C48] border-[#CCE5DB] hover:bg-[#EBF5F1] h-8"
+        >
+          <span>Configure in Integrations</span>
+          <ArrowRight className="h-3 w-3 ml-1" />
+        </Button>
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
