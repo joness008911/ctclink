@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { format, isToday, subDays, subHours } from "date-fns";
 import { 
   FileText, 
@@ -406,6 +406,29 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
   const [dateDropdownOpen, setDateDropdownOpen] = useState(false);
   const [displayDropdownOpen, setDisplayDropdownOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
+  const dateRef = useRef<HTMLDivElement>(null);
+  const displayRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdowns on click outside (beside or around modal)
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(event.target as Node)) {
+        setFilterDropdownOpen(false);
+      }
+      if (dateRef.current && !dateRef.current.contains(event.target as Node)) {
+        setDateDropdownOpen(false);
+      }
+      if (displayRef.current && !displayRef.current.contains(event.target as Node)) {
+        setDisplayDropdownOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
   const [itemsPerPage, setItemsPerPage] = useState(20);
   const [visibleColumns, setVisibleColumns] = useState({
     deviceId: true,
@@ -668,11 +691,11 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
           </div>
         </div>
 
-        {/* 2. Controls Toolbar (Matching Screenshot 1 & 2 with [Filters] and [Today] popovers) */}
+        {/* 2. Controls Toolbar with clean [Filters] and [Today] popovers */}
         <div className="px-4 py-3 bg-[#F8FAFC] border-b border-[#E2E8F0] flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* [ Filters ] Button with Dropdown (Matching Screenshot 1: 130934.png) */}
-            <div className="relative">
+            {/* [ Filters ] Button with Dropdown Modal */}
+            <div className="relative" ref={filterRef}>
               <button
                 type="button"
                 onClick={() => {
@@ -693,9 +716,21 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                 )}
               </button>
 
-              {/* Filter Dropdown Menu */}
+              {/* Filter Dropdown Modal with Header, Close & Cancel */}
               {filterDropdownOpen && (
-                <div className="absolute left-0 top-full mt-1.5 w-72 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-2.5 space-y-2">
+                <div className="absolute left-0 top-full mt-1.5 w-72 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                    <span className="text-xs font-bold text-slate-900">Filters</span>
+                    <button
+                      type="button"
+                      onClick={() => setFilterDropdownOpen(false)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors"
+                      title="Close"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
                   <div className="relative">
                     <Search className="h-3.5 w-3.5 absolute left-2.5 top-2.5 text-slate-400" />
                     <Input
@@ -759,8 +794,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                     ))}
                   </div>
 
-                  {(searchTerm || filterType !== "all" || trafficFilter !== "all") && (
-                    <div className="pt-1 border-t border-slate-100">
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                    {(searchTerm || filterType !== "all" || trafficFilter !== "all") ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -769,18 +804,25 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                           setTrafficFilter("all");
                           setCurrentPage(1);
                         }}
-                        className="w-full text-center py-1.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 rounded-md"
+                        className="text-[11px] font-semibold text-rose-600 hover:underline"
                       >
-                        Reset All Filters
+                        Reset All
                       </button>
-                    </div>
-                  )}
+                    ) : <span />}
+                    <button
+                      type="button"
+                      onClick={() => setFilterDropdownOpen(false)}
+                      className="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* [ Today ] Date Button with Dropdown (Matching Screenshot 1 & 2) */}
-            <div className="relative">
+            {/* [ Today ] Date Button with Dropdown */}
+            <div className="relative" ref={dateRef}>
               <button
                 type="button"
                 onClick={() => {
@@ -808,7 +850,18 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
               </button>
 
               {dateDropdownOpen && (
-                <div className="absolute left-0 top-full mt-1.5 w-48 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-1.5 space-y-1">
+                <div className="absolute left-0 top-full mt-1.5 w-48 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-2 space-y-1">
+                  <div className="flex items-center justify-between pb-1.5 px-1 border-b border-slate-100 mb-1">
+                    <span className="text-xs font-bold text-slate-900">Date Range</span>
+                    <button
+                      type="button"
+                      onClick={() => setDateDropdownOpen(false)}
+                      className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors"
+                      title="Close"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
                   {(
                     [
                       { id: "all", label: "All Time" },
@@ -854,55 +907,6 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Quick Attribution Filter Chips for 1-click convenience */}
-            <div className="flex items-center gap-1 border-l border-slate-200 pl-2 flex-wrap">
-              <button
-                type="button"
-                onClick={() => { setTrafficFilter("all"); setCurrentPage(1); }}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  trafficFilter === "all" ? "bg-slate-900 text-white font-bold" : "text-slate-600 hover:bg-slate-200/60"
-                }`}
-              >
-                All Sources
-              </button>
-              <button
-                type="button"
-                onClick={() => { setTrafficFilter("paid"); setCurrentPage(1); }}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  trafficFilter === "paid" ? "bg-blue-600 text-white font-bold" : "text-blue-700 hover:bg-blue-50"
-                }`}
-              >
-                🎯 Paid Ads
-              </button>
-              <button
-                type="button"
-                onClick={() => { setTrafficFilter("organic"); setCurrentPage(1); }}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  trafficFilter === "organic" ? "bg-teal-700 text-white font-bold" : "text-teal-800 hover:bg-teal-50"
-                }`}
-              >
-                🌿 Organic
-              </button>
-              <button
-                type="button"
-                onClick={() => { setTrafficFilter("reviewer"); setCurrentPage(1); }}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  trafficFilter === "reviewer" ? "bg-indigo-600 text-white font-bold" : "text-indigo-700 hover:bg-indigo-50"
-                }`}
-              >
-                🛡️ Reviewers
-              </button>
-              <button
-                type="button"
-                onClick={() => { setTrafficFilter("spoofed"); setCurrentPage(1); }}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  trafficFilter === "spoofed" ? "bg-rose-600 text-white font-bold" : "text-rose-700 hover:bg-rose-50"
-                }`}
-              >
-                🚨 Spoofed
-              </button>
             </div>
           </div>
 
@@ -968,7 +972,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
           </div>
 
           {/* [ Display ] Column Customization Dropdown (Screenshot 3: 130738.png) */}
-          <div className="relative">
+          <div className="relative" ref={displayRef}>
             <button
               type="button"
               onClick={() => {
@@ -983,9 +987,17 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
             </button>
 
             {displayDropdownOpen && (
-              <div className="absolute right-0 top-full mt-1.5 w-56 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-2 space-y-1 max-h-72 overflow-y-auto">
-                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
-                  Toggle Columns
+              <div className="absolute right-0 top-full mt-1.5 w-60 bg-white rounded-xl shadow-lg border border-slate-200 z-50 p-2.5 space-y-1 max-h-80 overflow-y-auto">
+                <div className="flex items-center justify-between pb-1.5 px-1 border-b border-slate-100 mb-1">
+                  <span className="text-xs font-bold text-slate-900">Toggle Columns</span>
+                  <button
+                    type="button"
+                    onClick={() => setDisplayDropdownOpen(false)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-slate-100 transition-colors"
+                    title="Close"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 {[
                   { key: "deviceId", label: "Device ID" },
@@ -1015,6 +1027,16 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                     )}
                   </button>
                 ))}
+
+                <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setDisplayDropdownOpen(false)}
+                    className="px-2.5 py-1 text-xs font-semibold rounded-md border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors"
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1045,6 +1067,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
               {paginatedData.map((c, i) => {
                 const isHuman = c.visitorType === "Human";
                 const methodStr = (c.detectionMethod || "").toLowerCase();
+                const connTypeStr = (c.connectionType || "").toLowerCase();
                 const usageType = (c.usageType || "").toUpperCase();
 
                 const isIpBlocklist = Boolean(
@@ -1055,8 +1078,14 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
                 const isResProxy = Boolean(
                   c.isResidentialProxy ||
+                  (c.clientSignals as any)?.isResidentialProxy ||
+                  (c.clientSignals as any)?.proxyData?.is_residential_proxy ||
                   methodStr.includes("residential proxy") ||
-                  methodStr.includes("scraping pool")
+                  methodStr.includes("scraping pool") ||
+                  connTypeStr.includes("residential proxy") ||
+                  connTypeStr.includes("proxy anonymizer") ||
+                  (connTypeStr.includes("proxy") && !connTypeStr.includes("vpn")) ||
+                  (methodStr.includes("proxy") && !methodStr.includes("vpn"))
                 );
 
                 const isAiBot = Boolean(
@@ -1077,6 +1106,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
                 const isBadBot = !isGoodBot && Boolean(
                   !isHuman ||
+                  c.action === "Blocked" ||
                   methodStr.includes("crawler") ||
                   methodStr.includes("scraper") ||
                   methodStr.includes("bot signature") ||
@@ -1088,22 +1118,33 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
                 const isVpn = Boolean(
                   c.isVpn ||
+                  (c.clientSignals as any)?.isVpn ||
+                  (c.clientSignals as any)?.proxyData?.is_vpn ||
                   usageType === "VPN" ||
-                  methodStr.includes("vpn")
+                  methodStr.includes("vpn") ||
+                  connTypeStr.includes("vpn")
                 );
 
                 const isTor = Boolean(
                   c.isTor ||
+                  (c.clientSignals as any)?.isTor ||
+                  (c.clientSignals as any)?.proxyData?.is_tor ||
                   usageType === "TOR" ||
-                  methodStr.includes("tor")
+                  methodStr.includes("tor") ||
+                  connTypeStr.includes("tor")
                 );
 
                 const isDch = Boolean(
                   c.isDatacenter ||
+                  (c.clientSignals as any)?.isDatacenter ||
+                  (c.clientSignals as any)?.proxyData?.is_data_center ||
                   usageType === "DCH" ||
                   methodStr.includes("datacenter") ||
                   methodStr.includes("dch") ||
-                  methodStr.includes("cloud")
+                  methodStr.includes("cloud") ||
+                  connTypeStr.includes("datacenter") ||
+                  connTypeStr.includes("dch") ||
+                  connTypeStr.includes("cloud")
                 );
 
                 const isPolicyFilter = !isHuman && Boolean(
@@ -1164,8 +1205,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                 const resolvedDeviceId = c.deviceId || `dev_srv_${(c.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
                 const resolvedVisitorId = c.visitorId || `vis_${(resolvedDeviceId.replace(/^dev_(hw_|srv_)?/, "") || c.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
 
-                // Suspect Score: High for blocked/bots (0.85 - 0.98), Low for clean humans (0.02 - 0.08)
-                const suspectScoreFormatted = (threat.score / 100).toFixed(2);
+                // Suspect Score: 0 - 100 integer score (e.g. 6 for clean human, 78 for proxy, 97 for headless bot)
+                const suspectScoreValue = Math.round(threat.score);
 
                 // Forensic OS & Browser Resolution
                 const osInfo = getVisitorOS(c);
@@ -1272,12 +1313,12 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       </td>
                     )}
 
-                    {/* 7. Suspect Score (0.00 - 1.00) with colored dot */}
+                    {/* 7. Suspect Score (0 - 100) with colored dot */}
                     {visibleColumns.suspectScore && (
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-mono font-bold bg-white shadow-2xs">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md border text-[11px] font-mono font-bold bg-white shadow-2xs">
                           <span className={`w-1.5 h-1.5 rounded-full ${threat.dotClass}`} />
-                          <span className="text-slate-900">{suspectScoreFormatted}</span>
+                          <span className="text-slate-900">{suspectScoreValue}</span>
                         </div>
                       </td>
                     )}
@@ -1287,10 +1328,10 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       <td className="py-3 px-4 whitespace-nowrap">
                         {isIpBlocklist ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                            Listed
+                            Yes
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}
@@ -1300,10 +1341,10 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       <td className="py-3 px-4 whitespace-nowrap">
                         {isResProxy ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                            Detected
+                            Yes
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}
@@ -1311,20 +1352,12 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                     {/* 10. Bot */}
                     {visibleColumns.bot && (
                       <td className="py-3 px-4 whitespace-nowrap">
-                        {isAiBot ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                            AI Scraper
-                          </span>
-                        ) : isGoodBot ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            Good Bot
-                          </span>
-                        ) : isBadBot ? (
+                        {(!isHuman || isBadBot || isAiBot) ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                            Bad Bot
+                            Yes
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}
@@ -1334,10 +1367,10 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       <td className="py-3 px-4 whitespace-nowrap">
                         {isVpn ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                            VPN
+                            Yes
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}
@@ -1347,10 +1380,10 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       <td className="py-3 px-4 whitespace-nowrap">
                         {isTor ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                            Tor Exit
+                            Yes
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}
@@ -1363,7 +1396,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                             DCH
                           </span>
                         ) : (
-                          <span className="text-slate-300 font-mono text-xs">—</span>
+                          <span className="text-slate-500 font-medium text-xs">No</span>
                         )}
                       </td>
                     )}

@@ -44,6 +44,11 @@ export interface SecurityEventPayload {
   connectionType?: string;
   usageType?: string;
   riskScore?: number;
+  isVpn?: boolean;
+  isTor?: boolean;
+  isResidentialProxy?: boolean;
+  isDatacenter?: boolean;
+  isBlocklisted?: boolean;
   trafficType?: string;
   adNetwork?: string | null;
   clickToken?: string | null;

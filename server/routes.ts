@@ -2739,6 +2739,49 @@ Disallow: /*`);
           timelineEvents: c.timelineEvents || null,
           riskScore: c.riskScore ?? null,
           usageType: c.usageType || null,
+          isVpn: Boolean(
+            (c as any).isVpn ||
+            (c.clientSignals as any)?.isVpn ||
+            (c.clientSignals as any)?.proxyData?.is_vpn ||
+            c.connectionType?.toLowerCase().includes('vpn') ||
+            c.detectionMethod?.toLowerCase().includes('vpn') ||
+            c.usageType === 'VPN'
+          ),
+          isTor: Boolean(
+            (c as any).isTor ||
+            (c.clientSignals as any)?.isTor ||
+            (c.clientSignals as any)?.proxyData?.is_tor ||
+            c.connectionType?.toLowerCase().includes('tor') ||
+            c.detectionMethod?.toLowerCase().includes('tor') ||
+            c.usageType === 'TOR'
+          ),
+          isResidentialProxy: Boolean(
+            (c as any).isResidentialProxy ||
+            (c.clientSignals as any)?.isResidentialProxy ||
+            (c.clientSignals as any)?.proxyData?.is_residential_proxy ||
+            c.connectionType?.toLowerCase().includes('residential proxy') ||
+            c.connectionType?.toLowerCase().includes('proxy anonymizer') ||
+            c.connectionType?.toLowerCase().includes('proxy') ||
+            c.detectionMethod?.toLowerCase().includes('proxy') ||
+            c.detectionMethod?.toLowerCase().includes('scraping pool')
+          ),
+          isDatacenter: Boolean(
+            (c as any).isDatacenter ||
+            (c.clientSignals as any)?.isDatacenter ||
+            (c.clientSignals as any)?.proxyData?.is_data_center ||
+            c.usageType === 'DCH' ||
+            c.connectionType?.toLowerCase().includes('datacenter') ||
+            c.connectionType?.toLowerCase().includes('dch') ||
+            c.connectionType?.toLowerCase().includes('cloud') ||
+            c.detectionMethod?.toLowerCase().includes('datacenter') ||
+            c.detectionMethod?.toLowerCase().includes('dch') ||
+            c.detectionMethod?.toLowerCase().includes('cloud')
+          ),
+          isBlocklisted: Boolean(
+            (c as any).isBlocklisted ||
+            c.detectionMethod?.toLowerCase().includes('blocklist') ||
+            c.detectionMethod?.toLowerCase().includes('cidr')
+          ),
           apiKeyId: user.apiKeyId,
           adNetwork: c.adNetwork || null,
           clickToken: c.clickToken || null,
@@ -6101,6 +6144,11 @@ Disallow: /*`);
         platformArchitecture: osInfo.name ? `${osInfo.name} ${osInfo.version || ''}`.trim() : (deviceType === 'mobile' ? "iOS / Android Mobile" : "Windows / macOS"),
         browserEngine: browserInfo.name ? `${browserInfo.name} ${browserInfo.version || ''}`.trim() : (userAgent.includes("Chrome") ? "Chrome Chromium" : "Standard Browser Engine"),
         isBrave: Boolean(isBrave),
+        proxyData: classificationData.proxy_data || null,
+        isVpn: Boolean(classificationData.proxy_data?.is_vpn),
+        isTor: Boolean(classificationData.proxy_data?.is_tor),
+        isResidentialProxy: Boolean(classificationData.proxy_data?.is_residential_proxy),
+        isDatacenter: Boolean(classificationData.proxy_data?.is_data_center || classificationData.usage_type === 'DCH'),
       };
 
       const requestHeaders = {
@@ -6227,6 +6275,11 @@ Disallow: /*`);
                 connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
                 usageType: classificationData.usage_type || '',
                 riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 88),
+                isVpn: Boolean(classificationData.proxy_data?.is_vpn || classificationData.connection_type?.includes('VPN')),
+                isTor: Boolean(classificationData.proxy_data?.is_tor || classificationData.connection_type?.includes('Tor')),
+                isResidentialProxy: Boolean(classificationData.proxy_data?.is_residential_proxy || classificationData.connection_type?.includes('Proxy')),
+                isDatacenter: Boolean(classificationData.proxy_data?.is_data_center || classificationData.usage_type === 'DCH' || classificationData.connection_type?.includes('Datacenter')),
+                isBlocklisted: Boolean(detectionMethod === 'IP Blocklist' || detectionMethod === 'CIDR Blocklist'),
                 trafficType: trafficType,
                 adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
                 clickToken: adClickInfo.clickToken || null,

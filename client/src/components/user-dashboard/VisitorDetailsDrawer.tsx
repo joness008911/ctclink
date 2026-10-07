@@ -68,21 +68,25 @@ export function VisitorDetailsDrawer({
   const lastSeen = visitor.lastSeen ? new Date(visitor.lastSeen) : null;
   const timestamp = visitor.timestamp ? new Date(visitor.timestamp) : new Date();
 
+  const methodStr = (detectionMethod || "").toLowerCase();
+  const connTypeStr = (visitor.connectionType || "").toLowerCase();
+  const usageType = (visitor.usageType || "").toUpperCase();
+
   // Categorize detection type for accurate verdict, scoring, and telemetry
-  const isDeviceRestricted = detectionMethod.toLowerCase().includes("device restricted");
-  const isOsRestricted = detectionMethod.toLowerCase().includes("os restricted");
-  const isGeoRestricted = detectionMethod.toLowerCase().includes("geo") || detectionMethod.toLowerCase().includes("country");
-  const isTor = detectionMethod.toLowerCase().includes("tor");
-  const isVpn = detectionMethod.toLowerCase().includes("vpn");
-  const isProxy = detectionMethod.toLowerCase().includes("proxy");
-  const isDatacenter = detectionMethod.toLowerCase().includes("datacenter") || detectionMethod.toLowerCase().includes("dch") || detectionMethod.toLowerCase().includes("cloud");
-  const isRateLimit = detectionMethod.toLowerCase().includes("rate limit") || detectionMethod.toLowerCase().includes("subscription") || detectionMethod.toLowerCase().includes("auth");
-  const isIpBlocklist = detectionMethod.toLowerCase().includes("blocklist") || detectionMethod.toLowerCase().includes("cidr");
-  const isBotCrawler = detectionMethod.toLowerCase().includes("crawler") || detectionMethod.toLowerCase().includes("bot") || detectionMethod.toLowerCase().includes("synthetic") || detectionMethod.toLowerCase().includes("header");
-  const isBotnet = detectionMethod.toLowerCase().includes("botnet") || detectionMethod.toLowerCase().includes("scanner") || detectionMethod.toLowerCase().includes("spammer") || detectionMethod.toLowerCase().includes("bogon");
-  const isResidentialProxyPool = detectionMethod.toLowerCase().includes("residential proxy") || detectionMethod.toLowerCase().includes("scraping pool");
-  const isConsumerPrivacy = detectionMethod.toLowerCase().includes("consumer privacy") || detectionMethod.toLowerCase().includes("relay");
-  const isVerifiedConsumerVpn = detectionMethod.toLowerCase().includes("verified consumer vpn") || detectionMethod.toLowerCase().includes("clean consumer vpn");
+  const isDeviceRestricted = methodStr.includes("device restricted");
+  const isOsRestricted = methodStr.includes("os restricted");
+  const isGeoRestricted = methodStr.includes("geo") || methodStr.includes("country");
+  const isTor = Boolean(visitor.isTor || (visitor.clientSignals as any)?.isTor || methodStr.includes("tor") || connTypeStr.includes("tor") || usageType === "TOR");
+  const isVpn = Boolean(visitor.isVpn || (visitor.clientSignals as any)?.isVpn || methodStr.includes("vpn") || connTypeStr.includes("vpn") || usageType === "VPN");
+  const isProxy = Boolean(visitor.isResidentialProxy || (visitor.clientSignals as any)?.isResidentialProxy || methodStr.includes("proxy") || connTypeStr.includes("proxy"));
+  const isDatacenter = Boolean(visitor.isDatacenter || (visitor.clientSignals as any)?.isDatacenter || methodStr.includes("datacenter") || methodStr.includes("dch") || methodStr.includes("cloud") || connTypeStr.includes("datacenter") || connTypeStr.includes("dch") || connTypeStr.includes("cloud") || usageType === "DCH");
+  const isRateLimit = methodStr.includes("rate limit") || methodStr.includes("subscription") || methodStr.includes("auth");
+  const isIpBlocklist = Boolean(visitor.isBlocklisted || methodStr.includes("blocklist") || methodStr.includes("cidr"));
+  const isBotCrawler = methodStr.includes("crawler") || methodStr.includes("bot") || methodStr.includes("synthetic") || methodStr.includes("header");
+  const isBotnet = methodStr.includes("botnet") || methodStr.includes("scanner") || methodStr.includes("spammer") || methodStr.includes("bogon");
+  const isResidentialProxyPool = Boolean(visitor.isResidentialProxy || (visitor.clientSignals as any)?.isResidentialProxy || methodStr.includes("residential proxy") || methodStr.includes("scraping pool") || connTypeStr.includes("proxy"));
+  const isConsumerPrivacy = methodStr.includes("consumer privacy") || methodStr.includes("relay");
+  const isVerifiedConsumerVpn = methodStr.includes("verified consumer vpn") || methodStr.includes("clean consumer vpn");
   const isSpoofed = Boolean(
     visitor.trafficType === "spoofed_ad_bot" ||
     visitor.adTraffic?.isSpoofed ||
