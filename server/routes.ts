@@ -24,6 +24,7 @@ import {
 import { cleanTrafficGuard } from "./cleanTrafficGuard";
 import { synthesizeDeviceId } from "./deviceId";
 import { deviceTracker } from "./deviceTracker";
+import { evaluateVisitorRules } from "@shared/rulesEngine";
 
 // Session & idle timeout configuration
 export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
@@ -2528,6 +2529,8 @@ Disallow: /*`);
         allowSocialPreviews,
         allowedAiBots,
         customAiBots,
+        rulesetsConfig,
+        rulesets,
         protectionMode,
         activeAdPlatforms,
         interstitialThemeId,
@@ -2672,6 +2675,7 @@ Disallow: /*`);
         allowSocialPreviews: formattedAllowSocialPreviews,
         allowedAiBots: typeof allowedAiBots === "string" ? allowedAiBots.trim() : undefined,
         customAiBots: typeof customAiBots === "string" ? customAiBots.trim() : undefined,
+        rulesetsConfig: typeof rulesetsConfig === "string" ? rulesetsConfig : (rulesets ? JSON.stringify(rulesets) : undefined),
         protectionMode: formattedProtectionMode,
         activeAdPlatforms: formattedActiveAdPlatforms,
         interstitialThemeId: typeof interstitialThemeId === "string" ? interstitialThemeId.trim() : undefined,
@@ -5500,6 +5504,7 @@ Disallow: /*`);
       let ownerAllowSocialPreviews: string = "allow";
       let ownerProtectionMode: string = "hybrid";
       let ownerActiveAdPlatforms: string[] = ["google", "meta", "tiktok", "microsoft", "x"];
+      let ownerRulesets: any[] = [];
 
       if (apiKeyId) {
         try {
@@ -5544,6 +5549,17 @@ Disallow: /*`);
                     .filter(Boolean);
                 }
               }
+
+              if (redirectUrls.rulesetsConfig) {
+                try {
+                  const parsed = JSON.parse(redirectUrls.rulesetsConfig);
+                  if (Array.isArray(parsed)) {
+                    ownerRulesets = parsed;
+                  }
+                } catch (rsErr) {
+                  console.error("Error parsing rulesetsConfig:", rsErr);
+                }
+              }
             }
           }
         } catch (urlErr) {
@@ -5557,6 +5573,7 @@ Disallow: /*`);
       let detectionMethod = 'IP Analysis';
       let blockReason = '';
       let isVerifiedAdReviewer = false;
+      let isAllowedCrawler = false;
       let adReviewerDetails: any = null;
 
       try {
@@ -5614,7 +5631,7 @@ Disallow: /*`);
         
         // TIER 1: MONPERRUS CRAWLER DATABASE & BAD BOT SIGNATURES (Pre-database check)
         const crawlerCheck = checkCrawlerUserAgent(userAgent);
-        let isAllowedCrawler = isVerifiedAdReviewer;
+        isAllowedCrawler = isVerifiedAdReviewer;
         if (visitorType !== 'Bot' && !isVerifiedAdReviewer && crawlerCheck.isBot) {
           if (crawlerCheck.crawlerType === 'search_engine') {
             const blockedSearchList = (ownerBlockedSearchCrawlers || "")
@@ -6105,6 +6122,46 @@ Disallow: /*`);
         }
       } catch (e) {}
 
+      // Evaluate custom no-code rulesets if configured by user
+      let matchedRule: any = null;
+      if (ownerRulesets && ownerRulesets.length > 0 && !isAllowedCrawler && !isVerifiedAdReviewer) {
+        const clientCountry = classificationData?.country_code || '';
+        const clientIsp = classificationData?.isp || '';
+        const clientUsage = classificationData?.usage_type || '';
+        const isVpnDetected = clientUsage === 'VPN' || Boolean(classificationData?.proxy_data?.is_vpn);
+        const isDchDetected = clientUsage === 'DCH' || Boolean(classificationData?.proxy_data?.is_data_center) || (clientIsp ? checkDatacenterIsp(clientIsp).isDatacenter : false);
+        const isTorDetected = Boolean(classificationData?.is_tor || clientUsage === 'TOR');
+        const isProxyDetected = Boolean(classificationData?.is_proxy);
+
+        const ruleEval = evaluateVisitorRules(ownerRulesets, {
+          isBadBot: visitorType === 'Bot',
+          isAutomatedBot: visitorType === 'Bot',
+          isVpn: isVpnDetected,
+          isDatacenter: isDchDetected,
+          isTor: isTorDetected,
+          isProxy: isProxyDetected,
+          isVelocitySpike: Boolean(detectionMethod?.toLowerCase().includes("velocity") || detectionMethod?.toLowerCase().includes("rate")),
+          isIpBlocked: Boolean(detectionMethod?.toLowerCase().includes("ip block")),
+          isDevtools: rawClientTokens?.webdriver === true || rawClientTokens?.missingPluginsArray === true,
+          countryCode: clientCountry,
+          allowedCountries: ownerAllowedCountries,
+        });
+
+        if (ruleEval.matched) {
+          matchedRule = ruleEval;
+          if (ruleEval.action === "block_response") {
+            visitorType = 'Bot';
+            detectionMethod = ruleEval.ruleName || 'Rule Engine Block';
+            blockReason = ruleEval.reason || `Blocked by rule (${ruleEval.statusCode})`;
+            configuredBotUrl = String(ruleEval.statusCode);
+          } else if (ruleEval.action === "redirect" && ruleEval.redirectUrl) {
+            configuredBotUrl = ruleEval.redirectUrl;
+          } else if (ruleEval.action === "allow") {
+            visitorType = 'Human';
+          }
+        }
+      }
+
       // The user's dashboard configuration ALWAYS takes precedence and is NEVER overridden by system defaults
       const finalHumanUrl = (configuredHumanUrl && configuredHumanUrl.trim() !== '') 
         ? configuredHumanUrl.trim() 
@@ -6382,8 +6439,15 @@ Disallow: /*`);
         isHuman: isHumanVisitor,
         is_human: isHumanVisitor,
         action: isHumanVisitor ? 'Allowed' : (isPolicyFilter ? 'Restricted' : 'Blocked'),
-        statusAction: isErrorCode ? finalBotUrl : 'redirect',
-        statusCode: isErrorCode ? parseInt(finalBotUrl!) : (isHumanVisitor ? 200 : 403),
+        statusAction: matchedRule?.action === "block_response" ? String(matchedRule.statusCode) : (isErrorCode ? finalBotUrl : 'redirect'),
+        statusCode: matchedRule?.action === "block_response" ? matchedRule.statusCode : (isErrorCode ? parseInt(finalBotUrl!) : (isHumanVisitor ? 200 : 403)),
+        customHeaders: matchedRule?.headers || [],
+        customBody: matchedRule?.body || null,
+        matchedRule: matchedRule ? {
+          name: matchedRule.ruleName,
+          action: matchedRule.action,
+          statusCode: matchedRule.statusCode,
+        } : null,
         detection_method: classificationData.detection_method || detectionMethod || 'IP Analysis',
         block_reason: blockReason || null,
         isp: classificationData.isp || 'Unknown',

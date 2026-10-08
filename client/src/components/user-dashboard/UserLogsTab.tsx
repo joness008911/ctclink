@@ -478,6 +478,90 @@ function BrowserIcon({ type }: { type: string }) {
   return <Globe className="h-3.5 w-3.5 text-slate-500 shrink-0" />;
 }
 
+// Canonical traffic attribution resolver (Facebook, Google Ads, TikTok, Microsoft Ads, X, Ad Reviewer, Organic)
+export function getAttributionDisplay(c: any): {
+  type: "organic" | "paid" | "reviewer" | "spoofed";
+  company: string;
+  clickToken: string | null;
+  badgeClass: string;
+} {
+  const methodStr = (c.detectionMethod || "").toLowerCase();
+  const rawNetwork = (c.adNetwork || c.adTraffic?.platformName || c.reviewerPlatform || "").toLowerCase();
+  const token = (c.clickToken || c.adTraffic?.clickToken || "").toLowerCase();
+
+  const isSpoofed = Boolean(
+    c.trafficType === "spoofed_ad_bot" ||
+    c.adTraffic?.isSpoofed ||
+    methodStr.includes("spoofed ad") ||
+    methodStr.includes("impersonation")
+  );
+
+  const isReviewer = Boolean(
+    c.trafficType === "ad_reviewer" ||
+    c.isVerifiedReviewer ||
+    c.adTraffic?.isVerifiedReviewer ||
+    methodStr.includes("verified ad compliance") ||
+    methodStr.includes("ad reviewer") ||
+    methodStr.includes("ad compliance")
+  );
+
+  let company = "";
+  let clickTokenChip: string | null = c.clickToken || c.adTraffic?.clickToken || null;
+
+  if (rawNetwork.includes("meta") || rawNetwork.includes("facebook") || token === "fbclid" || token === "fbclickid" || c.fbclid) {
+    company = "Facebook";
+    if (!clickTokenChip && (c.fbclid || token === "fbclid")) clickTokenChip = "fbclid";
+  } else if (rawNetwork.includes("google") || ["gclid", "wbraid", "gbraid"].includes(token) || c.gclid) {
+    company = "Google Ads";
+    if (!clickTokenChip && (c.gclid || token === "gclid")) clickTokenChip = "gclid";
+  } else if (rawNetwork.includes("tiktok") || token === "ttclid" || c.ttclid) {
+    company = "TikTok";
+    if (!clickTokenChip && (c.ttclid || token === "ttclid")) clickTokenChip = "ttclid";
+  } else if (rawNetwork.includes("microsoft") || rawNetwork.includes("bing") || token === "msclkid" || c.msclkid) {
+    company = "Microsoft Ads";
+    if (!clickTokenChip && (c.msclkid || token === "msclkid")) clickTokenChip = "msclkid";
+  } else if (rawNetwork.includes("twitter") || rawNetwork === "x" || token === "twclid" || token === "xclid" || c.twclid) {
+    company = "X (Twitter)";
+    if (!clickTokenChip && (c.twclid || token === "twclid")) clickTokenChip = "twclid";
+  } else if (c.adNetwork) {
+    company = c.adNetwork;
+  }
+
+  if (isSpoofed) {
+    return {
+      type: "spoofed",
+      company: company || "Spoofed Ad Bot",
+      clickToken: clickTokenChip,
+      badgeClass: "bg-rose-100 text-rose-900 border-rose-300",
+    };
+  }
+
+  if (isReviewer) {
+    return {
+      type: "reviewer",
+      company: company ? `${company} Reviewer` : "Ad Reviewer",
+      clickToken: null,
+      badgeClass: "bg-indigo-50 text-indigo-900 border-indigo-200",
+    };
+  }
+
+  if (company) {
+    return {
+      type: "paid",
+      company,
+      clickToken: clickTokenChip,
+      badgeClass: "bg-blue-50 text-blue-900 border-blue-200",
+    };
+  }
+
+  return {
+    type: "organic",
+    company: "Organic",
+    clickToken: null,
+    badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
+  };
+}
+
 export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogsTabProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState<"all" | "allowed" | "challenged" | "blocked">("all");
@@ -519,6 +603,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
     date: true,
     visitorId: true,
     ipAddress: true,
+    country: true,
+    isp: true,
     browser: true,
     os: true,
     suspectScore: true,
@@ -528,6 +614,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
     vpn: true,
     tor: true,
     dch: true,
+    attribution: true,
     decision: true,
   });
 
@@ -554,34 +641,11 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       if (filterType === "challenged" && !isChallenged) return false;
       if (filterType === "blocked" && (isHuman || isChallenged)) return false;
 
-      const isSpoofed = Boolean(
-        c.trafficType === "spoofed_ad_bot" ||
-        c.adTraffic?.isSpoofed ||
-        (c.detectionMethod || "").toLowerCase().includes("spoofed ad") ||
-        (c.detectionMethod || "").toLowerCase().includes("impersonation")
-      );
-      const isReviewer = Boolean(
-        c.trafficType === "ad_reviewer" ||
-        c.isVerifiedReviewer || 
-        c.adTraffic?.isVerifiedReviewer ||
-        (c.detectionMethod || "").toLowerCase().includes("verified ad compliance") ||
-        (c.detectionMethod || "").toLowerCase().includes("ad reviewer") ||
-        (c.detectionMethod || "").toLowerCase().includes("ad compliance")
-      );
-      const isPaid = Boolean(
-        c.trafficType === "ad_click" ||
-        c.adNetwork || 
-        c.clickToken || 
-        c.clickId || 
-        c.adTraffic?.isAdClick ||
-        c.gclid || 
-        c.fbclid || 
-        c.ttclid || 
-        c.msclkid || 
-        c.twclid ||
-        (c.detectionMethod || "").toLowerCase().includes("ad campaign")
-      );
-      const isOrganic = isHuman && !isPaid && !isReviewer;
+      const attrib = getAttributionDisplay(c);
+      const isSpoofed = attrib.type === "spoofed";
+      const isReviewer = attrib.type === "reviewer";
+      const isPaid = attrib.type === "paid";
+      const isOrganic = attrib.type === "organic";
 
       if (trafficFilter === "paid" && !isPaid) return false;
       if (trafficFilter === "organic" && !isOrganic) return false;
@@ -624,6 +688,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
         (c.os && c.os.toLowerCase().includes(term)) ||
         (c.detectionMethod && c.detectionMethod.toLowerCase().includes(term)) ||
         (c.visitorType && c.visitorType.toLowerCase().includes(term)) ||
+        attrib.company.toLowerCase().includes(term) ||
         (c.adNetwork && c.adNetwork.toLowerCase().includes(term)) ||
         (c.clickToken && c.clickToken.toLowerCase().includes(term)) ||
         (c.clickId && c.clickId.toLowerCase().includes(term)) ||
@@ -682,29 +747,23 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
       const resolvedDeviceId = item.deviceId || `dev_srv_${(item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
       const resolvedVisitorId = item.visitorId || `vis_${(resolvedDeviceId.replace(/^dev_(hw_|srv_)?/, "") || item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
       
-      const isSpoofed = Boolean(
-        item.trafficType === "spoofed_ad_bot" ||
-        item.adTraffic?.isSpoofed ||
-        (item.detectionMethod || "").toLowerCase().includes("spoofed ad")
+      const itemAttrib = getAttributionDisplay(item);
+      const isItemHuman = item.visitorType === "Human";
+      const isItemPolicy = !isItemHuman && Boolean(
+        (item.detectionMethod || "").toLowerCase().includes("device") ||
+        (item.detectionMethod || "").toLowerCase().includes("os") ||
+        (item.detectionMethod || "").toLowerCase().includes("geo") ||
+        (item.detectionMethod || "").toLowerCase().includes("country")
       );
-      const isReviewer = Boolean(
-        item.trafficType === "ad_reviewer" ||
-        item.isVerifiedReviewer || 
-        item.adTraffic?.isVerifiedReviewer
-      );
-      const isPaid = Boolean(
-        item.trafficType === "ad_click" ||
-        item.adNetwork || 
-        item.clickToken || 
-        item.adTraffic?.isAdClick
-      );
-      const attributionType = isSpoofed 
-        ? "Spoofed Ad Crawler" 
-        : isReviewer 
-        ? "Verified Ad Reviewer" 
-        : isPaid 
-        ? "Paid Ad Click" 
-        : (item.visitorType === "Human" ? "Organic Human" : "Bot Traffic");
+      const decisionStr = itemAttrib.type === "spoofed"
+        ? "Spoofed Bot"
+        : itemAttrib.type === "reviewer"
+        ? "Reviewer (Allowed)"
+        : isItemPolicy
+        ? "Restricted"
+        : (isItemHuman && item.action !== "Blocked")
+        ? "Allowed"
+        : "Blocked";
 
       return [
         escapeCsv(resolvedDeviceId),
@@ -712,9 +771,9 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
         escapeCsv(timeStr),
         escapeCsv(ipStr),
         escapeCsv(item.visitorType || ""),
-        escapeCsv(attributionType),
-        escapeCsv(item.adNetwork || item.adTraffic?.platformName || ""),
-        escapeCsv(item.clickToken || item.adTraffic?.clickToken || ""),
+        escapeCsv(itemAttrib.company),
+        escapeCsv(item.adNetwork || item.adTraffic?.platformName || itemAttrib.company),
+        escapeCsv(itemAttrib.clickToken || item.clickToken || item.adTraffic?.clickToken || ""),
         escapeCsv(item.clickId || item.adTraffic?.clickId || ""),
         escapeCsv(item.isVerifiedReviewer || item.adTraffic?.isVerifiedReviewer ? "Yes" : "No"),
         escapeCsv(item.reviewerPlatform || item.adTraffic?.reviewerPlatform || ""),
@@ -729,7 +788,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
         escapeCsv(item.countryCode || ""),
         escapeCsv(item.country || ""),
         escapeCsv(item.city || ""),
-        escapeCsv(item.action || (item.visitorType === "Human" ? "Allowed" : "Blocked"))
+        escapeCsv(decisionStr)
       ].join(",");
     });
 
@@ -1088,6 +1147,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                   { key: "date", label: "Date" },
                   { key: "visitorId", label: "Visitor ID" },
                   { key: "ipAddress", label: "IP Address" },
+                  { key: "country", label: "Country" },
+                  { key: "isp", label: "Carrier / ISP" },
                   { key: "browser", label: "Browser" },
                   { key: "os", label: "OS" },
                   { key: "suspectScore", label: "Suspect Score" },
@@ -1097,7 +1158,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                   { key: "vpn", label: "VPN" },
                   { key: "tor", label: "Tor" },
                   { key: "dch", label: "DCH" },
-                  { key: "decision", label: "Decision & Attribution" },
+                  { key: "attribution", label: "Attribution" },
+                  { key: "decision", label: "Decision" },
                 ].map((col) => (
                   <button
                     key={col.key}
@@ -1128,13 +1190,15 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
         {/* 4. Forensic Telemetry Logs Table */}
         <div className="overflow-x-auto w-full">
-          <table className="w-full text-left text-xs min-w-[1240px]">
+          <table className="w-full text-left text-xs min-w-[1380px]">
             <thead>
               <tr className="border-b border-[#E2E8F0] text-[11px] font-semibold text-slate-500 bg-[#F8FAFC]">
                 {visibleColumns.deviceId && <th className="py-3 px-4 whitespace-nowrap">DEVICE ID</th>}
                 {visibleColumns.date && <th className="py-3 px-4 whitespace-nowrap">DATE</th>}
                 {visibleColumns.visitorId && <th className="py-3 px-4 whitespace-nowrap">VISITOR ID</th>}
                 {visibleColumns.ipAddress && <th className="py-3 px-4 whitespace-nowrap">IP ADDRESS</th>}
+                {visibleColumns.country && <th className="py-3 px-4 whitespace-nowrap">COUNTRY</th>}
+                {visibleColumns.isp && <th className="py-3 px-4 whitespace-nowrap">CARRIER / ISP</th>}
                 {visibleColumns.browser && <th className="py-3 px-4 whitespace-nowrap">BROWSER</th>}
                 {visibleColumns.os && <th className="py-3 px-4 whitespace-nowrap">OS</th>}
                 {visibleColumns.suspectScore && <th className="py-3 px-4 whitespace-nowrap">SUSPECT SCORE</th>}
@@ -1144,7 +1208,8 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                 {visibleColumns.vpn && <th className="py-3 px-4 whitespace-nowrap">VPN</th>}
                 {visibleColumns.tor && <th className="py-3 px-4 whitespace-nowrap">TOR</th>}
                 {visibleColumns.dch && <th className="py-3 px-4 whitespace-nowrap">DCH</th>}
-                {visibleColumns.decision && <th className="py-3 px-4 whitespace-nowrap text-right">DECISION & ATTRIBUTION</th>}
+                {visibleColumns.attribution && <th className="py-3 px-4 whitespace-nowrap">ATTRIBUTION</th>}
+                {visibleColumns.decision && <th className="py-3 px-4 whitespace-nowrap text-right">DECISION</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1153,6 +1218,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                 const methodStr = (c.detectionMethod || "").toLowerCase();
                 const connTypeStr = (c.connectionType || "").toLowerCase();
                 const usageType = (c.usageType || "").toUpperCase();
+                const attrib = getAttributionDisplay(c);
 
                 const isIpBlocklist = Boolean(
                   c.isBlocklisted ||
@@ -1360,15 +1426,56 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       </td>
                     )}
 
-                    {/* 4. IP Address & Network */}
+                    {/* 4. IP Address */}
                     {visibleColumns.ipAddress && (
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-slate-900">
-                          <span className="text-base leading-none">{flag}</span>
+                        <div className="flex items-center gap-1.5 group/ip font-mono text-xs font-bold text-slate-900">
                           <span>{ipStr}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleCopy(ipStr, `ip-${c.id || i}`, e)}
+                            className="opacity-0 group-hover/ip:opacity-100 p-1 text-slate-400 hover:text-slate-700 transition-opacity rounded hover:bg-slate-200/50"
+                            title="Copy IP Address"
+                          >
+                            {copiedId === `ip-${c.id || i}` ? (
+                              <Check className="h-3 w-3 text-emerald-600" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
                         </div>
-                        <div className="text-[10px] text-slate-400 truncate max-w-[160px] mt-0.5" title={`${asnInfo.asnBadge} • ${ispDisplayName}`}>
-                          {asnInfo.asnBadge ? `${asnInfo.asnBadge} • ` : ""}{ispDisplayName}
+                      </td>
+                    )}
+
+                    {/* 5. Country */}
+                    {visibleColumns.country && (
+                      <td className="py-3 px-4 whitespace-nowrap text-slate-700">
+                        <div className="flex items-center gap-1.5" title={c.city ? `${c.city}, ${c.country || c.countryCode || "Unknown"}` : (c.country || c.countryCode || "Unknown")}>
+                          <span className="text-base leading-none shrink-0">{flag}</span>
+                          <span className="text-xs font-medium text-slate-800">
+                            {c.country || (c.countryCode ? c.countryCode.toUpperCase() : "Unknown")}
+                          </span>
+                          {c.countryCode && (
+                            <span className="text-[10px] font-mono text-slate-400 uppercase">
+                              ({c.countryCode.toUpperCase()})
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
+
+                    {/* 6. Carrier / ISP */}
+                    {visibleColumns.isp && (
+                      <td className="py-3 px-4 whitespace-nowrap text-slate-700">
+                        <div className="flex items-center gap-1.5 max-w-[220px]">
+                          {asnInfo.asnBadge && (
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 shrink-0">
+                              {asnInfo.asnBadge}
+                            </span>
+                          )}
+                          <span className="text-xs font-medium text-slate-800 truncate" title={`${asnInfo.asnBadge ? `${asnInfo.asnBadge} • ` : ""}${ispDisplayName}`}>
+                            {ispDisplayName}
+                          </span>
                         </div>
                       </td>
                     )}
@@ -1485,15 +1592,46 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                       </td>
                     )}
 
-                    {/* 14. Decision & Attribution */}
+                    {/* 14. Attribution */}
+                    {visibleColumns.attribution && (
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {attrib.type === "organic" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                              Organic
+                            </span>
+                          ) : attrib.type === "reviewer" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                              {attrib.company}
+                            </span>
+                          ) : attrib.type === "spoofed" ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                              {attrib.company}
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-900 border border-blue-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
+                                {attrib.company}
+                              </span>
+                              {attrib.clickToken && (
+                                <span className="inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                                  {attrib.clickToken}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    )}
+
+                    {/* 15. Decision */}
                     {visibleColumns.decision && (
                       <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                          {isPaid && adClickToken && (
-                            <span className="inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-900 border border-blue-200">
-                              {adClickToken}
-                            </span>
-                          )}
+                        <div className="flex items-center justify-end gap-1.5">
                           {isSpoofed ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300 animate-pulse">
                               <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
@@ -1504,15 +1642,15 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                               <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
                               Reviewer
                             </span>
-                          ) : isPaid ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-50 text-blue-900 border border-blue-200">
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-600" />
-                              Paid Allowed
+                          ) : isPolicyFilter ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                              Restricted
                             </span>
-                          ) : (isHuman && c.action !== "Blocked" && !isPolicyFilter) ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                              Allowed (Organic)
+                          ) : (!isHuman || c.action === "Blocked" || isBadBot || isIpBlocklist) ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
+                              Blocked
                             </span>
                           ) : isChallenged ? (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
@@ -1520,9 +1658,9 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
                               Challenged
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
-                              Blocked
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                              Allowed
                             </span>
                           )}
                         </div>
@@ -1534,7 +1672,7 @@ export function UserLogsTab({ classifications = [], humanUrl, botUrl }: UserLogs
 
               {paginatedData.length === 0 && (
                 <tr>
-                  <td colSpan={14} className="py-12 text-center text-slate-500">
+                  <td colSpan={17} className="py-12 text-center text-slate-500">
                     <p className="text-sm font-bold text-slate-900">No logs found</p>
                     <p className="text-xs text-slate-400 mt-0.5">Try altering your search query or filter criteria.</p>
                   </td>

@@ -6,30 +6,26 @@ import {
   Activity, 
   Globe, 
   ArrowUpRight,
-  Code,
   AlertCircle,
   ShieldCheck,
   Zap,
-  Clock,
   Laptop,
   Smartphone,
   Tablet,
   CheckCircle2,
   XCircle,
   ChevronRight,
-  ExternalLink,
   ShieldAlert,
   Server,
-  Filter,
-  Columns,
-  Download,
-  Search,
-  ArrowUpDown,
+  Sparkles,
+  Network,
   Compass,
-  SlidersHorizontal,
-  ChevronLeft,
-  ChevronDown,
-  Sparkles
+  MapPin,
+  TrendingUp,
+  Filter,
+  ExternalLink,
+  Layers,
+  ArrowRight
 } from "lucide-react";
 import {
   AreaChart,
@@ -41,12 +37,10 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
 import { getCountryFlag } from "@/lib/countries";
 import { VisitorDetailsDrawer } from "./VisitorDetailsDrawer";
-import { computeThreatScore, formatAsnDisplay } from "@/lib/threatScoring";
+import { detectBrowser, normalizeBrowserName } from "@shared/browserDetection";
 
 interface UserOverviewTabProps {
   user: any;
@@ -68,6 +62,126 @@ interface UserOverviewTabProps {
   botUrl?: string;
 }
 
+type FilterOption = "all" | "allowed" | "blocked" | "challenged" | "ad_clicks";
+
+// Authoritative Browser Name and Vector Icon Resolution
+function getVisitorBrowser(c: any): { name: string; type: string } {
+  const rawBrowser = c.browser || "";
+  const detected = detectBrowser({
+    userAgent: c.userAgent || c.user_agent || null,
+    headers: c.requestHeaders || null,
+    clientTokens: c.clientSignals || null,
+    secChUa: (c.clientSignals as any)?.secChUa || (c.requestHeaders as any)?.["sec-ch-ua"] || null,
+  });
+
+  const finalBrowserName = detected.browser !== "Unknown" 
+    ? detected.browser 
+    : normalizeBrowserName(rawBrowser);
+
+  const cleanName = finalBrowserName || "Unknown";
+  let iconType = cleanName.toLowerCase().replace(/[\s_]+/g, "");
+  if (iconType === "samsunginternet") iconType = "samsung";
+
+  return {
+    name: cleanName,
+    type: iconType,
+  };
+}
+
+// Authentic Browser SVG Icons matching brand and platform design
+function BrowserIcon({ type }: { type: string }) {
+  if (type === "chrome") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#EA4335" />
+        <path d="M12 2a10 10 0 0 1 8.66 5H12z" fill="#FBBC05" />
+        <path d="M20.66 7A10 10 0 0 1 12 22l4.33-7.5z" fill="#34A853" />
+        <path d="M12 22A10 10 0 0 1 3.34 7H12z" fill="#4285F4" />
+        <circle cx="12" cy="12" r="4.5" fill="#ffffff" />
+        <circle cx="12" cy="12" r="3.5" fill="#1a73e8" />
+      </svg>
+    );
+  }
+  if (type === "brave") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 32 32">
+        <path
+          fill="#FB542B"
+          d="M16 2L4 6.5v8c0 8.5 5.5 14.5 12 17.5 6.5-3 12-9 12-17.5v-8L16 2zm0 5l7 2.5v5.5c0 5.5-3.5 10-7 12-3.5-2-7-6.5-7-12V9.5L16 7z"
+        />
+        <circle cx="16" cy="15" r="3" fill="#FB542B" />
+      </svg>
+    );
+  }
+  if (type === "safari") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#006CFF" />
+        <circle cx="12" cy="12" r="8.5" fill="#007AFF" stroke="#FFFFFF" strokeWidth="0.8" />
+        <polygon points="12,4 14.5,12 12,12" fill="#FFFFFF" />
+        <polygon points="12,20 9.5,12 12,12" fill="#FF3B30" />
+        <polygon points="12,4 9.5,12 12,12" fill="#E5E5EA" />
+        <polygon points="12,20 14.5,12 12,12" fill="#FF453A" />
+        <circle cx="12" cy="12" r="1" fill="#FFFFFF" />
+      </svg>
+    );
+  }
+  if (type === "edge") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <path
+          fill="#0078D7"
+          d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.38 5.07L8 15c-.63-.88-1-1.95-1-3.1 0-2.82 2.24-5.1 5-5.1 1.7 0 3.2.83 4.1 2.1l3.5-3.5C18.1 3.5 15.2 2 12 2z"
+        />
+        <path
+          fill="#00B294"
+          d="M12 22c5.52 0 10-4.48 10-10 0-1.85-.5-3.58-1.38-5.07L16 9c.63.88 1 1.95 1 3.1 0 2.82-2.24 5.1-5 5.1-1.7 0-3.2-.83-4.1-2.1l-3.5 3.5C6.9 20.5 9.8 22 12 22z"
+        />
+      </svg>
+    );
+  }
+  if (type === "firefox") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#FF7139" />
+        <path
+          fill="#9E2286"
+          d="M12 2C6.48 2 2 6.48 2 12c0 2.5 1 4.7 2.6 6.3C5.8 15.5 8 13.5 11 13.5c3.5 0 5.5 2.5 5.5 5.5 0 .7-.1 1.4-.4 2 3.6-1.6 5.9-5.2 5.9-9 0-5.52-4.48-10-10-10z"
+        />
+        <circle cx="12" cy="12" r="5" fill="#FFB703" />
+      </svg>
+    );
+  }
+  if (type === "opera") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#FF1B2D" />
+        <ellipse cx="12" cy="12" rx="4.5" ry="7.5" fill="#FFFFFF" />
+        <ellipse cx="12" cy="12" rx="2.5" ry="5.5" fill="#FF1B2D" />
+      </svg>
+    );
+  }
+  if (type === "samsung") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8" fill="#4352D0" />
+        <ellipse cx="12" cy="12" rx="10" ry="3.5" fill="none" stroke="#6878FF" strokeWidth="1.5" transform="rotate(-25 12 12)" />
+        <circle cx="12" cy="12" r="6" fill="#12279E" />
+      </svg>
+    );
+  }
+  if (type === "duckduckgo") {
+    return (
+      <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" fill="#DE5833" />
+        <circle cx="11" cy="10" r="3" fill="#FFFFFF" />
+        <polygon points="13,10 17,11 13,13" fill="#FF9500" />
+      </svg>
+    );
+  }
+  return <Globe className="h-4 w-4 text-slate-500 shrink-0" />;
+}
+
 export function UserOverviewTab({
   user,
   stats,
@@ -79,22 +193,27 @@ export function UserOverviewTab({
   humanUrl,
   botUrl,
 }: UserOverviewTabProps) {
-  const isLicenseActive = apiKeyDetails?.status === "active";
-  const isLicensePaused = apiKeyDetails?.status === "paused";
-  const isLicenseExpired = apiKeyDetails?.status === "expired";
+  // Timeline Timeframe: 24h, 7d, 30d
+  const [timelineWindow, setTimelineWindow] = useState<"24h" | "7d" | "30d">("24h");
+  
+  // Independent Dropdown Filters for the 3 Breakdown Cards
+  const [ipFilter, setIpFilter] = useState<FilterOption>("all");
+  const [browserFilter, setBrowserFilter] = useState<FilterOption>("all");
+  const [countryFilter, setCountryFilter] = useState<FilterOption>("all");
 
-  // Filter state for the classification table
-  const [tableFilter, setTableFilter] = useState<"all" | "allowed" | "challenged" | "blocked">("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  // Selected Visitor for deep inspection drawer
   const [selectedVisitor, setSelectedVisitor] = useState<any | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+
+  // Active Series toggles for chart
+  const [showHumanSeries, setShowHumanSeries] = useState(true);
+  const [showBotSeries, setShowBotSeries] = useState(true);
+  const [showChalSeries, setShowChalSeries] = useState(true);
 
   // Strict Real Data Counts with fallback to classifications array
   const total = stats?.totalClassifications ?? (classifications.length > 0 ? classifications.length : 0);
   const humans = stats?.humanVisitors ?? classifications.filter((c) => c.visitorType === "Human").length;
   const bots = stats?.botTraffic ?? classifications.filter((c) => c.visitorType === "Bot").length;
-  const challenged = Math.max(0, Math.floor(bots * 0.35)); // Representative breakdown of challenged/automated vs hard-blocked
+  const challenged = Math.max(0, Math.floor(bots * 0.35));
   const hardBlocked = Math.max(0, bots - challenged);
 
   const humanPct = total > 0 ? ((humans / total) * 100).toFixed(1) : "100.0";
@@ -108,71 +227,98 @@ export function UserOverviewTab({
     return num.toString();
   };
 
-  // Filter and search classifications
-  const filteredClassifications = useMemo(() => {
-    return classifications.filter((item) => {
+  // Helper filter function for classifications based on decision type
+  const filterListByDecision = (list: any[], filter: FilterOption) => {
+    return list.filter((item) => {
       const isHuman = item.visitorType === "Human";
-      
-      // Filter tab check
-      if (tableFilter === "allowed" && !isHuman) return false;
-      if (tableFilter === "blocked" && (isHuman || item.detectionMethod?.includes("Rate") || item.detectionMethod?.includes("Tor"))) return false;
-      if (tableFilter === "challenged" && (isHuman || (!item.detectionMethod?.includes("Rate") && !item.detectionMethod?.includes("Tor") && !item.detectionMethod?.includes("Proxy")))) return false;
+      const methodStr = (item.detectionMethod || "").toLowerCase();
+      const isChallenged = !isHuman && (
+        methodStr.includes("rate") || 
+        methodStr.includes("tor") || 
+        methodStr.includes("proxy") || 
+        methodStr.includes("vpn")
+      );
 
-      // Search query check
-      if (searchQuery.trim()) {
-        const query = searchQuery.toLowerCase();
-        const ip = (item.ip || item.ipAddress || "").toLowerCase();
-        const country = (item.country || "").toLowerCase();
-        const city = (item.city || "").toLowerCase();
-        const isp = (item.isp || "").toLowerCase();
-        const detection = (item.detectionMethod || "").toLowerCase();
-        return (
-          ip.includes(query) ||
-          country.includes(query) ||
-          city.includes(query) ||
-          isp.includes(query) ||
-          detection.includes(query)
+      if (filter === "all") return true;
+      if (filter === "allowed") return isHuman;
+      if (filter === "blocked") return !isHuman && !isChallenged;
+      if (filter === "challenged") return !isHuman && isChallenged;
+      if (filter === "ad_clicks") {
+        return Boolean(
+          item.adNetwork || 
+          item.clickId || 
+          item.utmSource || 
+          (item.adClickInfo && item.adClickInfo.isAdClick)
         );
       }
       return true;
     });
-  }, [classifications, tableFilter, searchQuery]);
+  };
 
-  // 10-Item Recent Activity Snapshot
-  const snapshotData = useMemo(() => {
-    return filteredClassifications.slice(0, 10);
-  }, [filteredClassifications]);
-
-  // Hourly Traffic Classification Timeline aggregated from the user's real classifications
-  const hourlyChartData = useMemo(() => {
-    // Generate 8 3-hour buckets covering the last 24 hours: 00:00, 03:00, 06:00, 09:00, 12:00, 15:00, 18:00, 21:00
+  // ─────────────────────────────────────────────────────────────
+  // 1. TIMELINE DATA AGGREGATION (24h, 7d, 30d)
+  // ─────────────────────────────────────────────────────────────
+  const timelineChartData = useMemo(() => {
     const now = new Date();
-    const buckets: { time: string; human: number; bot: number; challenged: number; timestampHour: number }[] = [];
-    
-    // Create 8 intervals of 3 hours backwards
-    for (let i = 7; i >= 0; i--) {
-      const bucketDate = new Date(now.getTime() - i * 3 * 3600 * 1000);
-      const hour = bucketDate.getHours();
-      const roundedHour = Math.floor(hour / 3) * 3;
-      bucketDate.setHours(roundedHour, 0, 0, 0);
-      const label = `${String(roundedHour).padStart(2, "0")}:00`;
-      
-      // Avoid duplicate labels in timeline
-      if (!buckets.some(b => b.time === label)) {
+    const buckets: { time: string; human: number; bot: number; challenged: number; total: number; timestamp: number }[] = [];
+
+    if (timelineWindow === "24h") {
+      // 8 intervals of 3 hours backwards
+      for (let i = 7; i >= 0; i--) {
+        const bucketDate = new Date(now.getTime() - i * 3 * 3600 * 1000);
+        const hour = bucketDate.getHours();
+        const roundedHour = Math.floor(hour / 3) * 3;
+        bucketDate.setHours(roundedHour, 0, 0, 0);
+        const label = `${String(roundedHour).padStart(2, "0")}:00`;
+
+        if (!buckets.some((b) => b.time === label)) {
+          buckets.push({
+            time: label,
+            human: 0,
+            bot: 0,
+            challenged: 0,
+            total: 0,
+            timestamp: bucketDate.getTime(),
+          });
+        }
+      }
+    } else if (timelineWindow === "7d") {
+      // 7 daily intervals backwards
+      for (let i = 6; i >= 0; i--) {
+        const bucketDate = new Date(now.getTime() - i * 24 * 3600 * 1000);
+        bucketDate.setHours(0, 0, 0, 0);
+        const label = format(bucketDate, "EEE d");
+
         buckets.push({
           time: label,
           human: 0,
           bot: 0,
           challenged: 0,
-          timestampHour: bucketDate.getTime(),
+          total: 0,
+          timestamp: bucketDate.getTime(),
+        });
+      }
+    } else {
+      // 30 days in 10 3-day steps
+      for (let i = 9; i >= 0; i--) {
+        const bucketDate = new Date(now.getTime() - i * 3 * 24 * 3600 * 1000);
+        bucketDate.setHours(0, 0, 0, 0);
+        const label = format(bucketDate, "MMM d");
+
+        buckets.push({
+          time: label,
+          human: 0,
+          bot: 0,
+          challenged: 0,
+          total: 0,
+          timestamp: bucketDate.getTime(),
         });
       }
     }
 
-    // Sort chronologically
-    buckets.sort((a, b) => a.timestampHour - b.timestampHour);
+    buckets.sort((a, b) => a.timestamp - b.timestamp);
 
-    // If classifications exist, aggregate based on their timestamps
+    // Map classifications into appropriate buckets
     if (classifications.length > 0) {
       classifications.forEach((c) => {
         if (!c.timestamp) return;
@@ -184,174 +330,188 @@ export function UserOverviewTab({
           c.detectionMethod?.includes("Proxy")
         );
 
-        // Find closest bucket within 3-hour windows
-        let closestBucketIndex = -1;
+        let closestIdx = -1;
         let minDiff = Infinity;
         for (let idx = 0; idx < buckets.length; idx++) {
-          const diff = Math.abs(cTime - buckets[idx].timestampHour);
+          const diff = Math.abs(cTime - buckets[idx].timestamp);
           if (diff < minDiff) {
             minDiff = diff;
-            closestBucketIndex = idx;
+            closestIdx = idx;
           }
         }
 
-        if (closestBucketIndex !== -1 && minDiff <= 3600 * 1000 * 3.5) {
-          if (isHuman) {
-            buckets[closestBucketIndex].human += 1;
-          } else if (isChallenged) {
-            buckets[closestBucketIndex].challenged += 1;
-          } else {
-            buckets[closestBucketIndex].bot += 1;
-          }
-        } else {
-          // If older or recent fallback, map into the current latest bucket or earliest
-          const target = cTime > (buckets[buckets.length - 1]?.timestampHour || 0)
-            ? buckets[buckets.length - 1]
-            : buckets[0];
-          if (target) {
-            if (isHuman) target.human += 1;
-            else if (isChallenged) target.challenged += 1;
-            else target.bot += 1;
-          }
+        const maxAllowedDiff = timelineWindow === "24h" 
+          ? 3600 * 1000 * 3.5 
+          : timelineWindow === "7d" 
+          ? 24 * 3600 * 1000 * 1.5 
+          : 3 * 24 * 3600 * 1000 * 1.5;
+
+        const target = closestIdx !== -1 && minDiff <= maxAllowedDiff
+          ? buckets[closestIdx]
+          : (cTime > (buckets[buckets.length - 1]?.timestamp || 0) ? buckets[buckets.length - 1] : buckets[0]);
+
+        if (target) {
+          if (isHuman) target.human += 1;
+          else if (isChallenged) target.challenged += 1;
+          else target.bot += 1;
+          target.total += 1;
         }
       });
     }
 
     return buckets;
-  }, [classifications]);
+  }, [classifications, timelineWindow]);
 
-  const currentDateStr = format(new Date(), "MMMM d, yyyy");
+  // Timeline Peak Calculation
+  const peakVolume = useMemo(() => {
+    if (timelineChartData.length === 0) return 0;
+    return Math.max(...timelineChartData.map((b) => b.human + b.bot + b.challenged), 1);
+  }, [timelineChartData]);
 
-  // Helper classification logic matching Visitor Logs
-  const getNetworkClassification = (c: any) => {
-    const isHuman = c.visitorType === "Human";
-    const method = (c.detectionMethod || "").toLowerCase();
-    const isp = (c.isp || "").toLowerCase();
-    const usageType = (c.usageType || "").toUpperCase();
+  // ─────────────────────────────────────────────────────────────
+  // 2. BREAKDOWN: TOP IP ADDRESSES
+  // ─────────────────────────────────────────────────────────────
+  const topIps = useMemo(() => {
+    const filtered = filterListByDecision(classifications, ipFilter);
+    const map = new Map<string, {
+      ip: string;
+      count: number;
+      allowed: number;
+      blocked: number;
+      country: string;
+      countryCode: string;
+      isp: string;
+      sampleItem: any;
+    }>();
 
-    // 1. Good Bot / Search Engine / SEO Indexers
-    if (
-      method.includes("search indexer") || 
-      method.includes("seo") || 
-      method.includes("googlebot") || 
-      method.includes("bingbot") || 
-      method.includes("crawler (allowed)") ||
-      method.includes("social media") || 
-      method.includes("social preview") ||
-      isp.includes("googlebot") ||
-      isp.includes("bingbot")
-    ) {
-      let name = "Search Indexer";
-      if (method.includes("google") || isp.includes("google")) name = "Googlebot";
-      else if (method.includes("bing") || isp.includes("bing")) name = "Bingbot";
-      else if (method.includes("social")) name = "Social Preview";
-      return {
-        label: `Good Bot • ${name}`,
-        className: "bg-emerald-50 text-emerald-800 border-emerald-200/70"
-      };
+    for (const c of filtered) {
+      const ip = c.ip || c.ipAddress || "Unknown IP";
+      const isHuman = c.visitorType === "Human";
+      const existing = map.get(ip);
+      if (existing) {
+        existing.count += 1;
+        if (isHuman) existing.allowed += 1;
+        else existing.blocked += 1;
+        if (!existing.country && c.country) existing.country = c.country;
+        if (!existing.countryCode && c.countryCode) existing.countryCode = c.countryCode;
+        if (!existing.isp && c.isp) existing.isp = c.isp;
+      } else {
+        map.set(ip, {
+          ip,
+          count: 1,
+          allowed: isHuman ? 1 : 0,
+          blocked: isHuman ? 0 : 1,
+          country: c.country || "Global",
+          countryCode: c.countryCode || "",
+          isp: c.isp || "Residential / Cloud",
+          sampleItem: c,
+        });
+      }
     }
 
-    // 2. Bad Bot / Scrapers / Automated Exploit
-    if (
-      method.includes("crawler") || 
-      method.includes("scraper") || 
-      method.includes("bot signature") || 
-      method.includes("monperrus") || 
-      method.includes("synthetic") || 
-      method.includes("ai scraper") ||
-      method.includes("velocity") ||
-      method.includes("botnet") ||
-      method.includes("scanner")
-    ) {
-      let name = "Scraper";
-      if (method.includes("ai")) name = "AI Scraper";
-      else if (method.includes("velocity")) name = "Velocity Spike";
-      else if (method.includes("botnet")) name = "Botnet Host";
-      else if (method.includes("scanner")) name = "Vuln Scanner";
-      return {
-        label: `Bad Bot • ${name}`,
-        className: "bg-rose-50 text-rose-800 border-rose-200/70"
-      };
+    const sorted = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    const totalCount = filtered.length || 1;
+    return sorted.slice(0, 6).map((item) => ({
+      ...item,
+      percentage: Math.min(100, Math.max(1, Math.round((item.count / totalCount) * 100))),
+    }));
+  }, [classifications, ipFilter]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 3. BREAKDOWN: TOP BROWSERS
+  // ─────────────────────────────────────────────────────────────
+  const topBrowsers = useMemo(() => {
+    const filtered = filterListByDecision(classifications, browserFilter);
+    const map = new Map<string, {
+      name: string;
+      type: string;
+      count: number;
+      allowed: number;
+      blocked: number;
+    }>();
+
+    for (const c of filtered) {
+      const browserInfo = getVisitorBrowser(c);
+      const isHuman = c.visitorType === "Human";
+      const existing = map.get(browserInfo.name);
+      if (existing) {
+        existing.count += 1;
+        if (isHuman) existing.allowed += 1;
+        else existing.blocked += 1;
+      } else {
+        map.set(browserInfo.name, {
+          name: browserInfo.name,
+          type: browserInfo.type,
+          count: 1,
+          allowed: isHuman ? 1 : 0,
+          blocked: isHuman ? 0 : 1,
+        });
+      }
     }
 
-    // 3. Datacenter / Cloud ASN
-    if (
-      usageType === "DCH" || 
-      method.includes("datacenter") || 
-      isp.includes("amazon") || 
-      isp.includes("google cloud") || 
-      isp.includes("microsoft azure") || 
-      isp.includes("digitalocean") || 
-      isp.includes("hetzner") || 
-      isp.includes("ovh") || 
-      isp.includes("linode") || 
-      isp.includes("vultr") ||
-      isp.includes("cloudflare") ||
-      isp.includes("oracle cloud")
-    ) {
-      return {
-        label: "Datacenter • Cloud ASN",
-        className: "bg-purple-50 text-purple-800 border-purple-200/70"
-      };
+    const sorted = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    const totalCount = filtered.length || 1;
+    return sorted.slice(0, 6).map((item) => ({
+      ...item,
+      percentage: Math.min(100, Math.max(1, Math.round((item.count / totalCount) * 100))),
+    }));
+  }, [classifications, browserFilter]);
+
+  // ─────────────────────────────────────────────────────────────
+  // 4. BREAKDOWN: TOP COUNTRIES
+  // ─────────────────────────────────────────────────────────────
+  const topCountries = useMemo(() => {
+    const filtered = filterListByDecision(classifications, countryFilter);
+    const map = new Map<string, {
+      name: string;
+      code: string;
+      count: number;
+      allowed: number;
+      blocked: number;
+    }>();
+
+    for (const c of filtered) {
+      const code = (c.countryCode || "").toUpperCase();
+      const rawName = c.country || (code ? code : "Global Traffic");
+      const isHuman = c.visitorType === "Human";
+      const key = code || rawName;
+
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += 1;
+        if (isHuman) existing.allowed += 1;
+        else existing.blocked += 1;
+        if (!existing.code && code) existing.code = code;
+      } else {
+        map.set(key, {
+          name: rawName,
+          code: code || "ALL",
+          count: 1,
+          allowed: isHuman ? 1 : 0,
+          blocked: isHuman ? 0 : 1,
+        });
+      }
     }
 
-    // 4. Anonymizer / VPN / Proxy / Tor
-    if (
-      usageType === "VPN" || 
-      usageType === "TOR" || 
-      method.includes("vpn") || 
-      method.includes("tor") || 
-      method.includes("proxy")
-    ) {
-      let name = "VPN / Proxy";
-      if (method.includes("tor") || usageType === "TOR") name = "Tor Exit Node";
-      return {
-        label: `Anonymizer • ${name}`,
-        className: "bg-amber-50 text-amber-800 border-amber-200/70"
-      };
-    }
-
-    // 5. Policy Filter (Device / OS / Geo)
-    if (
-      method.includes("device restricted") || 
-      method.includes("os restricted") || 
-      method.includes("geo") || 
-      method.includes("country")
-    ) {
-      let name = "Device Filter";
-      if (method.includes("geo") || method.includes("country")) name = "Geo-Fencing";
-      else if (method.includes("os")) name = "OS Filter";
-      return {
-        label: `Policy • ${name}`,
-        className: "bg-sky-50 text-sky-800 border-sky-200/70"
-      };
-    }
-
-    // 6. Clean Residential / Human
-    if (isHuman || usageType === "RES") {
-      return {
-        label: "Residential • Human ISP",
-        className: "bg-emerald-50 text-emerald-800 border-emerald-200/70"
-      };
-    }
-
-    return {
-      label: isHuman ? "Verified Network" : "Filtered Network",
-      className: isHuman ? "bg-emerald-50 text-emerald-800 border-emerald-200/70" : "bg-slate-100 text-slate-700 border-slate-200"
-    };
-  };
+    const sorted = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    const totalCount = filtered.length || 1;
+    return sorted.slice(0, 6).map((item) => ({
+      ...item,
+      percentage: Math.min(100, Math.max(1, Math.round((item.count / totalCount) * 100))),
+    }));
+  }, [classifications, countryFilter]);
 
   return (
-    <div className="space-y-6 w-full">
+    <div className="space-y-6 w-full pb-10">
       {/* ─────────────────────────────────────────────────────────────
-          ROW 1: FOUR STAT METRIC CARDS (Matching Reference Image)
+          ROW 1: FOUR STAT METRIC CARDS
       ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Total Requests */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 shadow-xs transition-all hover:border-[#CBD5E1] relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+              <div className="w-6 h-6 rounded-md bg-emerald-50 border border-emerald-100 flex items-center justify-center text-[#0A5C48]">
                 <Activity className="h-3.5 w-3.5" />
               </div>
               <span className="text-xs font-semibold text-slate-700">
@@ -372,7 +532,7 @@ export function UserOverviewTab({
             </div>
           </div>
 
-          {/* Micro Area/Sparkline Chart */}
+          {/* Micro Sparkline Chart */}
           <div className="mt-3 h-8 w-full">
             <svg className="w-full h-full text-emerald-600 overflow-visible" viewBox="0 0 100 24" preserveAspectRatio="none">
               <path
@@ -392,7 +552,7 @@ export function UserOverviewTab({
           </div>
         </div>
 
-        {/* Metric 2: Human */}
+        {/* Metric 2: Human / Allowed */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 shadow-xs transition-all hover:border-[#CBD5E1] relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -400,7 +560,7 @@ export function UserOverviewTab({
                 <Users className="h-3.5 w-3.5" />
               </div>
               <span className="text-xs font-semibold text-slate-700">
-                Human
+                Human (Allowed)
               </span>
             </div>
             <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -438,7 +598,7 @@ export function UserOverviewTab({
           </div>
         </div>
 
-        {/* Metric 3: Blocked */}
+        {/* Metric 3: Blocked Threats */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 shadow-xs transition-all hover:border-[#CBD5E1] relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -446,7 +606,7 @@ export function UserOverviewTab({
                 <Bot className="h-3.5 w-3.5" />
               </div>
               <span className="text-xs font-semibold text-slate-700">
-                Blocked
+                Blocked Threats
               </span>
             </div>
             <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -484,7 +644,7 @@ export function UserOverviewTab({
           </div>
         </div>
 
-        {/* Metric 4: Challenged / Mitigated */}
+        {/* Metric 4: Challenged Probes */}
         <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 shadow-xs transition-all hover:border-[#CBD5E1] relative">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -492,7 +652,7 @@ export function UserOverviewTab({
                 <ShieldAlert className="h-3.5 w-3.5" />
               </div>
               <span className="text-xs font-semibold text-slate-700">
-                Challenged
+                Challenged Probes
               </span>
             </div>
             <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200/60 px-2 py-0.5 rounded-full flex items-center gap-1">
@@ -532,58 +692,145 @@ export function UserOverviewTab({
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          ROW 2: TRAFFIC CLASSIFICATION TIMELINE (Hourly User Data)
+          ROW 2: REBRANDED TRAFFIC CLASSIFICATION TIMELINE METRICS
+          Clean, brand-aligned timeline chart without gradients or AI slop
       ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E2E8F0] rounded-xl p-4 sm:p-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+      <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 shadow-xs">
+        {/* Top Control Bar: Title, Range Selectors & Live Stream Badge */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[#F1F5F9]">
           <div>
-            <h3 className="text-sm sm:text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <span>Traffic Classification Timeline</span>
-              <span className="text-xs font-normal text-slate-500">
-                (Hourly)
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h3 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+                <span>Traffic Classification Timeline</span>
+              </h3>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                Live Ingress Stream
               </span>
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Live segmentation of legitimate buyers vs automated scrapers
+            </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Deterministic categorization of legitimate buyers vs automated crawlers and malicious scrapers
             </p>
           </div>
 
-          {/* Legend */}
-          <div className="flex items-center gap-3 sm:gap-4 text-xs font-semibold">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
-              <span className="text-slate-700">Legitimate (Human)</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Timeframe Switcher Tabs */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200/80 text-xs">
+              <button
+                type="button"
+                onClick={() => setTimelineWindow("24h")}
+                className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                  timelineWindow === "24h"
+                    ? "bg-white text-slate-900 shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                24 Hours
+              </button>
+              <button
+                type="button"
+                onClick={() => setTimelineWindow("7d")}
+                className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                  timelineWindow === "7d"
+                    ? "bg-white text-slate-900 shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                7 Days
+              </button>
+              <button
+                type="button"
+                onClick={() => setTimelineWindow("30d")}
+                className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                  timelineWindow === "30d"
+                    ? "bg-white text-slate-900 shadow-2xs font-bold"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                30 Days
+              </button>
             </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444]" />
-              <span className="text-slate-700">Blocked (Scrapers)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
-              <span className="text-slate-700">Challenged (Probes)</span>
-            </div>
+
+            {/* Quick Actions */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onNavigateTab("logs")}
+              className="text-xs h-8 border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold gap-1.5 rounded-lg"
+            >
+              <span>Explore Logs</span>
+              <ArrowUpRight className="h-3.5 w-3.5 text-slate-500" />
+            </Button>
           </div>
         </div>
 
-        {/* Recharts Area Chart */}
-        <div className="h-44 sm:h-52 w-full">
+        {/* Timeline Key Metric Counters */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4 py-2 px-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg">
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Peak Window Traffic</div>
+            <div className="text-base font-bold text-slate-900 mt-0.5">{peakVolume} req/slot</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Legitimate Pass Rate</div>
+            <div className="text-base font-bold text-emerald-700 mt-0.5">{humanPct}% ({formatNumber(humans)})</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Deflection Efficiency</div>
+            <div className="text-base font-bold text-rose-700 mt-0.5">{blockedPct}% ({formatNumber(hardBlocked)})</div>
+          </div>
+          <div>
+            <div className="text-[11px] font-semibold text-slate-500">Challenged Rate</div>
+            <div className="text-base font-bold text-amber-700 mt-0.5">{challengedPct}% ({formatNumber(challenged)})</div>
+          </div>
+        </div>
+
+        {/* Interactive Legend with Series Toggles */}
+        <div className="flex items-center justify-end gap-3 sm:gap-5 text-xs font-semibold mb-3 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowHumanSeries(!showHumanSeries)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-all ${
+              showHumanSeries 
+                ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-bold" 
+                : "bg-slate-50 text-slate-400 border-slate-200 line-through"
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" />
+            <span>Legitimate (Human)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowBotSeries(!showBotSeries)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-all ${
+              showBotSeries 
+                ? "bg-rose-50 text-rose-800 border-rose-200 font-bold" 
+                : "bg-slate-50 text-slate-400 border-slate-200 line-through"
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-[#EF4444]" />
+            <span>Blocked (Scrapers)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowChalSeries(!showChalSeries)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border transition-all ${
+              showChalSeries 
+                ? "bg-amber-50 text-amber-800 border-amber-200 font-bold" 
+                : "bg-slate-50 text-slate-400 border-slate-200 line-through"
+            }`}
+          >
+            <span className="w-2.5 h-2.5 rounded-full bg-[#D97706]" />
+            <span>Challenged (Probes)</span>
+          </button>
+        </div>
+
+        {/* Generous High-Density Recharts Chart Area (Clean Brand Aesthetic, No Gradients) */}
+        <div className="h-64 sm:h-72 w-full pt-1">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={hourlyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <defs>
-                <linearGradient id="userHumanGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10B981" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#10B981" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="userBotGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#EF4444" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="userChalGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#F59E0B" stopOpacity={0.0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+            <AreaChart data={timelineChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
               <XAxis
                 dataKey="time"
                 tickLine={false}
@@ -597,89 +844,118 @@ export function UserOverviewTab({
                 tick={{ fontSize: 11, fill: "#64748B" }}
               />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: "#0F172A",
-                  border: "none",
-                  borderRadius: "8px",
-                  color: "#FFFFFF",
-                  fontSize: "12px",
-                  boxShadow: "0 10px 25px -5px rgba(0,0,0,0.3)",
-                  padding: "8px 12px",
+                content={({ active, payload, label }) => {
+                  if (active && payload && payload.length) {
+                    const humanVal = payload.find((p) => p.dataKey === "human")?.value || 0;
+                    const botVal = payload.find((p) => p.dataKey === "bot")?.value || 0;
+                    const chalVal = payload.find((p) => p.dataKey === "challenged")?.value || 0;
+                    const totalVal = Number(humanVal) + Number(botVal) + Number(chalVal);
+
+                    return (
+                      <div className="bg-[#0F172A] text-white rounded-lg p-3 shadow-xl border border-slate-800 text-xs min-w-[190px]">
+                        <div className="font-bold text-slate-200 pb-1.5 border-b border-slate-700/80 mb-2">
+                          {label}
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-emerald-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                              Legitimate Human
+                            </span>
+                            <span className="font-mono font-bold">{humanVal}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-rose-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-rose-400" />
+                              Blocked Threats
+                            </span>
+                            <span className="font-mono font-bold">{botVal}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-amber-400">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-amber-400" />
+                              Challenged Probes
+                            </span>
+                            <span className="font-mono font-bold">{chalVal}</span>
+                          </div>
+                          <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between text-slate-300 font-bold">
+                            <span>Total Volume</span>
+                            <span className="font-mono">{totalVal} req</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
                 }}
               />
-              <Area
-                type="monotone"
-                dataKey="human"
-                name="Legitimate Buyers"
-                stroke="#10B981"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#userHumanGradient)"
-              />
-              <Area
-                type="monotone"
-                dataKey="bot"
-                name="Automated Scrapers"
-                stroke="#EF4444"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#userBotGradient)"
-              />
-              <Area
-                type="monotone"
-                dataKey="challenged"
-                name="Challenged Probes"
-                stroke="#F59E0B"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#userChalGradient)"
-              />
+              {showHumanSeries && (
+                <Area
+                  type="monotone"
+                  dataKey="human"
+                  name="Legitimate Buyers"
+                  stroke="#0A5C48"
+                  strokeWidth={2}
+                  fill="#10B981"
+                  fillOpacity={0.08}
+                />
+              )}
+              {showBotSeries && (
+                <Area
+                  type="monotone"
+                  dataKey="bot"
+                  name="Automated Scrapers"
+                  stroke="#EF4444"
+                  strokeWidth={2}
+                  fill="#EF4444"
+                  fillOpacity={0.08}
+                />
+              )}
+              {showChalSeries && (
+                <Area
+                  type="monotone"
+                  dataKey="challenged"
+                  name="Challenged Probes"
+                  stroke="#D97706"
+                  strokeWidth={2}
+                  fill="#D97706"
+                  fillOpacity={0.08}
+                />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
 
       {/* ─────────────────────────────────────────────────────────────
-          ROW 3: LIVE TRAFFIC SNAPSHOT (Latest 10 Events + Quick Navigation)
+          ROW 3: REBUILT BREAKDOWN ANALYTICS (Replacing Live Snapshot Table)
+          3 Columns: Top IP Addresses, Top Browsers, Top Countries
+          Each equipped with its own dropdown filter (All, Allowed, Blocked, Challenged, Ad Clicks)
       ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xs overflow-hidden">
-        {/* Table Top Toolbar */}
-        <div className="p-4 sm:p-5 border-b border-[#E2E8F0] flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="space-y-4">
+        {/* Section Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 tracking-tight">
-                Live Traffic Snapshot
-              </h2>
-              <span className="text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
-                Latest 10 Events
-              </span>
-            </div>
+            <h3 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <Layers className="h-4 w-4 text-[#0A5C48]" />
+              <span>Traffic Distribution & Breakdown Analytics</span>
+            </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Real-time activity sample. Click any record for deep inspection or visit Visitor Logs for full history & filtering.
+              Aggregated insights across IP origins, verified client environments, and geographic distributions
             </p>
           </div>
 
-          {/* Right Toolbar Actions */}
-          <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Live Indicator Pill */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-              <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
-              Live Feed
-            </div>
-
-            {/* Bot Simulator Button */}
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               size="sm"
               onClick={() => onNavigateTab("simulator")}
               className="text-xs h-8 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold gap-1.5 rounded-lg shadow-2xs"
-              title="Test real humans and bots against your active defense rules"
             >
               <Sparkles className="h-3.5 w-3.5 text-[#0A5C48]" />
               <span>Bot Simulator</span>
             </Button>
 
-            {/* View Full Logs Button */}
             <Button
               variant="default"
               size="sm"
@@ -692,249 +968,382 @@ export function UserOverviewTab({
           </div>
         </div>
 
-        {/* Data Table */}
-        <div className="overflow-x-auto w-full">
-          <table className="w-full text-left text-xs min-w-[1060px]">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] text-[11px] font-semibold text-slate-500 bg-[#F8FAFC]">
-                <th className="py-3 px-4">Time</th>
-                <th className="py-3 px-4">IP Address</th>
-                <th className="py-3 px-4">Decision</th>
-                <th className="py-3 px-4">Threat Score</th>
-                <th className="py-3 px-4">Network / ASN</th>
-                <th className="py-3 px-4">Detection Trigger</th>
-                <th className="py-3 px-4">Device</th>
-                <th className="py-3 px-4">Location</th>
-                <th className="py-3 px-4 text-right">Response</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {snapshotData.map((item: any, idx: number) => {
-                const isHuman = item.visitorType === "Human";
-                const methodStr = (item.detectionMethod || "").toLowerCase();
-                const isPolicyFilter = !isHuman && (
-                  methodStr.includes("device restricted") || 
-                  methodStr.includes("os restricted") || 
-                  methodStr.includes("geo") || 
-                  methodStr.includes("country")
-                );
-                const isChallenged = !isHuman && !isPolicyFilter && (
-                  methodStr.includes("rate") || 
-                  methodStr.includes("tor") || 
-                  methodStr.includes("proxy") ||
-                  methodStr.includes("vpn")
-                );
-                const ipStr = item.ip || item.ipAddress || "—";
-                const flag = getCountryFlag(item.countryCode);
-                const networkClass = getNetworkClassification(item);
-                const threat = computeThreatScore(item);
-                const asnInfo = formatAsnDisplay(item);
-                const ispDisplayName = item.isp && item.isp !== "Filtered by Rule" && item.isp !== "Unknown"
-                  ? item.isp
-                  : isPolicyFilter
-                  ? (item.deviceType ? `${item.deviceType} Filter` : "Policy Filtered")
-                  : isHuman
-                  ? "Residential Broadband"
-                  : "Unresolved Carrier";
-                
-                const httpStatus = isHuman ? 200 : isPolicyFilter ? 302 : isChallenged ? 401 : 403;
-                const latency = isHuman ? "61ms" : "12ms";
+        {/* 3-Card Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-6">
+          {/* ═══════════════════════════════════════════════════════════
+              CARD 1: TOP IP ADDRESSES
+          ═══════════════════════════════════════════════════════════ */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xs overflow-hidden flex flex-col transition-all hover:border-[#CBD5E1]">
+            {/* Card Header & Filter Dropdown */}
+            <div className="p-4 sm:p-4.5 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+                  <Network className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 leading-tight">Top IP Addresses</h4>
+                  <span className="text-[10px] text-slate-500 font-medium">Ranked by volume</span>
+                </div>
+              </div>
 
-                const resolvedDeviceId = item.deviceId || `dev_srv_${(item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
-                const resolvedVisitorId = item.visitorId || `vis_${(resolvedDeviceId.replace(/^dev_(hw_|srv_)?/, "") || item.id || ipStr).replace(/[^a-zA-Z0-9]/g, "").slice(0, 16)}`;
-                const visitCountDisplay = typeof item.visitCount === 'number' && item.visitCount > 0 ? item.visitCount : 1;
-                const isReturning = item.isNewVisitor === false || visitCountDisplay > 1;
+              {/* Dropdown Selector */}
+              <select
+                value={ipFilter}
+                onChange={(e) => setIpFilter(e.target.value as FilterOption)}
+                className="text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#0A5C48] focus:border-[#0A5C48] cursor-pointer shadow-2xs"
+              >
+                <option value="all">All Traffic</option>
+                <option value="allowed">Top Allowed</option>
+                <option value="blocked">Top Blocked</option>
+                <option value="challenged">Challenged</option>
+                <option value="ad_clicks">Ad Clicks</option>
+              </select>
+            </div>
+
+            {/* List Body */}
+            <div className="p-4 divide-y divide-slate-100 flex-1">
+              {topIps.map((item, idx) => {
+                const flag = getCountryFlag(item.countryCode);
+                const isDominantAllowed = item.allowed >= item.blocked;
 
                 return (
-                  <tr
-                    key={item.id || idx}
-                    onClick={() => setSelectedVisitor(item)}
-                    className="hover:bg-slate-50/80 cursor-pointer transition-colors group"
+                  <div
+                    key={item.ip}
+                    onClick={() => item.sampleItem && setSelectedVisitor(item.sampleItem)}
+                    className="py-3 first:pt-0 last:pb-0 group cursor-pointer hover:bg-slate-50/70 -mx-2 px-2 rounded-lg transition-colors"
                   >
-                    {/* 1. Time (Stacked Date + Time) */}
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      <div className="font-mono text-xs font-semibold text-slate-800">
-                        {item.timestamp ? format(new Date(item.timestamp), "MMM d, yyyy") : "Today"}
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 text-[11px] font-bold text-slate-400 font-mono">
+                          #{idx + 1}
+                        </span>
+                        <span className="text-sm leading-none shrink-0" title={item.country}>
+                          {flag}
+                        </span>
+                        <span className="font-mono font-bold text-slate-900 truncate group-hover:text-[#0A5C48] transition-colors" title={item.ip}>
+                          {item.ip}
+                        </span>
                       </div>
-                      <div className="font-mono text-[11px] text-slate-400">
-                        {item.timestamp ? format(new Date(item.timestamp), "HH:mm:ss") : "Just now"}
-                      </div>
-                    </td>
 
-                    {/* 2. IP Address & Device / Visitor Identifiers */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="font-mono font-bold text-slate-900">{ipStr}</div>
-                      <div className="flex flex-col gap-0.5 mt-1">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-mono text-[10px] text-slate-600 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200" title={`Device ID: ${resolvedDeviceId}`}>
-                            Dev: {resolvedDeviceId.length > 14 ? `${resolvedDeviceId.slice(0, 14)}...` : resolvedDeviceId}
-                          </span>
-                          <span className="font-mono text-[10px] text-indigo-700 bg-indigo-50/80 px-1.5 py-0.2 rounded border border-indigo-200/60" title={`Visitor ID: ${resolvedVisitorId}`}>
-                            Vis: {resolvedVisitorId.length > 14 ? `${resolvedVisitorId.slice(0, 14)}...` : resolvedVisitorId}
-                          </span>
-                          {isReturning ? (
-                            <span className="text-[9px] font-sans font-bold text-purple-700 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">
-                              Returning ({visitCountDisplay} visits)
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="font-bold text-slate-900 font-mono">
+                          {item.count} <span className="text-[10px] font-normal text-slate-400 font-sans">req</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar & Sub-indicators */}
+                    <div className="space-y-1">
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            isDominantAllowed ? "bg-[#0A5C48]" : "bg-rose-500"
+                          }`}
+                          style={{ width: `${item.percentage}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                        <span className="truncate max-w-[140px]" title={item.isp}>
+                          {item.isp}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {item.allowed > 0 && (
+                            <span className="text-emerald-700 font-medium">
+                              {item.allowed} allowed
                             </span>
-                          ) : (
-                            <span className="text-[9px] font-sans font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                              1st Visit
+                          )}
+                          {item.blocked > 0 && (
+                            <span className="text-rose-600 font-medium">
+                              {item.blocked} blocked
                             </span>
                           )}
                         </div>
                       </div>
-                    </td>
-
-                    {/* 3. Decision Pill */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      {isHuman ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                          Allowed
-                        </span>
-                      ) : isPolicyFilter ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
-                          Restricted
-                        </span>
-                      ) : isChallenged ? (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
-                          Challenged
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200/60">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-600" />
-                          Blocked
-                        </span>
-                      )}
-                    </td>
-
-                    {/* 4. Threat Score Badge (0-100) */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[11px] font-mono font-bold shadow-2xs">
-                        <span className={`w-1.5 h-1.5 rounded-full ${threat.dotClass}`} />
-                        <span className="text-slate-900">{threat.score}</span>
-                        <span className="text-[10px] text-slate-400 font-sans font-normal">/100</span>
-                      </div>
-                    </td>
-
-                    {/* 5. Network / ASN & ISP */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="flex flex-col gap-1 max-w-[210px]">
-                        <div className="flex items-center gap-1.5">
-                          <span className="inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.2 bg-slate-100 text-slate-700 rounded border border-slate-200">
-                            {asnInfo.asnBadge}
-                          </span>
-                          <span className="font-semibold text-slate-900 text-xs truncate" title={item.isp || ispDisplayName}>
-                            {ispDisplayName}
-                          </span>
-                        </div>
-                        <div>
-                          <span className={`inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border ${networkClass.className}`}>
-                            {networkClass.label}
-                          </span>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* 5. Detection Trigger */}
-                    <td className="py-3.5 px-4 whitespace-nowrap text-slate-700 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                            isHuman 
-                              ? "bg-emerald-500" 
-                              : isPolicyFilter
-                              ? "bg-amber-500"
-                              : isChallenged 
-                              ? "bg-amber-500" 
-                              : "bg-rose-500"
-                          }`}
-                        />
-                        <span className="truncate max-w-[150px] text-xs" title={item.detectionMethod || (isHuman ? "Clean Residential IP" : "Datacenter ASN Probe")}>
-                          {item.detectionMethod || (isHuman ? "Clean Residential IP" : "Datacenter ASN Probe")}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* 6. Device & Browser */}
-                    <td className="py-3.5 px-4 whitespace-nowrap text-slate-600">
-                      <div className="flex items-center gap-2">
-                        {item.deviceType?.toLowerCase().includes("mobile") ? (
-                          <Smartphone className="h-4 w-4 text-slate-500" />
-                        ) : item.deviceType?.toLowerCase().includes("tablet") ? (
-                          <Tablet className="h-4 w-4 text-slate-500" />
-                        ) : (
-                          <Laptop className="h-4 w-4 text-slate-500" />
-                        )}
-                        <span className="text-[11px] font-medium text-slate-700">
-                          {item.browser || "Unknown"}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* 7. Location (Flag + Country + City) */}
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <span className="text-base leading-none">{flag}</span>
-                        <div>
-                          <div className="font-semibold text-slate-900 text-xs">
-                            {item.country || "United States"}
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-medium">
-                            {item.city || (item.countryCode ? `Region (${item.countryCode})` : "Global")}
-                          </div>
-                        </div>
-                      </div>
-                    </td>
-
-                    {/* 8. Response & Latency */}
-                    <td className="py-3.5 px-4 text-right whitespace-nowrap font-mono text-xs">
-                      <div className={`font-bold ${isHuman ? "text-emerald-700" : isChallenged ? "text-amber-700" : "text-rose-700"}`}>
-                        {httpStatus}
-                      </div>
-                      <div className="text-[10px] text-slate-400">{latency}</div>
-                    </td>
-                  </tr>
+                    </div>
+                  </div>
                 );
               })}
 
-              {snapshotData.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-500">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <AlertCircle className="h-6 w-6 text-slate-400" />
-                      <p className="text-sm font-bold text-slate-900">No visitors recorded yet</p>
-                      <p className="text-xs text-slate-500 max-w-sm">
-                        Deploy your integration script to see live evaluations and threat detection telemetry.
-                      </p>
-                    </div>
-                  </td>
-                </tr>
+              {topIps.length === 0 && (
+                <div className="py-8 text-center text-slate-400">
+                  <AlertCircle className="h-5 w-5 mx-auto mb-1 text-slate-300" />
+                  <p className="text-xs font-semibold text-slate-600">No IPs matching filter</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Select a different traffic classification above</p>
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
+            </div>
 
-        {/* Snapshot Bottom Footer Bar with Direct Link to Full Logs */}
-        <div className="p-4 border-t border-[#E2E8F0] bg-[#F8FAFC] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-          <div className="text-slate-500">
-            Showing latest <span className="font-semibold text-slate-900">{Math.min(10, snapshotData.length)}</span> events.
-            <span className="text-slate-600 font-medium ml-1">
-              Go to Visitor Logs to see all {total} total records with date range filters and search.
-            </span>
+            {/* Card Footer Link */}
+            <div className="p-3 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between text-xs">
+              <span className="text-slate-500 text-[11px]">Click any IP to inspect telemetry</span>
+              <button
+                type="button"
+                onClick={() => onNavigateTab("logs")}
+                className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
+              >
+                <span>View all in logs</span>
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onNavigateTab("logs")}
-            className="text-xs h-8 border-slate-300 text-slate-700 hover:bg-white hover:text-slate-900 font-semibold gap-1.5 rounded-lg shadow-2xs w-full sm:w-auto"
-          >
-            <span>Go to Visitor Logs</span>
-            <ArrowUpRight className="h-3.5 w-3.5 text-slate-500" />
-          </Button>
+          {/* ═══════════════════════════════════════════════════════════
+              CARD 2: TOP BROWSERS
+          ═══════════════════════════════════════════════════════════ */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xs overflow-hidden flex flex-col transition-all hover:border-[#CBD5E1]">
+            {/* Card Header & Filter Dropdown */}
+            <div className="p-4 sm:p-4.5 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-100 flex items-center justify-center text-[#0A5C48]">
+                  <Compass className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 leading-tight">Top Browsers</h4>
+                  <span className="text-[10px] text-slate-500 font-medium">Authoritative identification</span>
+                </div>
+              </div>
+
+              {/* Dropdown Selector */}
+              <select
+                value={browserFilter}
+                onChange={(e) => setBrowserFilter(e.target.value as FilterOption)}
+                className="text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#0A5C48] focus:border-[#0A5C48] cursor-pointer shadow-2xs"
+              >
+                <option value="all">All Traffic</option>
+                <option value="allowed">Top Allowed</option>
+                <option value="blocked">Top Blocked</option>
+                <option value="challenged">Challenged</option>
+                <option value="ad_clicks">Ad Clicks</option>
+              </select>
+            </div>
+
+            {/* List Body */}
+            <div className="p-4 divide-y divide-slate-100 flex-1">
+              {topBrowsers.map((item, idx) => {
+                const isDominantHuman = item.allowed >= item.blocked;
+
+                return (
+                  <div
+                    key={item.name}
+                    className="py-3 first:pt-0 last:pb-0 -mx-2 px-2 rounded-lg"
+                  >
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 text-[11px] font-bold text-slate-400 font-mono">
+                          #{idx + 1}
+                        </span>
+                        <div className="w-4 h-4 flex items-center justify-center shrink-0">
+                          <BrowserIcon type={item.type} />
+                        </div>
+                        <span className="font-bold text-slate-900 truncate">
+                          {item.name}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="font-bold text-slate-900 font-mono">
+                          {item.count} <span className="text-[10px] font-normal text-slate-400 font-sans">visitors</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar & Sub-indicators */}
+                    <div className="space-y-1">
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            isDominantHuman ? "bg-[#0A5C48]" : "bg-rose-500"
+                          }`}
+                          style={{ width: `${item.percentage}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                        <span className="font-medium text-slate-500">
+                          {item.name === "Brave" 
+                            ? "Brave Shields Signal" 
+                            : item.name === "Edge" 
+                            ? "Microsoft Edge Edg/" 
+                            : item.name === "Safari" 
+                            ? "Apple WebKit Safari" 
+                            : item.name === "Chrome" 
+                            ? "Google Chrome" 
+                            : "Verified Client Engine"}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-emerald-700 font-medium">
+                            {item.allowed} human
+                          </span>
+                          {item.blocked > 0 && (
+                            <span className="text-rose-600 font-medium">
+                              {item.blocked} bots
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {topBrowsers.length === 0 && (
+                <div className="py-8 text-center text-slate-400">
+                  <AlertCircle className="h-5 w-5 mx-auto mb-1 text-slate-300" />
+                  <p className="text-xs font-semibold text-slate-600">No browsers matching filter</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Select a different traffic classification above</p>
+                </div>
+              )}
+            </div>
+
+            {/* Card Footer Link */}
+            <div className="p-3 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between text-xs">
+              <span className="text-slate-500 text-[11px]">Normalized client-side engine telemetry</span>
+              <button
+                type="button"
+                onClick={() => onNavigateTab("logs")}
+                className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
+              >
+                <span>Browse details</span>
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+
+          {/* ═══════════════════════════════════════════════════════════
+              CARD 3: TOP COUNTRIES
+          ═══════════════════════════════════════════════════════════ */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xs overflow-hidden flex flex-col transition-all hover:border-[#CBD5E1]">
+            {/* Card Header & Filter Dropdown */}
+            <div className="p-4 sm:p-4.5 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+                  <MapPin className="h-4 w-4" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900 leading-tight">Top Countries</h4>
+                  <span className="text-[10px] text-slate-500 font-medium">Geographic origin</span>
+                </div>
+              </div>
+
+              {/* Dropdown Selector */}
+              <select
+                value={countryFilter}
+                onChange={(e) => setCountryFilter(e.target.value as FilterOption)}
+                className="text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#0A5C48] focus:border-[#0A5C48] cursor-pointer shadow-2xs"
+              >
+                <option value="all">All Traffic</option>
+                <option value="allowed">Top Allowed</option>
+                <option value="blocked">Top Blocked</option>
+                <option value="challenged">Challenged</option>
+                <option value="ad_clicks">Ad Clicks</option>
+              </select>
+            </div>
+
+            {/* List Body */}
+            <div className="p-4 divide-y divide-slate-100 flex-1">
+              {topCountries.map((item, idx) => {
+                const flag = getCountryFlag(item.code);
+                const isDominantAllowed = item.allowed >= item.blocked;
+
+                return (
+                  <div
+                    key={item.name}
+                    className="py-3 first:pt-0 last:pb-0 -mx-2 px-2 rounded-lg"
+                  >
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-5 text-[11px] font-bold text-slate-400 font-mono">
+                          #{idx + 1}
+                        </span>
+                        <span className="text-base leading-none shrink-0">
+                          {flag}
+                        </span>
+                        <span className="font-bold text-slate-900 truncate">
+                          {item.name}
+                        </span>
+                        {item.code && item.code !== "ALL" && (
+                          <span className="text-[10px] font-mono font-semibold text-slate-500 bg-slate-100 px-1 py-0.2 rounded border border-slate-200">
+                            {item.code}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
+                        <span className="font-bold text-slate-900 font-mono">
+                          {item.count} <span className="text-[10px] font-normal text-slate-400 font-sans">req</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar & Sub-indicators */}
+                    <div className="space-y-1">
+                      <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden flex">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            isDominantAllowed ? "bg-[#0A5C48]" : "bg-rose-500"
+                          }`}
+                          style={{ width: `${item.percentage}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                        <span className="text-slate-500">
+                          {item.allowed > 0 && item.blocked > 0
+                            ? "Mixed traffic zone"
+                            : item.allowed > 0
+                            ? "Permitted region"
+                            : "High threat zone"}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {item.allowed > 0 && (
+                            <span className="text-emerald-700 font-medium">
+                              {item.allowed} allowed
+                            </span>
+                          )}
+                          {item.blocked > 0 && (
+                            <span className="text-rose-600 font-medium">
+                              {item.blocked} blocked
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {topCountries.length === 0 && (
+                <div className="py-8 text-center text-slate-400">
+                  <AlertCircle className="h-5 w-5 mx-auto mb-1 text-slate-300" />
+                  <p className="text-xs font-semibold text-slate-600">No countries matching filter</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Select a different traffic classification above</p>
+                </div>
+              )}
+            </div>
+
+            {/* Card Footer Link */}
+            <div className="p-3 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between text-xs">
+              <span className="text-slate-500 text-[11px]">Enforce geo-fencing in Routing rules</span>
+              <button
+                type="button"
+                onClick={() => onNavigateTab("routing")}
+                className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
+              >
+                <span>Configure geo</span>
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

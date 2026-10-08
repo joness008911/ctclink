@@ -230,6 +230,7 @@ export interface IStorage {
     allowSocialPreviews?: string;
     allowedAiBots?: string;
     customAiBots?: string;
+    rulesetsConfig?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1016,6 +1017,7 @@ export class MemStorage implements IStorage {
     allowSocialPreviews?: string;
     allowedAiBots?: string;
     customAiBots?: string;
+    rulesetsConfig?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1044,6 +1046,7 @@ export class MemStorage implements IStorage {
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
       allowedAiBots: urls.allowedAiBots !== undefined ? urls.allowedAiBots : (existing?.allowedAiBots || ""),
       customAiBots: urls.customAiBots !== undefined ? urls.customAiBots : (existing?.customAiBots || ""),
+      rulesetsConfig: urls.rulesetsConfig !== undefined ? urls.rulesetsConfig : (existing?.rulesetsConfig || ""),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
       interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),
@@ -2070,6 +2073,7 @@ export class DatabaseStorage {
     allowSocialPreviews?: string;
     allowedAiBots?: string;
     customAiBots?: string;
+    rulesetsConfig?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -2098,6 +2102,7 @@ export class DatabaseStorage {
     if (urls.allowSocialPreviews !== undefined) updatePayload.allowSocialPreviews = urls.allowSocialPreviews;
     if (urls.allowedAiBots !== undefined) updatePayload.allowedAiBots = urls.allowedAiBots;
     if (urls.customAiBots !== undefined) updatePayload.customAiBots = urls.customAiBots;
+    if (urls.rulesetsConfig !== undefined) updatePayload.rulesetsConfig = urls.rulesetsConfig;
     if (urls.protectionMode !== undefined) updatePayload.protectionMode = urls.protectionMode;
     if (urls.activeAdPlatforms !== undefined) updatePayload.activeAdPlatforms = urls.activeAdPlatforms;
     if (urls.interstitialEnabled !== undefined) updatePayload.interstitialEnabled = urls.interstitialEnabled;
@@ -2141,6 +2146,7 @@ export class DatabaseStorage {
           allowSocialPreviews: urls.allowSocialPreviews || "allow",
           allowedAiBots: urls.allowedAiBots || "",
           customAiBots: urls.customAiBots || "",
+          rulesetsConfig: urls.rulesetsConfig || "",
           protectionMode: urls.protectionMode || "hybrid",
           activeAdPlatforms: urls.activeAdPlatforms || "google,meta,tiktok,microsoft,x",
           interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : true,

@@ -4,1272 +4,1467 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Shield, 
-  Flag, 
+  Bot, 
+  Lock, 
+  Globe, 
+  Activity, 
+  Code, 
+  ShieldAlert, 
+  Server, 
+  Sparkles, 
+  Search, 
+  Plus, 
+  ChevronRight, 
+  ChevronDown, 
   Check, 
   X, 
-  ChevronDown, 
-  Link as LinkIcon, 
   Save, 
-  Users, 
-  Bot, 
-  ShieldCheck,
-  LocateFixed,
-  HelpCircle,
-  Laptop,
-  Smartphone,
-  Tablet,
-  Globe,
-  Lock,
-  ShieldAlert,
-  Search,
-  Sparkles,
-  Share2,
-  AlertTriangle,
-  Clock,
-  Layers,
-  Megaphone,
-  Radio,
+  Trash2, 
+  Copy, 
+  RotateCcw, 
+  ArrowLeft, 
+  Layers, 
+  SlidersHorizontal, 
+  Info, 
+  ExternalLink, 
+  Sliders, 
+  AlertCircle, 
+  Filter, 
+  CheckCircle2, 
+  Eye, 
+  MoreVertical, 
+  Maximize2, 
+  ZoomIn, 
+  ZoomOut, 
+  FolderPlus, 
+  ArrowRight,
   Zap,
-  ArrowRight
+  Fingerprint
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { COUNTRIES_LIST, getCountryFlag } from "@/lib/countries";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { 
+  Ruleset, 
+  RuleStep, 
+  RuleCondition, 
+  RuleField, 
+  RuleOperator, 
+  RuleAction, 
+  HTTP_STATUS_OPTIONS, 
+  PREMADE_RULE_TEMPLATES, 
+  RULE_FIELD_DEFINITIONS 
+} from "@shared/rulesEngine";
 
-export const SUPPORTED_AD_PLATFORMS = [
-  {
-    id: "google",
-    name: "Google Ads",
-    badge: "gclid / gbraid / wbraid",
-    description: "Search, Display, YouTube & Performance Max campaigns",
-    reviewers: "Google-Ads-Creatives, Googlebot, Feedfetcher",
-  },
-  {
-    id: "meta",
-    name: "Meta / Facebook Ads",
-    badge: "fbclid",
-    description: "Facebook, Instagram & Audience Network campaigns",
-    reviewers: "FacebookBot, facebot, Meta-ExternalAgent",
-  },
-  {
-    id: "tiktok",
-    name: "TikTok Ads",
-    badge: "ttclid",
-    description: "TikTok Ads Manager & Spark Ads campaigns",
-    reviewers: "Bytespider, TikTokBot",
-  },
-  {
-    id: "microsoft",
-    name: "Microsoft / Bing Ads",
-    badge: "msclkid",
-    description: "Bing Search, Microsoft Advertising & MSN Network",
-    reviewers: "Bingbot, adidxbot, MicrosoftPreview",
-  },
-  {
-    id: "x",
-    name: "X (Twitter) Ads",
-    badge: "twclid",
-    description: "X Ads Manager & Promoted Posts campaigns",
-    reviewers: "Twitterbot",
-  },
-];
-
-export function UserRoutingTab({
-  isReadOnly = false,
-  onUpgradeClick,
-  onNavigateToAiCrawl,
-  onNavigateToSeoIndexers,
-  complianceStatus,
-  statusReason,
-}: {
+interface UserRoutingTabProps {
   isReadOnly?: boolean;
   onUpgradeClick?: () => void;
   onNavigateToAiCrawl?: () => void;
   onNavigateToSeoIndexers?: () => void;
   complianceStatus?: string;
   statusReason?: string | null;
-} = {}) {
+}
+
+export function UserRoutingTab({
+  isReadOnly = false,
+  onUpgradeClick,
+  complianceStatus,
+  statusReason,
+}: UserRoutingTabProps) {
   const { toast } = useToast();
 
   const isRestrictedByCompliance = complianceStatus === "flagged" || complianceStatus === "pending";
   const effectiveReadOnly = isReadOnly || isRestrictedByCompliance;
 
-  // Protection Mode & Ad Platform Scope States
-  const [protectionMode, setProtectionMode] = useState<"website" | "ads" | "hybrid">("hybrid");
-  const [activeAdPlatforms, setActiveAdPlatforms] = useState<string[]>(["google", "meta", "tiktok", "microsoft", "x"]);
+  // View state: "directory" (Rules Engine list), "starter" (Choose template vs scratch), "canvas" (Workflow editor)
+  const [activeView, setActiveView] = useState<"directory" | "starter" | "canvas">("directory");
+  
+  // Ruleset editor tab: "rules" (canvas) or "settings"
+  const [editorTab, setEditorTab] = useState<"rules" | "settings">("rules");
 
-  // Routing and Threat Mitigation Policy States
-  const [blockVpn, setBlockVpn] = useState<"block" | "allow">("block");
-  const [allowedDevices, setAllowedDevices] = useState<"all" | "desktop" | "mobile" | "mobile_tablet">("all");
-  const [desktopOsFilter, setDesktopOsFilter] = useState<"both" | "windows" | "mac">("both");
-  const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
-  const [hasUserModifiedCountries, setHasUserModifiedCountries] = useState(false);
-  const [humanUrl, setHumanUrl] = useState("");
-  const [botUrl, setBotUrl] = useState("");
+  // Template picker modal
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateSearch, setTemplateSearch] = useState("");
+  const [templateModalTab, setTemplateModalTab] = useState<"templates" | "scratch">("templates");
 
-  // Granular Bot & Crawler Policy States
-  const [allowSearchCrawlers, setAllowSearchCrawlers] = useState<"allow" | "block">("allow");
-  const [blockAiCrawlers, setBlockAiCrawlers] = useState<"block" | "allow">("block");
-  const [allowSocialPreviews, setAllowSocialPreviews] = useState<"allow" | "block">("allow");
+  // Directory search and filter
+  const [directorySearch, setDirectorySearch] = useState("");
+  const [directoryFilter, setDirectoryFilter] = useState<"all" | "enabled" | "disabled">("all");
 
-  // Country Search Dropdown State
-  const [countrySearch, setCountrySearch] = useState("");
-  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
-  const countryDropdownRef = useRef<HTMLDivElement>(null);
+  // Current active ruleset being edited
+  const [currentRuleset, setCurrentRuleset] = useState<Ruleset | null>(null);
+  
+  // Selected rule step in canvas for the right inspector drawer
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
-  // 1. Fetch User's Real IP & Auto-Detected Country
-  const { data: detectedLocation } = useQuery<{
-    ip: string;
-    countryCode: string;
-    countryName: string;
-    city?: string;
-  }>({
-    queryKey: ["/api/client/current-location"],
-    staleTime: 1000 * 60 * 10,
-  });
+  // Dirty state tracker
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
-  // 1b. Fetch Dynamically Configured Ad Platforms from Backend
-  const { data: serverAdPlatforms } = useQuery<{
-    id: string;
-    name: string;
-    badge: string;
-    clickTokens: string[];
-    description: string;
-    reviewersCount: number;
-  }[]>({
-    queryKey: ["/api/ad-platforms"],
-  });
+  // Zoom level state
+  const [zoomLevel, setZoomLevel] = useState(1);
 
-  const supportedPlatforms = useMemo(() => {
-    if (serverAdPlatforms && serverAdPlatforms.length > 0) {
-      return serverAdPlatforms.map(sp => ({
-        id: sp.id,
-        name: sp.name,
-        badge: sp.badge,
-        description: sp.description,
-        reviewers: `${sp.reviewersCount} verified crawler${sp.reviewersCount === 1 ? '' : 's'}`
-      }));
-    }
-    return SUPPORTED_AD_PLATFORMS;
-  }, [serverAdPlatforms]);
-
-  // 2. Fetch User's Saved Routing Rules from Backend
-  const { data: redirectUrls, isLoading: isLoadingUrls } = useQuery<{
+  // Redirect URLs and rulesets fetched from backend
+  const { data: serverConfig, isLoading: isLoadingConfig } = useQuery<{
     humanUrl: string;
     botUrl: string;
     allowedCountries?: string;
-    allowedDevices?: "all" | "desktop" | "mobile" | "mobile_tablet";
-    desktopOsFilter?: "both" | "windows" | "mac";
-    blockVpn?: "block" | "allow";
-    allowVpn?: boolean;
-    allowSearchCrawlers?: "allow" | "block";
-    blockAiCrawlers?: "block" | "allow";
-    allowSocialPreviews?: "allow" | "block";
-    protectionMode?: "website" | "ads" | "hybrid";
-    activeAdPlatforms?: string;
+    blockVpn?: string;
+    rulesetsConfig?: string;
   }>({
     queryKey: ["/api/user/redirect-urls"],
     refetchOnMount: true,
   });
 
-  // Sync state once saved configuration loads or initialize with auto-detected country
+  // Target Destination URLs
+  const [humanUrl, setHumanUrl] = useState("");
+  const [botUrl, setBotUrl] = useState("");
+
+  // All User Rulesets
+  const [rulesets, setRulesets] = useState<Ruleset[]>([]);
+
+  // Initialize rulesets from serverConfig
   useEffect(() => {
-    if (redirectUrls) {
-      setHumanUrl(redirectUrls.humanUrl || "");
-      setBotUrl(redirectUrls.botUrl || "");
-      setBlockVpn(redirectUrls.blockVpn || (redirectUrls.allowVpn ? "allow" : "block"));
-      if (redirectUrls.protectionMode) {
-        setProtectionMode(redirectUrls.protectionMode as any);
-      }
-      if (redirectUrls.activeAdPlatforms) {
-        const raw = redirectUrls.activeAdPlatforms.trim().toLowerCase();
-        if (raw === "all") {
-          setActiveAdPlatforms(["google", "meta", "tiktok", "microsoft", "x"]);
-        } else {
-          const parsed = raw.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
-          if (parsed.length > 0) setActiveAdPlatforms(parsed);
+    if (serverConfig) {
+      setHumanUrl(serverConfig.humanUrl || "https://yourdomain.com");
+      setBotUrl(serverConfig.botUrl || "403");
+
+      if (serverConfig.rulesetsConfig) {
+        try {
+          const parsed = JSON.parse(serverConfig.rulesetsConfig);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setRulesets(parsed);
+            return;
+          }
+        } catch (e) {
+          console.error("Failed to parse rulesetsConfig:", e);
         }
       }
-      if (redirectUrls.allowedDevices) {
-        setAllowedDevices(redirectUrls.allowedDevices);
-      }
-      if (redirectUrls.desktopOsFilter) {
-        setDesktopOsFilter(redirectUrls.desktopOsFilter);
-      }
-      if (redirectUrls.allowSearchCrawlers) {
-        setAllowSearchCrawlers(redirectUrls.allowSearchCrawlers);
-      }
-      if (redirectUrls.blockAiCrawlers) {
-        setBlockAiCrawlers(redirectUrls.blockAiCrawlers);
-      }
-      if (redirectUrls.allowSocialPreviews) {
-        setAllowSocialPreviews(redirectUrls.allowSocialPreviews);
-      }
 
-      // Check if user already has saved country rules
-      if (redirectUrls.allowedCountries && redirectUrls.allowedCountries.trim()) {
-        const raw = redirectUrls.allowedCountries.trim().toUpperCase();
-        if (raw === "ALL") {
-          setSelectedCountries(["ALL"]);
-        } else {
-          const parsed = raw.split(",").map((c) => c.trim().toUpperCase()).filter(Boolean);
-          setSelectedCountries(parsed.length > 0 ? parsed : ["ALL"]);
-        }
-        setHasUserModifiedCountries(true);
-      } else if (!hasUserModifiedCountries && detectedLocation?.countryCode) {
-        const defaultCode = detectedLocation.countryCode.toUpperCase();
-        setSelectedCountries([defaultCode]);
-      }
-    } else if (!hasUserModifiedCountries && detectedLocation?.countryCode && selectedCountries.length === 0) {
-      const defaultCode = detectedLocation.countryCode.toUpperCase();
-      setSelectedCountries([defaultCode]);
+      // Default seed ruleset: "Block bots" active out of the box
+      const defaultTemplate = PREMADE_RULE_TEMPLATES[0];
+      const seeded: Ruleset = {
+        id: "rs_default_block_bots",
+        name: defaultTemplate.name,
+        description: defaultTemplate.description,
+        enabled: true,
+        isDefault: true,
+        templateId: defaultTemplate.id,
+        tags: defaultTemplate.tags,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        rules: defaultTemplate.rules,
+      };
+      setRulesets([seeded]);
     }
-  }, [redirectUrls, detectedLocation, hasUserModifiedCountries]);
+  }, [serverConfig]);
 
-  // Click outside to close country dropdown
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (countryDropdownRef.current && !countryDropdownRef.current.contains(event.target as Node)) {
-        setIsCountryDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  // Mutation to persist rulesets to backend
+  const saveMutation = useMutation({
+    mutationFn: async (updatedRulesets: Ruleset[]) => {
+      // Find default or first active ruleset to sync legacy parameters
+      const activeBotRule = updatedRulesets.find((r) => r.enabled);
+      const hasVpnRule = activeBotRule?.rules.some((step) => 
+        step.conditions.some((c) => c.field === "vpn" && c.value === "True")
+      );
 
-  const updateUrlsMutation = useMutation({
-    mutationFn: async (payload: {
-      humanUrl: string;
-      botUrl: string;
-      allowedCountries: string;
-      allowedDevices: string;
-      desktopOsFilter: string;
-      blockVpn: string;
-      allowVpn: boolean;
-      allowSearchCrawlers: "allow" | "block";
-      blockAiCrawlers: "block" | "allow";
-      allowSocialPreviews: "allow" | "block";
-      protectionMode?: "website" | "ads" | "hybrid";
-      activeAdPlatforms?: string;
-    }) => {
-      const response = await apiRequest("PUT", "/api/user/redirect-urls", payload);
-      return response.json();
+      const payload = {
+        humanUrl: humanUrl.trim() || "https://yourdomain.com",
+        botUrl: botUrl.trim() || "403",
+        blockVpn: hasVpnRule ? "block" : "allow",
+        rulesetsConfig: JSON.stringify(updatedRulesets),
+      };
+
+      const res = await apiRequest("PUT", "/api/user/redirect-urls", payload);
+      return res.json();
     },
     onSuccess: () => {
-      toast({
-        title: "Routing Configuration Saved",
-        description: "Your VPN policy, crawler rules, allowed devices, geo-fencing, and bot actions are now active.",
-      });
       queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
-    },
-    onError: (error: any) => {
-      let title = "Save Failed";
-      let description = error.message || "Failed to update routing configuration";
-      
-      if (error.code === "ACCOUNT_SUSPENDED" || (error.status === 403 && description.toLowerCase().includes("suspended"))) {
-        title = "Account Suspended";
-      } else if (error.code === "ACCOUNT_FLAGGED" || description.toLowerCase().includes("review")) {
-        title = "Action Restricted";
-      } else if (error.code === "ACCOUNT_PENDING" || description.toLowerCase().includes("pending")) {
-        title = "Action Restricted";
-      }
-
+      setHasUnsavedChanges(false);
       toast({
-        title,
-        description,
+        title: "Rules published successfully",
+        description: "Your ruleset changes are now enforced live across all integration endpoints.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to save rules",
+        description: err.message || "An error occurred while saving your ruleset.",
         variant: "destructive",
       });
     },
   });
 
-  const handleCountrySelect = (code: string) => {
-    setHasUserModifiedCountries(true);
-    const upper = code.toUpperCase();
-    if (upper === "ALL") {
-      setSelectedCountries(["ALL"]);
-    } else {
-      let updated = selectedCountries.filter((c) => c !== "ALL");
-      if (updated.includes(upper)) {
-        updated = updated.filter((c) => c !== upper);
-      } else {
-        updated.push(upper);
+  // Filtered rulesets for directory view
+  const filteredRulesets = useMemo(() => {
+    return rulesets.filter((r) => {
+      if (directoryFilter === "enabled" && !r.enabled) return false;
+      if (directoryFilter === "disabled" && r.enabled) return false;
+      if (directorySearch.trim()) {
+        const query = directorySearch.toLowerCase();
+        return (
+          r.name.toLowerCase().includes(query) ||
+          r.description.toLowerCase().includes(query) ||
+          (r.tags && r.tags.some((t) => t.toLowerCase().includes(query)))
+        );
       }
-      if (updated.length === 0) {
-        updated = detectedLocation?.countryCode ? [detectedLocation.countryCode.toUpperCase()] : ["ALL"];
-      }
-      setSelectedCountries(updated);
-    }
-    setCountrySearch("");
+      return true;
+    });
+  }, [rulesets, directoryFilter, directorySearch]);
+
+  // Active selected step in canvas
+  const selectedStep = useMemo(() => {
+    if (!currentRuleset || !selectedStepId) return null;
+    return currentRuleset.rules.find((r) => r.id === selectedStepId) || null;
+  }, [currentRuleset, selectedStepId]);
+
+  // Open ruleset editor
+  const handleOpenRuleset = (rs: Ruleset) => {
+    setCurrentRuleset(JSON.parse(JSON.stringify(rs)));
+    setSelectedStepId(rs.rules[0]?.id || null);
+    setActiveView("canvas");
+    setEditorTab("rules");
+    setHasUnsavedChanges(false);
   };
 
-  const removeCountry = (code: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setHasUserModifiedCountries(true);
-    const upper = code.toUpperCase();
-    const updated = selectedCountries.filter((c) => c !== upper);
-    if (updated.length === 0) {
-      setSelectedCountries(detectedLocation?.countryCode ? [detectedLocation.countryCode.toUpperCase()] : ["ALL"]);
-    } else {
-      setSelectedCountries(updated);
-    }
-  };
-
-  const setAutoDetectedCountry = () => {
-    if (detectedLocation?.countryCode) {
-      setHasUserModifiedCountries(true);
-      setSelectedCountries([detectedLocation.countryCode.toUpperCase()]);
-      toast({
-        title: "Geo-Targeting Set to Your Location",
-        description: `Configured allowed traffic to ${detectedLocation.countryName} (${detectedLocation.countryCode}).`,
-      });
-    }
-  };
-
-  const filteredCountryOptions = useMemo(() => {
-    const search = countrySearch.toLowerCase().trim();
-    if (!search) return COUNTRIES_LIST;
-    return COUNTRIES_LIST.filter(
-      (c) =>
-        c.name.toLowerCase().includes(search) ||
-        c.code.toLowerCase().includes(search)
+  // Toggle ruleset enabled state in directory
+  const handleToggleRulesetEnabled = (id: string, newEnabled: boolean) => {
+    const updated = rulesets.map((r) => 
+      r.id === id ? { ...r, enabled: newEnabled, updatedAt: new Date().toISOString() } : r
     );
-  }, [countrySearch]);
+    setRulesets(updated);
+    saveMutation.mutate(updated);
+  };
 
-  const handleSave = () => {
-    const countriesPayload = selectedCountries.length === 0 || selectedCountries.includes("ALL")
-      ? "ALL"
-      : selectedCountries.join(",");
-
-    updateUrlsMutation.mutate({
-      humanUrl: humanUrl || redirectUrls?.humanUrl || "https://yourdomain.com",
-      botUrl: botUrl || redirectUrls?.botUrl || "403",
-      allowedCountries: countriesPayload,
-      allowedDevices,
-      desktopOsFilter,
-      blockVpn,
-      allowVpn: blockVpn === "allow",
-      allowSearchCrawlers,
-      blockAiCrawlers,
-      allowSocialPreviews,
-      protectionMode,
-      activeAdPlatforms: activeAdPlatforms.join(","),
+  // Delete ruleset
+  const handleDeleteRuleset = (id: string) => {
+    const updated = rulesets.filter((r) => r.id !== id);
+    setRulesets(updated);
+    saveMutation.mutate(updated);
+    toast({
+      title: "Ruleset removed",
+      description: "The ruleset has been deleted from your deployment.",
     });
   };
 
-  const toggleAdPlatform = (platformId: string) => {
-    setActiveAdPlatforms((prev) => {
-      if (prev.includes(platformId)) {
-        if (prev.length === 1) {
-          toast({
-            title: "At Least One Platform Required",
-            description: "You must keep at least one ad platform active when ad campaign protection is enabled.",
-            variant: "destructive",
-          });
-          return prev;
+  // Create ruleset from template
+  const handleSelectTemplate = (templateId: string) => {
+    const template = PREMADE_RULE_TEMPLATES.find((t) => t.id === templateId);
+    if (!template) return;
+
+    const newRuleset: Ruleset = {
+      id: `rs_${template.id}_${Date.now()}`,
+      name: template.name,
+      description: template.description,
+      enabled: true,
+      templateId: template.id,
+      tags: template.tags,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      rules: JSON.parse(JSON.stringify(template.rules)),
+    };
+
+    setCurrentRuleset(newRuleset);
+    setSelectedStepId(newRuleset.rules[0]?.id || null);
+    setShowTemplateModal(false);
+    setActiveView("canvas");
+    setEditorTab("rules");
+    setHasUnsavedChanges(true);
+  };
+
+  // Create ruleset from scratch
+  const handleStartFromScratch = () => {
+    const newRuleset: Ruleset = {
+      id: `rs_custom_${Date.now()}`,
+      name: "My Custom Ruleset",
+      description: "Custom rule definitions using real-time smart signals.",
+      enabled: true,
+      tags: ["Custom Defense"],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      rules: [
+        {
+          id: `step_${Date.now()}`,
+          name: "Browser Bot is Bad",
+          stepNumber: 2,
+          enabled: true,
+          conditions: [
+            {
+              id: `cond_${Date.now()}`,
+              field: "bot_threat",
+              operator: "is",
+              value: "Bad",
+            }
+          ],
+          action: "block_response",
+          statusCode: 403,
+          headers: [{ key: "Content-Type", value: "application/json" }],
+          bodyType: "application/json",
+          body: '{"message": "Blocked by rule"}',
         }
-        return prev.filter((p) => p !== platformId);
-      } else {
-        return [...prev, platformId];
-      }
-    });
+      ],
+    };
+
+    setCurrentRuleset(newRuleset);
+    setSelectedStepId(newRuleset.rules[0]?.id || null);
+    setShowTemplateModal(false);
+    setActiveView("canvas");
+    setEditorTab("rules");
+    setHasUnsavedChanges(true);
   };
 
-  const detectedCountryName = detectedLocation?.countryName || "Detecting...";
-  const detectedCountryCode = detectedLocation?.countryCode || "";
-  const detectedFlag = getCountryFlag(detectedCountryCode);
+  // Save changes in canvas
+  const handleSaveCurrentRuleset = () => {
+    if (!currentRuleset) return;
 
-  const isBot404 = botUrl.trim() === "404" || botUrl.trim().startsWith("404");
-  const isBot403 = botUrl.trim() === "403" || botUrl.trim().startsWith("403");
-  const isBotUrl = botUrl.trim().startsWith("http://") || botUrl.trim().startsWith("https://");
+    const existingIdx = rulesets.findIndex((r) => r.id === currentRuleset.id);
+    let updated: Ruleset[];
+    if (existingIdx !== -1) {
+      updated = [...rulesets];
+      updated[existingIdx] = { ...currentRuleset, updatedAt: new Date().toISOString() };
+    } else {
+      updated = [...rulesets, { ...currentRuleset, updatedAt: new Date().toISOString() }];
+    }
 
-  return (
-    <div className="space-y-6 w-full">
-      {/* Account Flagged Compliance Banner */}
-      {complianceStatus === "flagged" && (
-        <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl flex items-start gap-3 text-xs text-amber-900 shadow-xs" data-testid="routing-flagged-banner">
-          <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <span className="font-bold text-amber-950">Account Under Compliance Review (Flagged):</span>
-            <p className="text-amber-800">
-              Modifying link routing rules is temporarily restricted while your account undergoes security and compliance review.
-              {statusReason ? ` Note: "${statusReason}". ` : " "}
-              Your existing traffic filters and redirection settings remain active and protected. Contact support if you have questions.
+    setRulesets(updated);
+    saveMutation.mutate(updated);
+  };
+
+  // Add step to current ruleset
+  const handleAddStep = () => {
+    if (!currentRuleset) return;
+    const newStepNumber = currentRuleset.rules.length + 2;
+    const newStep: RuleStep = {
+      id: `step_${Date.now()}`,
+      name: `Step ${newStepNumber}. Block with response`,
+      stepNumber: newStepNumber,
+      enabled: true,
+      conditions: [
+        {
+          id: `cond_${Date.now()}`,
+          field: "vpn",
+          operator: "is",
+          value: "True",
+        }
+      ],
+      action: "block_response",
+      statusCode: 403,
+      headers: [{ key: "Content-Type", value: "application/json" }],
+      bodyType: "application/json",
+      body: '{"message": "Blocked by rule"}',
+    };
+
+    const updatedRules = [...currentRuleset.rules, newStep];
+    setCurrentRuleset({ ...currentRuleset, rules: updatedRules });
+    setSelectedStepId(newStep.id);
+    setHasUnsavedChanges(true);
+  };
+
+  // Delete step from current ruleset
+  const handleDeleteStep = (stepId: string) => {
+    if (!currentRuleset) return;
+    const updatedRules = currentRuleset.rules.filter((r) => r.id !== stepId);
+    // Re-index step numbers
+    updatedRules.forEach((r, idx) => {
+      r.stepNumber = idx + 2;
+    });
+
+    setCurrentRuleset({ ...currentRuleset, rules: updatedRules });
+    if (selectedStepId === stepId) {
+      setSelectedStepId(updatedRules[0]?.id || null);
+    }
+    setHasUnsavedChanges(true);
+  };
+
+  // Duplicate step
+  const handleDuplicateStep = (stepId: string) => {
+    if (!currentRuleset) return;
+    const target = currentRuleset.rules.find((r) => r.id === stepId);
+    if (!target) return;
+
+    const duplicated: RuleStep = {
+      ...JSON.parse(JSON.stringify(target)),
+      id: `step_${Date.now()}`,
+      name: `${target.name} (Copy)`,
+      stepNumber: currentRuleset.rules.length + 2,
+    };
+
+    const updatedRules = [...currentRuleset.rules, duplicated];
+    setCurrentRuleset({ ...currentRuleset, rules: updatedRules });
+    setSelectedStepId(duplicated.id);
+    setHasUnsavedChanges(true);
+  };
+
+  // Update selected step fields
+  const handleUpdateStep = (updates: Partial<RuleStep>) => {
+    if (!currentRuleset || !selectedStepId) return;
+    const updatedRules = currentRuleset.rules.map((r) => 
+      r.id === selectedStepId ? { ...r, ...updates } : r
+    );
+    setCurrentRuleset({ ...currentRuleset, rules: updatedRules });
+    setHasUnsavedChanges(true);
+  };
+
+  // Add condition to selected step
+  const handleAddCondition = () => {
+    if (!selectedStep) return;
+    const newCond: RuleCondition = {
+      id: `cond_${Date.now()}`,
+      field: "bot_threat",
+      operator: "is",
+      value: "Bad",
+      logicalOp: "AND",
+    };
+    const updatedConditions = [...selectedStep.conditions, newCond];
+    handleUpdateStep({ conditions: updatedConditions });
+  };
+
+  // Remove condition from selected step
+  const handleRemoveCondition = (condId: string) => {
+    if (!selectedStep) return;
+    const updatedConditions = selectedStep.conditions.filter((c) => c.id !== condId);
+    handleUpdateStep({ conditions: updatedConditions });
+  };
+
+  // Update specific condition
+  const handleUpdateCondition = (condId: string, updates: Partial<RuleCondition>) => {
+    if (!selectedStep) return;
+    const updatedConditions = selectedStep.conditions.map((c) => 
+      c.id === condId ? { ...c, ...updates } : c
+    );
+    handleUpdateStep({ conditions: updatedConditions });
+  };
+
+  // Add custom header to selected step
+  const handleAddHeader = () => {
+    if (!selectedStep) return;
+    const updatedHeaders = [...selectedStep.headers, { key: "X-Protected-By", value: "CleanTraffic" }];
+    handleUpdateStep({ headers: updatedHeaders });
+  };
+
+  // Remove custom header
+  const handleRemoveHeader = (index: number) => {
+    if (!selectedStep) return;
+    const updatedHeaders = selectedStep.headers.filter((_, idx) => idx !== index);
+    handleUpdateStep({ headers: updatedHeaders });
+  };
+
+  // Update custom header
+  const handleUpdateHeader = (index: number, key: string, value: string) => {
+    if (!selectedStep) return;
+    const updatedHeaders = [...selectedStep.headers];
+    updatedHeaders[index] = { key, value };
+    handleUpdateStep({ headers: updatedHeaders });
+  };
+
+  // Helper icon for condition field
+  const getFieldIcon = (field: RuleField) => {
+    switch (field) {
+      case "bot_threat": return <Bot className="h-3.5 w-3.5 text-blue-600" />;
+      case "vpn": return <Shield className="h-3.5 w-3.5 text-emerald-600" />;
+      case "datacenter": return <Server className="h-3.5 w-3.5 text-purple-600" />;
+      case "country": return <Globe className="h-3.5 w-3.5 text-amber-600" />;
+      case "velocity": return <Activity className="h-3.5 w-3.5 text-rose-600" />;
+      case "ip_blocklist": return <Lock className="h-3.5 w-3.5 text-red-600" />;
+      case "tor_proxy": return <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />;
+      case "devtools": return <Code className="h-3.5 w-3.5 text-indigo-600" />;
+      default: return <Bot className="h-3.5 w-3.5 text-slate-500" />;
+    }
+  };
+
+  // ═════════════════════════════════════════════════════════════════
+  // VIEW 1: RULES ENGINE DIRECTORY (Screenshot 3)
+  // ═════════════════════════════════════════════════════════════════
+  if (activeView === "directory") {
+    return (
+      <div className="w-full space-y-6 pb-12">
+        {/* Top Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+              Rules Engine
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Deploy no-code rules to protect pages and API endpoints from bots, abuse, and fraud.
             </p>
           </div>
-        </div>
-      )}
 
-      {/* Account Pending Compliance Banner */}
-      {complianceStatus === "pending" && (
-        <div className="p-4 bg-blue-50 border border-blue-300 rounded-xl flex items-start gap-3 text-xs text-blue-900 shadow-xs" data-testid="routing-pending-banner">
-          <Clock className="h-4 w-4 text-blue-700 shrink-0 mt-0.5" />
-          <div className="space-y-1">
-            <span className="font-bold text-blue-950">Account Verification Pending:</span>
-            <p className="text-blue-800">
-              Your account is awaiting compliance approval. Link routing updates will become available once your account status is cleared.
-              {statusReason ? ` Reason: "${statusReason}".` : ""}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Read-Only Notice for Expired Trials */}
-      {isReadOnly && !isRestrictedByCompliance && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-xs" data-testid="routing-readonly-banner">
           <div className="flex items-center gap-2.5">
-            <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
-            <div>
-              <span className="font-bold">Read-Only Mode (Trial Expired):</span> All your routing policies, geofences, and threat mitigation rules remain fully intact and viewable. Upgrade your subscription to modify settings and resume active link defense.
-            </div>
-          </div>
-          {onUpgradeClick && (
             <Button
+              variant="default"
               size="sm"
-              onClick={onUpgradeClick}
-              className="bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs h-7 px-3 rounded-lg shrink-0 border-none"
+              onClick={() => setActiveView("starter")}
+              className="bg-[#0A5C48] hover:bg-[#084838] text-white text-xs font-semibold h-8.5 px-3.5 rounded-lg gap-1.5 shadow-xs"
             >
-              Upgrade to Edit
+              <Plus className="h-3.5 w-3.5" />
+              <span>New ruleset</span>
             </Button>
-          )}
-        </div>
-      )}
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 0: PROTECTION MODE & CAMPAIGN SCOPE
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-6 shadow-xs">
-        <div className="flex items-center justify-between border-b border-[#E5EAE7] pb-3.5">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#EBF5F1] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
-              <Layers className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-                Protection Scope & Campaign Targeting
-              </h3>
-              <p className="text-xs text-[#64748B]">
-                Specify whether you are protecting direct website pages, paid advertising campaigns, or both
-              </p>
-            </div>
-          </div>
-          <span className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#0A5C48] bg-[#EBF5F1] border border-[#CCE5DB] px-2.5 py-1 rounded-full">
-            <Radio className="h-3 w-3 animate-pulse text-[#0A5C48]" />
-            Active Mode: <strong className="capitalize">{protectionMode}</strong>
-          </span>
-        </div>
-
-        {/* Protection Mode Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Option 1: Regular Website */}
-          <div
-            onClick={() => !effectiveReadOnly && setProtectionMode("website")}
-            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-              protectionMode === "website"
-                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
-            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
-                  <Globe className="h-4 w-4" />
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
-                  Organic / Direct
-                </span>
-              </div>
-              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
-                Regular Website Protection
-              </h4>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                For standard landing pages, login portals, signup pages, or content. Ad bot reviewer bypasses are turned off to prevent scrapers.
-              </p>
-            </div>
-            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 font-medium">Ad Bot Exemption:</span>
-              <span className="font-bold text-rose-600">Disabled</span>
-            </div>
-          </div>
-
-          {/* Option 2: Paid Ads */}
-          <div
-            onClick={() => !effectiveReadOnly && setProtectionMode("ads")}
-            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-              protectionMode === "ads"
-                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
-            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
-                  <Megaphone className="h-4 w-4" />
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200">
-                  Paid Campaigns Only
-                </span>
-              </div>
-              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
-                Paid Ads Campaign Protection
-              </h4>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                Dedicated campaign security. Shields your ad budget from competitor click fraud while verifying compliance bots so ads get approved.
-              </p>
-            </div>
-            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 font-medium">Reviewer Bypass:</span>
-              <span className="font-bold text-emerald-600">Strict Scoped</span>
-            </div>
-          </div>
-
-          {/* Option 3: Hybrid (Default) */}
-          <div
-            onClick={() => !effectiveReadOnly && setProtectionMode("hybrid")}
-            className={`p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-              protectionMode === "hybrid"
-                ? "bg-[#F7FAF8] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#D5DFD9] hover:border-[#82928A]"
-            } ${effectiveReadOnly ? "opacity-70 pointer-events-none" : ""}`}
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-700">
-                  <Layers className="h-4 w-4" />
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  Recommended
-                </span>
-              </div>
-              <h4 className="text-xs font-bold text-[#0F172A] mb-1">
-                Hybrid (Website & Ads)
-              </h4>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                All-in-one protection. Safely handles organic site visitors and paid ad clicks under the same tracking script without configuration clashes.
-              </p>
-            </div>
-            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-              <span className="text-slate-500 font-medium">Smart Adaptation:</span>
-              <span className="font-bold text-emerald-600">Universal</span>
-            </div>
           </div>
         </div>
 
-        {/* Conditional Platform Scope Selection */}
-        {protectionMode !== "website" && (
-          <div className="space-y-3 pt-2">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-[#E5EAE7] pt-4">
-              <div>
-                <Label className="text-xs font-bold text-[#2D3B35]">
-                  Active Advertising Platforms
-                </Label>
-                <p className="text-[11px] text-[#64748B]">
-                  Select where you run ads. Legitimate compliance bots from these platforms are recognized; spoofed or unauthorized bots are blocked.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => !effectiveReadOnly && setActiveAdPlatforms(supportedPlatforms.map(p => p.id))}
-                  className="h-7 text-[10px] font-semibold text-[#0A5C48] border-[#CCE5DB] hover:bg-[#EBF5F1]"
-                  disabled={effectiveReadOnly}
-                >
-                  Select All
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => !effectiveReadOnly && setActiveAdPlatforms(["google"])}
-                  className="h-7 text-[10px] font-semibold text-slate-600 border-slate-200 hover:bg-slate-50"
-                  disabled={effectiveReadOnly}
-                >
-                  Google Only
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {supportedPlatforms.map((platform) => {
-                const isSelected = activeAdPlatforms.includes(platform.id);
-                return (
-                  <div
-                    key={platform.id}
-                    onClick={() => !effectiveReadOnly && toggleAdPlatform(platform.id)}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
-                      isSelected
-                        ? "bg-[#F7FAF8] border-[#0A5C48] shadow-xs"
-                        : "bg-white border-[#E5EAE7] opacity-65 hover:opacity-100"
-                    } ${effectiveReadOnly ? "pointer-events-none" : ""}`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                            isSelected ? "bg-[#0A5C48] border-[#0A5C48] text-white" : "border-[#D5DFD9] bg-white"
-                          }`}>
-                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                          <span className="text-xs font-bold text-[#0F172A]">
-                            {platform.name}
-                          </span>
-                        </div>
-                        <span className="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
-                          {platform.badge}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-[#64748B] leading-snug mb-2">
-                        {platform.description}
-                      </p>
-                    </div>
-                    <div className="pt-2 border-t border-slate-100/80 text-[10px] text-slate-500">
-                      <span className="font-semibold text-slate-700">Verified Crawlers:</span> {platform.reviewers}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-lg flex items-start gap-2.5 text-[11px] text-emerald-900">
-              <ShieldCheck className="h-4 w-4 text-emerald-700 shrink-0 mt-0.5" />
-              <div>
-                <span className="font-bold">Strict Platform Boundary Active:</span>
-                {" "}If you only run on Google Ads and deselect Meta or TikTok, bots claiming to be FacebookBot or Bytespider will <strong className="text-emerald-950">NOT</strong> be exempted and will be treated according to your standard bot protection rules.
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 1: BLOCKING CONTROLS (VPN & PROXIES)
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
-        <div className="flex items-center gap-2.5 border-b border-[#E5EAE7] pb-3.5">
-          <div className="w-8 h-8 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600">
-            <Shield className="h-4 w-4" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-              VPN & Proxies Policy
-            </h3>
-            <p className="text-xs text-[#64748B]">
-              Configure filtering and deflection rules for anonymizers, proxies, and VPN tunnels
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-1">
-          {/* Block VPN and Proxies Select */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold text-[#2D3B35]">
-                VPN & Proxies Enforcement
-              </Label>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                <ShieldCheck className="h-3 w-3 text-emerald-600" />
-                Zero-Blind-Trust Protected
-              </span>
-            </div>
-            <div className="relative">
-              <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-rose-600 pointer-events-none">
-                <Shield className="h-4 w-4" />
-              </div>
-              <select
-                value={blockVpn}
-                onChange={(e) => setBlockVpn(e.target.value as "block" | "allow")}
-                className="w-full h-11 pl-11 pr-10 bg-white border border-[#D5DFD9] rounded-lg text-xs font-semibold text-[#0F172A] appearance-none focus:outline-none focus:ring-1 focus:ring-[#0A5C48] focus:border-[#0A5C48] transition-all cursor-pointer hover:border-[#82928A]"
-              >
-                <option value="block">Block All VPN & Proxies (Deflect to Bot Action / Error)</option>
-                <option value="allow">Allow Clean Consumer VPNs (Safe Multi-Layer Verification — Blocks botnets & scrapers)</option>
-              </select>
-              <ChevronDown className="h-4 w-4 text-[#64748B] absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-            <p className="text-[11px] text-[#64748B] leading-relaxed">
-              {blockVpn === "allow" ? (
-                <>
-                  <span className="text-emerald-700 font-bold">Safe Verification Active:</span> CleanTraffic does not blind-trust proxy visitors. Genuine consumer privacy networks (Apple iCloud Private Relay, Google One, NordVPN) are verified and permitted, while botnets, scrapers, and malicious residential proxy pools remain blocked.
-                </>
-              ) : (
-                <>
-                  When set to <span className="text-rose-600 font-bold">"Block"</span>, all visitors detected using VPNs, Tor exit nodes, residential proxies, or datacenter IPs are deflected immediately.
-                </>
-              )}
-            </p>
-          </div>
-
-          {/* Quick Info Box */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex items-start gap-3">
-            <div className="w-6 h-6 rounded-md bg-[#E6F2ED] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48] shrink-0 mt-0.5">
-              <HelpCircle className="h-3.5 w-3.5" />
-            </div>
-            <div className="space-y-1 text-xs text-[#2D3B35]">
-              <p className="font-bold text-[#0F172A]">Multi-Layer Threat Inspection</p>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                Traffic is evaluated against IP reputation feeds, datacenter ASNs, open proxy ports, and headless browser attributes in sub-millisecond response times.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 2: DEVICE FILTERING RULES (MOBILE & DESKTOP)
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
-        <div className="flex items-center gap-2.5 border-b border-[#E5EAE7] pb-3.5">
-          <div className="w-8 h-8 rounded-lg bg-[#EBF5F1] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
-            <Laptop className="h-4 w-4" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-              Device Filtering & Targeting
-            </h3>
-            <p className="text-xs text-[#64748B]">
-              Control which devices are allowed to access your Target Offer. Restricted devices are deflected to your Bot Action.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
-          {/* Option 1: All Devices */}
-          <button
-            type="button"
-            onClick={() => setAllowedDevices("all")}
-            className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between space-y-3 ${
-              allowedDevices === "all"
-                ? "bg-[#EBF5F1] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#E5EAE7] hover:border-[#D5DFD9] hover:bg-[#F7FAF8]"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] text-[#0A5C48] flex items-center justify-center">
-                <Globe className="h-4 w-4" />
-              </div>
-              {allowedDevices === "all" && (
-                <span className="w-5 h-5 rounded-full bg-[#0A5C48] text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </span>
-              )}
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0F172A]">All Devices</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Desktop, Mobile & Tablet allowed</div>
-            </div>
-          </button>
-
-          {/* Option 2: Desktop Only */}
-          <button
-            type="button"
-            onClick={() => setAllowedDevices("desktop")}
-            className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between space-y-3 ${
-              allowedDevices === "desktop"
-                ? "bg-[#EBF5F1] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#E5EAE7] hover:border-[#D5DFD9] hover:bg-[#F7FAF8]"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
-                <Laptop className="h-4 w-4" />
-              </div>
-              {allowedDevices === "desktop" && (
-                <span className="w-5 h-5 rounded-full bg-[#0A5C48] text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </span>
-              )}
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0F172A]">Desktop Only</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Deflect mobile visitors to error page</div>
-            </div>
-          </button>
-
-          {/* Option 3: Mobile Only */}
-          <button
-            type="button"
-            onClick={() => setAllowedDevices("mobile")}
-            className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between space-y-3 ${
-              allowedDevices === "mobile"
-                ? "bg-[#EBF5F1] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#E5EAE7] hover:border-[#D5DFD9] hover:bg-[#F7FAF8]"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] text-[#0A5C48] flex items-center justify-center">
-                <Smartphone className="h-4 w-4" />
-              </div>
-              {allowedDevices === "mobile" && (
-                <span className="w-5 h-5 rounded-full bg-[#0A5C48] text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </span>
-              )}
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0F172A]">Mobile Only</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Deflect desktop visitors to error page</div>
-            </div>
-          </button>
-
-          {/* Option 4: Mobile & Tablet Only */}
-          <button
-            type="button"
-            onClick={() => setAllowedDevices("mobile_tablet")}
-            className={`p-4 rounded-xl border text-left transition-all relative flex flex-col justify-between space-y-3 ${
-              allowedDevices === "mobile_tablet"
-                ? "bg-[#EBF5F1] border-[#0A5C48] ring-1 ring-[#0A5C48] shadow-xs"
-                : "bg-white border-[#E5EAE7] hover:border-[#D5DFD9] hover:bg-[#F7FAF8]"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="w-8 h-8 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center">
-                <Tablet className="h-4 w-4" />
-              </div>
-              {allowedDevices === "mobile_tablet" && (
-                <span className="w-5 h-5 rounded-full bg-[#0A5C48] text-white flex items-center justify-center text-[10px] font-bold">
-                  ✓
-                </span>
-              )}
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0F172A]">Mobile & Tablet</div>
-              <div className="text-[11px] text-[#64748B] mt-0.5">Deflect desktop visitors to error page</div>
-            </div>
-          </button>
-        </div>
-
-        {/* Secondary OS Filter */}
-        {allowedDevices === "desktop" && (
-          <div id="desktop-os-filter-container" className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 space-y-3 shadow-xs animate-in fade-in slide-in-from-top-2 duration-200">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h4 className="text-xs font-bold text-[#0F172A] flex items-center gap-2">
-                  <Laptop className="h-3.5 w-3.5 text-[#0A5C48]" />
-                  <span className="text-[#0A5C48] font-bold uppercase tracking-wide">Required OS:</span>
-                  Desktop Operating System
-                </h4>
-                <p className="text-[11px] text-[#64748B]">Choose which desktop platforms are permitted to access your Target Offer</p>
-              </div>
-              <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-md bg-[#E6F2ED] text-[#07382D] border border-[#CCE5DB] w-fit">
-                Active: {desktopOsFilter === "windows" ? "Windows Only" : desktopOsFilter === "mac" ? "Mac (macOS) Only" : "Both (Windows & Mac)"}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
-              <button
-                id="os-btn-both"
-                type="button"
-                onClick={() => setDesktopOsFilter("both")}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  desktopOsFilter === "both"
-                    ? "bg-[#EBF5F1] border-[#0A5C48] text-[#07382D] font-bold"
-                    : "bg-white border-[#E5EAE7] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F7FAF8]"
-                }`}
-              >
-                <div className="text-xs font-bold">Both (Windows & Mac)</div>
-                <div className="text-[10px] text-[#64748B] mt-0.5">All standard desktop systems</div>
-              </button>
-
-              <button
-                id="os-btn-windows"
-                type="button"
-                onClick={() => setDesktopOsFilter("windows")}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  desktopOsFilter === "windows"
-                    ? "bg-[#EBF5F1] border-[#0A5C48] text-[#07382D] font-bold"
-                    : "bg-white border-[#E5EAE7] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F7FAF8]"
-                }`}
-              >
-                <div className="text-xs font-bold">Windows Only</div>
-                <div className="text-[10px] text-[#64748B] mt-0.5">Deflect Mac & Linux to Bot Action</div>
-              </button>
-
-              <button
-                id="os-btn-mac"
-                type="button"
-                onClick={() => setDesktopOsFilter("mac")}
-                className={`p-3 rounded-lg border text-left transition-all ${
-                  desktopOsFilter === "mac"
-                    ? "bg-[#EBF5F1] border-[#0A5C48] text-[#07382D] font-bold"
-                    : "bg-white border-[#E5EAE7] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F7FAF8]"
-                }`}
-              >
-                <div className="text-xs font-bold">Mac (macOS) Only</div>
-                <div className="text-[10px] text-[#64748B] mt-0.5">Deflect Windows & Linux to Bot Action</div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-3.5 flex items-center gap-3 text-xs text-[#2D3B35]">
-          <div className="w-6 h-6 rounded-md bg-[#E6F2ED] text-[#0A5C48] flex items-center justify-center shrink-0">
-            <HelpCircle className="h-3.5 w-3.5" />
-          </div>
-          <div>
-            <span className="font-bold text-[#0F172A]">Device Routing Mode: </span>
-            {allowedDevices === "all" && "All humans on any device are routed normally to your Target Offer."}
-            {allowedDevices === "desktop" && desktopOsFilter === "both" && "All desktop humans (Windows & Mac) reach your Target Offer. Mobile & tablet visitors are deflected to your Bot Action."}
-            {allowedDevices === "desktop" && desktopOsFilter === "windows" && "Only Windows desktop humans reach your Target Offer. Mac, Linux, mobile, and tablet visitors are deflected."}
-            {allowedDevices === "desktop" && desktopOsFilter === "mac" && "Only Mac (macOS) desktop humans reach your Target Offer. Windows, Linux, mobile, and tablet visitors are deflected."}
-            {allowedDevices === "mobile" && "Mobile humans reach your Target Offer. Desktop visitors are deflected."}
-            {allowedDevices === "mobile_tablet" && "Mobile & tablet humans reach your Target Offer. Desktop visitors are deflected."}
-          </div>
-        </div>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 3: MANAGE COUNTRIES (GEO-FENCING & AUTO-DETECT)
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E5EAE7] pb-3.5">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
-              <Flag className="h-4 w-4" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-                Manage Countries (Geo-Fencing)
-              </h3>
-              <p className="text-xs text-[#64748B]">
-                Allow specific countries and deflect unapproved regions to your Bot Action
-              </p>
-            </div>
-          </div>
-
-          {/* Auto-detected IP indicator */}
-          {detectedCountryCode && (
-            <div className="flex items-center gap-2 bg-[#F7FAF8] border border-[#E0E9E4] px-3 py-1.5 rounded-lg shadow-xs">
-              <LocateFixed className="h-3.5 w-3.5 text-[#0A5C48]" />
-              <span className="text-xs text-[#2D3B35]">
-                Your IP: <strong className="text-[#0F172A]">{detectedFlag} {detectedCountryName} ({detectedCountryCode})</strong>
-              </span>
-              <button
-                type="button"
-                onClick={setAutoDetectedCountry}
-                title="Default to your detected country"
-                className="ml-1 text-[11px] font-bold text-[#0A5C48] hover:text-[#07382D] underline underline-offset-2 transition-colors"
-              >
-                Use Default
-              </button>
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2 relative" ref={countryDropdownRef}>
-          <div className="flex items-center justify-between">
-            <Label className="text-xs font-bold text-[#2D3B35]">
-              Allowed Countries
-            </Label>
-            <span className="text-[11px] text-[#64748B]">
-              Click search to add more • Click ✕ on a badge to remove
-            </span>
-          </div>
-          
-          {/* Tag Input Container */}
-          <div 
-            onClick={() => setIsCountryDropdownOpen(true)}
-            className="min-h-[48px] w-full p-2 bg-white border border-[#D5DFD9] rounded-lg flex flex-wrap items-center gap-2 focus-within:ring-1 focus-within:ring-[#0A5C48] focus-within:border-[#0A5C48] transition-all cursor-text hover:border-[#82928A]"
-          >
-            {selectedCountries.map((code) => {
-              const item = COUNTRIES_LIST.find((c) => c.code === code);
-              const flag = item?.flag || getCountryFlag(code);
-              const name = item?.name || code;
-              return (
-                <span
-                  key={code}
-                  className="inline-flex items-center gap-1.5 bg-[#F2F6F4] border border-[#DEE7E2] text-[#0F172A] text-xs font-semibold px-2.5 py-1 rounded-md transition-colors"
-                >
-                  <span className="text-sm leading-none">{flag}</span>
-                  <span className="text-[#0F172A]">{name}</span>
-                  <button
-                    type="button"
-                    onClick={(e) => removeCountry(code, e)}
-                    className="border-l border-[#D5DFD9] pl-1.5 ml-1 text-[#64748B] hover:text-[#DC2626]"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              );
-            })}
-
-            <input
+        {/* Search Bar & Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-[#E2E8F0] rounded-xl shadow-xs">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+            <Input
               type="text"
-              value={countrySearch}
-              onChange={(e) => {
-                setCountrySearch(e.target.value);
-                setIsCountryDropdownOpen(true);
-              }}
-              onFocus={() => setIsCountryDropdownOpen(true)}
-              placeholder={selectedCountries.length === 0 ? "Search to choose countries..." : "Search & add more countries..."}
-              className="flex-1 min-w-[160px] bg-transparent border-0 text-xs text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none px-2 py-1"
+              placeholder="Search rulesets..."
+              value={directorySearch}
+              onChange={(e) => setDirectorySearch(e.target.value)}
+              className="pl-9 h-9 text-xs border-slate-200 bg-slate-50/50 focus:bg-white rounded-lg"
             />
           </div>
 
-          <p className="text-[11px] text-[#64748B]">
-            Only visitors from approved countries can view your Target Offer. All other countries are instantly deflected to your Bot Action (404/403 or Safe Page). Select "All Countries" for global allowance.
-          </p>
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200/80 text-xs">
+            <button
+              type="button"
+              onClick={() => setDirectoryFilter("all")}
+              className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                directoryFilter === "all"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirectoryFilter("enabled")}
+              className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                directoryFilter === "enabled"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Enabled
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirectoryFilter("disabled")}
+              className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                directoryFilter === "disabled"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Disabled
+            </button>
+          </div>
+        </div>
 
-          {/* Country Dropdown Options Menu */}
-          {isCountryDropdownOpen && (
-            <div className="absolute left-0 right-0 top-full mt-2 bg-white border border-[#E5EAE7] rounded-xl shadow-xl z-50 max-h-64 overflow-y-auto p-2 space-y-1 animate-in fade-in-50 duration-150">
-              {filteredCountryOptions.map((c) => {
-                const isSelected = selectedCountries.includes(c.code);
-                return (
+        {/* Rulesets Table / List */}
+        <div className="bg-white border border-[#E2E8F0] rounded-xl shadow-xs overflow-hidden">
+          <div className="grid grid-cols-12 py-3 px-5 border-b border-[#E2E8F0] bg-[#F8FAFC] text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+            <div className="col-span-6 sm:col-span-7">Ruleset</div>
+            <div className="col-span-3 sm:col-span-2 text-center">Status</div>
+            <div className="col-span-3 sm:col-span-3 text-right">Deployment</div>
+          </div>
+
+          <div className="divide-y divide-slate-100">
+            {filteredRulesets.map((rs) => (
+              <div
+                key={rs.id}
+                className="grid grid-cols-12 items-center py-4 px-5 hover:bg-slate-50/70 transition-colors group"
+              >
+                {/* Column 1: Ruleset Info */}
+                <div className="col-span-6 sm:col-span-7 pr-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRuleset(rs)}
+                      className="text-sm font-bold text-slate-900 hover:text-[#0A5C48] transition-colors text-left truncate"
+                    >
+                      {rs.name}
+                    </button>
+                    {rs.isDefault && (
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.2 rounded">
+                        Default
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 line-clamp-1 mt-0.5">
+                    {rs.description}
+                  </p>
+
+                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                    <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200 font-mono">
+                      {rs.rules.length} {rs.rules.length === 1 ? "rule" : "rules"} active
+                    </span>
+                    {rs.tags?.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] font-medium text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Column 2: Status Toggle */}
+                <div className="col-span-3 sm:col-span-2 flex items-center justify-center">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={rs.enabled}
+                      onCheckedChange={(checked) => handleToggleRulesetEnabled(rs.id, checked)}
+                      className="data-[state=checked]:bg-[#0A5C48]"
+                    />
+                    <span className={`text-xs font-semibold ${rs.enabled ? "text-emerald-700" : "text-slate-400"}`}>
+                      {rs.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Column 3: Deployment Status & Actions */}
+                <div className="col-span-3 sm:col-span-3 flex items-center justify-end gap-2">
+                  <span className="text-[11px] font-semibold text-slate-500 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-md hidden sm:inline-flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                    <span>Global Ingress</span>
+                  </span>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenRuleset(rs)}
+                    className="h-8 text-xs border-slate-200 text-slate-700 hover:text-slate-900 font-semibold rounded-lg"
+                  >
+                    <span>Edit</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-slate-400 ml-0.5" />
+                  </Button>
+
+                  {!rs.isDefault && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteRuleset(rs.id)}
+                      className="h-8 w-8 p-0 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                      title="Delete ruleset"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {filteredRulesets.length === 0 && (
+              <div className="py-16 text-center text-slate-500">
+                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-3 text-slate-400">
+                  <Layers className="h-6 w-6" />
+                </div>
+                <h4 className="text-sm font-bold text-slate-900">No rulesets yet</h4>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
+                  Create a ruleset to protect pages and API endpoints from bots, abuse, and fraud.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setActiveView("starter")}
+                  className="text-xs font-semibold border-slate-300 gap-1.5 rounded-lg"
+                >
+                  <Plus className="h-3.5 w-3.5 text-[#0A5C48]" />
+                  <span>New ruleset</span>
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // VIEW 2: STARTER SCREEN ("How would you like to start?") (Screenshot 2)
+  // ═════════════════════════════════════════════════════════════════
+  if (activeView === "starter") {
+    return (
+      <div className="w-full min-h-[640px] flex flex-col pb-10">
+        {/* Top Breadcrumb & Actions Bar */}
+        <div className="flex items-center justify-between pb-4 border-b border-[#E2E8F0] mb-8">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveView("directory")}
+              className="text-slate-400 hover:text-slate-700 transition-colors text-xs flex items-center gap-1"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              <span>Rules Engine</span>
+            </button>
+            <span className="text-slate-300">/</span>
+            <span className="text-xs font-bold text-slate-900">New Ruleset</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setActiveView("directory")}
+              className="h-8 text-xs font-semibold text-slate-600 rounded-lg"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+
+        {/* Center Prompt Canvas with subtle dot grid */}
+        <div className="flex-1 flex flex-col items-center justify-center p-6 sm:p-12 border border-[#E2E8F0] rounded-xl bg-white relative overflow-hidden"
+          style={{
+            backgroundImage: "radial-gradient(#CBD5E1 1px, transparent 1px)",
+            backgroundSize: "20px 20px"
+          }}
+        >
+          <div className="max-w-xl text-center mb-8">
+            <h3 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+              How would you like to start?
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1">
+              Select a pre-built industry template or configure custom rule nodes from scratch.
+            </p>
+          </div>
+
+          {/* Two Large Starter Cards (Matching Screenshot 2) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 w-full max-w-2xl">
+            {/* Card 1: Use a template */}
+            <div
+              onClick={() => setShowTemplateModal(true)}
+              className="bg-white border-2 border-slate-200 hover:border-[#0A5C48] rounded-2xl p-6 sm:p-8 cursor-pointer transition-all hover:shadow-md flex flex-col items-center text-center group"
+            >
+              <div className="w-24 h-16 bg-slate-50 rounded-xl border border-slate-200 p-2.5 flex flex-col gap-1.5 mb-5 group-hover:scale-105 transition-transform">
+                <div className="w-full h-1 bg-slate-200 rounded" />
+                <div className="w-3/4 h-1 bg-amber-400 rounded" />
+                <div className="w-5/6 h-1 bg-blue-500 rounded" />
+                <div className="w-2/3 h-1 bg-rose-500 rounded" />
+              </div>
+
+              <h4 className="text-base font-bold text-slate-900 group-hover:text-[#0A5C48] transition-colors">
+                Use a template
+              </h4>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Pre-built rules by industry and use case
+              </p>
+            </div>
+
+            {/* Card 2: Start from scratch */}
+            <div
+              onClick={handleStartFromScratch}
+              className="bg-white border-2 border-slate-200 hover:border-[#0A5C48] rounded-2xl p-6 sm:p-8 cursor-pointer transition-all hover:shadow-md flex flex-col items-center text-center group"
+            >
+              <div className="w-24 h-16 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-center mb-5 group-hover:scale-105 transition-transform text-slate-400 group-hover:text-[#0A5C48]">
+                <Plus className="h-6 w-6" />
+              </div>
+
+              <h4 className="text-base font-bold text-slate-900 group-hover:text-[#0A5C48] transition-colors">
+                Start from scratch
+              </h4>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Build your own ruleset with Smart Signals
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Modal: Template Picker (Screenshot 1) */}
+        {showTemplateModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              {/* Modal Top Bar */}
+              <div className="px-6 pt-5 pb-3 border-b border-slate-100 flex items-center justify-between">
+                <div className="flex items-center gap-6">
                   <button
-                    key={c.code}
                     type="button"
-                    onClick={() => handleCountrySelect(c.code)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-left transition-colors ${
-                      isSelected 
-                        ? "bg-[#EBF5F1] text-[#07382D] font-bold border border-[#CCE5DB]" 
-                        : "text-[#2D3B35] hover:bg-[#F7FAF8] hover:text-[#0F172A]"
+                    onClick={() => handleStartFromScratch()}
+                    className="text-sm font-semibold text-slate-500 hover:text-slate-900 pb-2 border-b-2 border-transparent transition-colors"
+                  >
+                    Start from scratch
+                  </button>
+                  <button
+                    type="button"
+                    className="text-sm font-bold text-[#0A5C48] pb-2 border-b-2 border-[#0A5C48]"
+                  >
+                    Templates
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTemplateModal(false)}
+                  className="text-slate-400 hover:text-slate-700 p-1 rounded-lg"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Search Bar */}
+              <div className="p-4 border-b border-slate-100">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Search templates..."
+                    value={templateSearch}
+                    onChange={(e) => setTemplateSearch(e.target.value)}
+                    className="pl-9 h-9 text-xs border-slate-200 focus:border-[#0A5C48]"
+                  />
+                </div>
+              </div>
+
+              {/* Template Items List (Screenshot 1) */}
+              <div className="p-4 space-y-3 overflow-y-auto max-h-[55vh]">
+                {PREMADE_RULE_TEMPLATES.filter((tpl) => 
+                  !templateSearch.trim() || 
+                  tpl.name.toLowerCase().includes(templateSearch.toLowerCase()) ||
+                  tpl.description.toLowerCase().includes(templateSearch.toLowerCase())
+                ).map((tpl) => (
+                  <div
+                    key={tpl.id}
+                    onClick={() => handleSelectTemplate(tpl.id)}
+                    className="border border-slate-200 hover:border-[#0A5C48] rounded-xl p-4 cursor-pointer transition-all hover:bg-slate-50/70 flex flex-col sm:flex-row sm:items-center gap-4 group"
+                  >
+                    {/* Visual Mini Diagram (Matching Screenshot 1) */}
+                    <div className="w-28 h-14 bg-slate-50 rounded-lg border border-slate-200/80 flex items-center justify-center gap-1.5 shrink-0 px-2"
+                      style={{
+                        backgroundImage: "radial-gradient(#CBD5E1 0.75px, transparent 0.75px)",
+                        backgroundSize: "6px 6px"
+                      }}
+                    >
+                      <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                        <Globe className="h-3 w-3" />
+                      </div>
+                      <div className="w-6 h-6 rounded-md bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600">
+                        <Bot className="h-3 w-3" />
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-400 font-mono">
+                        +{tpl.rules.length}
+                      </span>
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold text-slate-900 group-hover:text-[#0A5C48] transition-colors">
+                        {tpl.name}
+                      </h4>
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
+                        {tpl.description}
+                      </p>
+
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        {tpl.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-[10px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200/60"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <ChevronRight className="h-4 w-4 text-slate-400 group-hover:text-[#0A5C48] shrink-0 hidden sm:block" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════════
+  // VIEW 3: INTERACTIVE FLOW CANVAS & RIGHT INSPECTOR DRAWER (Screenshots 4 & 5)
+  // ═════════════════════════════════════════════════════════════════
+  if (!currentRuleset) return null;
+
+  return (
+    <div className="w-full flex flex-col h-[calc(100vh-140px)] min-h-[640px] pb-4">
+      {/* ─────────────────────────────────────────────────────────────
+          CANVAS TOP NAVBAR (Screenshot 5)
+      ───────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E2E8F0] bg-white z-10">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (hasUnsavedChanges) {
+                if (window.confirm("You have unpublished changes. Discard and return to directory?")) {
+                  setActiveView("directory");
+                }
+              } else {
+                setActiveView("directory");
+              }
+            }}
+            className="text-slate-400 hover:text-slate-700 transition-colors p-1 rounded-lg"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500 font-medium">Rules Engine</span>
+            <span className="text-slate-300">/</span>
+            <div className="flex items-center gap-1.5">
+              <Bot className="h-4 w-4 text-[#0A5C48]" />
+              <span className="text-sm font-bold text-slate-900">{currentRuleset.name}</span>
+            </div>
+          </div>
+
+          {/* Top Tabs: Rules vs Settings */}
+          <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs ml-2 sm:ml-4">
+            <button
+              type="button"
+              onClick={() => setEditorTab("rules")}
+              className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                editorTab === "rules"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Rules
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditorTab("settings")}
+              className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                editorTab === "settings"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              Settings
+            </button>
+          </div>
+        </div>
+
+        {/* Right Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          {hasUnsavedChanges && (
+            <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+              Unpublished changes
+            </span>
+          )}
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              // Reset current ruleset to last saved version
+              const orig = rulesets.find((r) => r.id === currentRuleset.id);
+              if (orig) {
+                setCurrentRuleset(JSON.parse(JSON.stringify(orig)));
+                setHasUnsavedChanges(false);
+                toast({ title: "Changes reverted" });
+              }
+            }}
+            disabled={!hasUnsavedChanges}
+            className="h-8 text-xs font-semibold border-slate-200 rounded-lg text-slate-600"
+          >
+            <RotateCcw className="h-3 w-3 mr-1" />
+            <span>Undo</span>
+          </Button>
+
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleSaveCurrentRuleset}
+            disabled={saveMutation.isPending}
+            className="h-8 text-xs font-semibold bg-[#0A5C48] hover:bg-[#084838] text-white rounded-lg gap-1.5 shadow-xs"
+          >
+            <Save className="h-3.5 w-3.5" />
+            <span>{saveMutation.isPending ? "Saving..." : "Save"}</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          SETTINGS TAB VIEW
+      ───────────────────────────────────────────────────────────── */}
+      {editorTab === "settings" && (
+        <div className="max-w-2xl py-6 space-y-6">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-xs space-y-4">
+            <h3 className="text-sm font-bold text-slate-900">Ruleset Details</h3>
+            
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Ruleset Name</Label>
+              <Input
+                type="text"
+                value={currentRuleset.name}
+                onChange={(e) => {
+                  setCurrentRuleset({ ...currentRuleset, name: e.target.value });
+                  setHasUnsavedChanges(true);
+                }}
+                className="text-xs h-9"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Description</Label>
+              <textarea
+                value={currentRuleset.description}
+                onChange={(e) => {
+                  setCurrentRuleset({ ...currentRuleset, description: e.target.value });
+                  setHasUnsavedChanges(true);
+                }}
+                className="w-full text-xs p-2.5 rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-[#0A5C48]"
+                rows={3}
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <div>
+                <Label className="text-xs font-semibold text-slate-900">Active Status</Label>
+                <p className="text-[11px] text-slate-500">Enable this ruleset across all active integration snippets</p>
+              </div>
+              <Switch
+                checked={currentRuleset.enabled}
+                onCheckedChange={(checked) => {
+                  setCurrentRuleset({ ...currentRuleset, enabled: checked });
+                  setHasUnsavedChanges(true);
+                }}
+                className="data-[state=checked]:bg-[#0A5C48]"
+              />
+            </div>
+          </div>
+
+          {/* Destinations */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-xs space-y-4">
+            <h3 className="text-sm font-bold text-slate-900">Traffic Routing Targets</h3>
+            
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Legitimate Buyer Destination (Human URL)</Label>
+              <Input
+                type="text"
+                value={humanUrl}
+                onChange={(e) => {
+                  setHumanUrl(e.target.value);
+                  setHasUnsavedChanges(true);
+                }}
+                placeholder="https://yourstore.com/target-offer"
+                className="text-xs h-9 font-mono"
+              />
+              <p className="text-[11px] text-slate-500">Where allowed legitimate traffic is forwarded.</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Fallback Bot Deflection (URL or HTTP Status)</Label>
+              <Input
+                type="text"
+                value={botUrl}
+                onChange={(e) => {
+                  setBotUrl(e.target.value);
+                  setHasUnsavedChanges(true);
+                }}
+                placeholder="403 or https://yourstore.com/safe-page"
+                className="text-xs h-9 font-mono"
+              />
+              <p className="text-[11px] text-slate-500">Fallback destination for deflected automated traffic when not blocked directly.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          CANVAS & RIGHT INSPECTOR SPLIT VIEW (Screenshot 5)
+      ───────────────────────────────────────────────────────────── */}
+      {editorTab === "rules" && (
+        <div className="flex-1 flex overflow-hidden border border-[#E2E8F0] rounded-xl mt-3 relative bg-slate-50/50">
+          {/* Main Visual Canvas Area */}
+          <div 
+            className="flex-1 overflow-auto p-8 flex flex-col items-center relative transition-transform duration-200"
+            style={{
+              backgroundImage: "radial-gradient(#CBD5E1 1px, transparent 1px)",
+              backgroundSize: "22px 22px",
+              transform: `scale(${zoomLevel})`,
+              transformOrigin: "top center"
+            }}
+          >
+            {/* ─── NODE 1: TOP START NODE (Screenshot 5) ─── */}
+            <div className="w-80 bg-white border border-slate-200 rounded-xl p-3 shadow-xs flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600">
+                  <Fingerprint className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Start</div>
+                  <div className="text-xs font-bold text-slate-900">1. Identify Visitors</div>
+                </div>
+              </div>
+              <Info className="h-3.5 w-3.5 text-slate-400" />
+            </div>
+
+            {/* Vertical Connector Line 1 */}
+            <div className="w-0.5 h-8 bg-slate-300 shrink-0" />
+
+            {/* ─── SEQUENTIAL RULE STEP NODES ─── */}
+            {currentRuleset.rules.map((rule, idx) => {
+              const isSelected = rule.id === selectedStepId;
+              const isLast = idx === currentRuleset.rules.length - 1;
+
+              return (
+                <div key={rule.id} className="flex flex-col items-center shrink-0">
+                  {/* Rule Card (Screenshot 5) */}
+                  <div
+                    onClick={() => {
+                      setSelectedStepId(rule.id);
+                      setIsInspectorOpen(true);
+                    }}
+                    className={`w-80 bg-white rounded-xl p-4 cursor-pointer transition-all ${
+                      isSelected
+                        ? "border-2 border-blue-500 shadow-md ring-2 ring-blue-500/10"
+                        : "border border-slate-200 hover:border-slate-300 shadow-xs"
                     }`}
                   >
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-base leading-none">{c.flag}</span>
-                      <span className="text-[#0F172A] font-semibold">{c.name}</span>
-                      <span className="text-[10px] text-[#64748B] uppercase font-mono">({c.code})</span>
+                    {/* Card Header */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                          {getFieldIcon(rule.conditions[0]?.field || "bot_threat")}
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900 truncate max-w-[190px]">
+                            {rule.name}
+                          </div>
+                          <div className="text-[10px] text-slate-500 font-medium">
+                            {rule.stepNumber}. {rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card Actions 3-dots */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDuplicateStep(rule.id);
+                        }}
+                        className="text-slate-400 hover:text-slate-700 p-1"
+                        title="Duplicate rule step"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                    {isSelected && <Check className="h-4 w-4 text-[#0A5C48]" />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 4: SEARCH INDEXERS & SOCIAL LINK PREVIEWS
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 space-y-5 shadow-xs">
-        <div className="flex items-center gap-2.5 border-b border-[#E5EAE7] pb-3.5">
-          <div className="w-8 h-8 rounded-lg bg-[#E6F2ED] border border-[#CCE5DB] flex items-center justify-center text-[#0A5C48]">
-            <Search className="h-4 w-4" />
-          </div>
-          <div>
-            <h3 className="text-base font-bold text-[#0F172A] tracking-tight">
-              Search Indexers & Social Link Previews
-            </h3>
-            <p className="text-xs text-[#64748B]">
-              Permit legitimate search engines for organic SEO indexation and social networks for rich Open Graph link previews
-            </p>
-          </div>
-        </div>
+                    {/* Section IF */}
+                    <div className="mb-2">
+                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                        If
+                      </div>
+                      <div className="space-y-1">
+                        {rule.conditions.map((cond) => (
+                          <div
+                            key={cond.id}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700 max-w-full truncate"
+                          >
+                            {getFieldIcon(cond.field)}
+                            <span>{RULE_FIELD_DEFINITIONS[cond.field]?.label || cond.field} is {cond.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Rule 1: Search Engine Crawlers */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex flex-col justify-between space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center">
-                    <Search className="h-3.5 w-3.5" />
+                    {/* Section THEN */}
+                    <div>
+                      <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                        Then
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200/60 text-[11px] font-semibold text-rose-800">
+                        <X className="h-3 w-3 text-rose-600" />
+                        <span>
+                          {rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <h4 className="text-xs font-bold text-[#0F172A]">Search Engine Indexers</h4>
-                </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  allowSearchCrawlers === "allow"
-                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                    : "bg-rose-50 text-rose-700 border-rose-200"
-                }`}>
-                  {allowSearchCrawlers === "allow" ? "Allowed" : "Blocked"}
-                </span>
-              </div>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                Permits verified search spiders (Googlebot, Bingbot, Applebot, DuckDuckGo) to crawl and index your public pages for SEO ranking.
-              </p>
-              <div className="text-[10px] font-mono text-[#0A5C48] bg-[#EBF5F1] px-2 py-1 rounded border border-[#CCE5DB]">
-                Googlebot, Bingbot, Applebot, Baidu, Yandex
-              </div>
-            </div>
 
-            <div className="pt-2 border-t border-[#E0E9E4] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-[#2D3B35]">SEO Crawler Policy</span>
-                {onNavigateToSeoIndexers && (
+                  {/* Vertical Connector Line between steps */}
+                  {!isLast && <div className="w-0.5 h-8 bg-slate-300 shrink-0" />}
+                </div>
+              );
+            })}
+
+            {/* Bottom Add Step Button */}
+            <div className="w-0.5 h-6 bg-slate-300 shrink-0" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleAddStep}
+              className="border-dashed border-2 border-slate-300 hover:border-[#0A5C48] text-slate-600 hover:text-[#0A5C48] bg-white text-xs font-semibold h-8 rounded-lg shrink-0 gap-1.5 shadow-2xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add rule step</span>
+            </Button>
+          </div>
+
+          {/* Bottom Left Zoom Controls (Screenshot 5) */}
+          <div className="absolute left-4 bottom-4 flex items-center bg-white border border-slate-200 rounded-lg shadow-xs p-0.5 z-20">
+            <button
+              type="button"
+              onClick={() => setZoomLevel(1)}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+              title="Fit to view"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+            <div className="w-px h-3.5 bg-slate-200" />
+            <button
+              type="button"
+              onClick={() => setZoomLevel((prev) => Math.max(0.7, prev - 0.1))}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+              title="Zoom out"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+            </button>
+            <div className="w-px h-3.5 bg-slate-200" />
+            <button
+              type="button"
+              onClick={() => setZoomLevel((prev) => Math.min(1.3, prev + 0.1))}
+              className="p-1.5 hover:bg-slate-100 rounded text-slate-600"
+              title="Zoom in"
+            >
+              <ZoomIn className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────
+              RIGHT INSPECTOR DRAWER (Screenshots 4 & 5)
+          ───────────────────────────────────────────────────────── */}
+          {isInspectorOpen && selectedStep && (
+            <div className="w-80 sm:w-96 bg-white border-l border-[#E2E8F0] shadow-lg flex flex-col z-20 overflow-y-auto">
+              {/* Inspector Header */}
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-[#F8FAFC]">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                    {getFieldIcon(selectedStep.conditions[0]?.field || "bot_threat")}
+                  </div>
+                  <h4 className="text-xs font-bold text-slate-900 truncate">
+                    {selectedStep.name}
+                  </h4>
+                </div>
+
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
-                    onClick={onNavigateToSeoIndexers}
-                    className="text-[11px] font-bold text-[#0A5C48] hover:underline flex items-center gap-0.5 cursor-pointer"
+                    onClick={() => setIsInspectorOpen(false)}
+                    className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
                   >
-                    Manage Indexers &rarr;
+                    <X className="h-4 w-4" />
                   </button>
-                )}
-              </div>
-              <div className="inline-flex rounded-lg border border-[#D5DFD9] bg-white p-0.5 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setAllowSearchCrawlers("allow")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    allowSearchCrawlers === "allow"
-                      ? "bg-[#0A5C48] text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Allow
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAllowSearchCrawlers("block")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    allowSearchCrawlers === "block"
-                      ? "bg-rose-600 text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Block
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Rule 2: Social Media Link Previews */}
-          <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-4 flex flex-col justify-between space-y-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 flex items-center justify-center">
-                    <Share2 className="h-3.5 w-3.5" />
-                  </div>
-                  <h4 className="text-xs font-bold text-[#0F172A]">Social Media Previews</h4>
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  allowSocialPreviews === "allow"
-                    ? "bg-blue-50 text-blue-700 border-blue-200"
-                    : "bg-slate-100 text-slate-700 border-slate-200"
-                }`}>
-                  {allowSocialPreviews === "allow" ? "Allowed" : "Blocked"}
-                </span>
               </div>
-              <p className="text-[11px] text-[#64748B] leading-relaxed">
-                Permits social platforms to generate rich Open Graph link preview thumbnails and cards when shared in messaging and social feeds.
-              </p>
-              <div className="text-[10px] font-mono text-blue-700 bg-blue-50/60 px-2 py-1 rounded border border-blue-200">
-                Facebook, Twitter/X, WhatsApp, LinkedIn, Slack
+
+              {/* Inspector Body */}
+              <div className="p-5 space-y-6 flex-1">
+                {/* ─── SECTION IF (Screenshot 5) ─── */}
+                <div className="space-y-3">
+                  <div className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between">
+                    <span>If</span>
+                  </div>
+
+                  {selectedStep.conditions.map((cond, cIdx) => (
+                    <div key={cond.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5 relative">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-semibold text-slate-600">Condition {cIdx + 1}</Label>
+                        {selectedStep.conditions.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCondition(cond.id)}
+                            className="text-slate-400 hover:text-rose-600 p-0.5"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown 1: Field Selector */}
+                      <select
+                        value={cond.field}
+                        onChange={(e) => handleUpdateCondition(cond.id, { field: e.target.value as RuleField })}
+                        className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                      >
+                        {Object.entries(RULE_FIELD_DEFINITIONS).map(([key, def]) => (
+                          <option key={key} value={key}>
+                            {def.label}
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Dropdown 2 & 3: Operator and Value */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={cond.operator}
+                          onChange={(e) => handleUpdateCondition(cond.id, { operator: e.target.value as RuleOperator })}
+                          className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                        >
+                          <option value="is">Is</option>
+                          <option value="is_not">Is Not</option>
+                          <option value="in">In</option>
+                          <option value="not_in">Not In</option>
+                          <option value="greater_than">Greater than</option>
+                        </select>
+
+                        <select
+                          value={cond.value}
+                          onChange={(e) => handleUpdateCondition(cond.id, { value: e.target.value })}
+                          className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                        >
+                          {RULE_FIELD_DEFINITIONS[cond.field]?.defaultValues.map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddCondition}
+                    className="w-full text-xs font-semibold text-slate-600 border-slate-200 rounded-lg h-8 gap-1"
+                  >
+                    <Plus className="h-3 w-3" />
+                    <span>Add condition</span>
+                  </Button>
+                </div>
+
+                {/* ─── SECTION THEN (Screenshot 5) ─── */}
+                <div className="space-y-3">
+                  <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                    Then
+                  </div>
+
+                  <select
+                    value={selectedStep.action}
+                    onChange={(e) => handleUpdateStep({ action: e.target.value as RuleAction })}
+                    className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                  >
+                    <option value="block_response">Block with response</option>
+                    <option value="redirect">Redirect to URL</option>
+                    <option value="challenge">Interactive Challenge</option>
+                    <option value="allow">Allow</option>
+                  </select>
+                </div>
+
+                {/* ─── STATUS CODE SELECTOR (Screenshot 4) ─── */}
+                {selectedStep.action === "block_response" && (
+                  <>
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold text-slate-700">Status</Label>
+                      <select
+                        value={selectedStep.statusCode}
+                        onChange={(e) => handleUpdateStep({ statusCode: parseInt(e.target.value) })}
+                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg p-2.5 focus:ring-1 focus:ring-[#0A5C48]"
+                      >
+                        {HTTP_STATUS_OPTIONS.map((opt) => (
+                          <option key={opt.code} value={opt.code}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-400">
+                        {HTTP_STATUS_OPTIONS.find((o) => o.code === selectedStep.statusCode)?.description}
+                      </p>
+                    </div>
+
+                    {/* ─── HEADERS (Screenshot 5) ─── */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold text-slate-700">Headers</Label>
+                        <button
+                          type="button"
+                          onClick={handleAddHeader}
+                          className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>Add</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        {selectedStep.headers.map((h, hIdx) => (
+                          <div key={hIdx} className="flex items-center gap-2">
+                            <Input
+                              type="text"
+                              value={h.key}
+                              onChange={(e) => handleUpdateHeader(hIdx, e.target.value, h.value)}
+                              placeholder="Key"
+                              className="text-xs h-8 font-mono"
+                            />
+                            <Input
+                              type="text"
+                              value={h.value}
+                              onChange={(e) => handleUpdateHeader(hIdx, h.key, e.target.value)}
+                              placeholder="Value"
+                              className="text-xs h-8 font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveHeader(hIdx)}
+                              className="text-slate-400 hover:text-rose-600 p-1"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* ─── BODY (Screenshot 5) ─── */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold text-slate-700">Body</Label>
+                        <select
+                          value={selectedStep.bodyType}
+                          onChange={(e) => handleUpdateStep({ bodyType: e.target.value as any })}
+                          className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded px-2 py-0.5"
+                        >
+                          <option value="application/json">JSON Content-Type: application/json</option>
+                          <option value="text/html">HTML Content-Type: text/html</option>
+                          <option value="text/plain">Text Content-Type: text/plain</option>
+                        </select>
+                      </div>
+
+                      <textarea
+                        value={selectedStep.body}
+                        onChange={(e) => handleUpdateStep({ body: e.target.value })}
+                        className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0A5C48]"
+                        rows={4}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* If Redirect */}
+                {selectedStep.action === "redirect" && (
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
+                    <Input
+                      type="text"
+                      value={selectedStep.redirectUrl || botUrl}
+                      onChange={(e) => handleUpdateStep({ redirectUrl: e.target.value })}
+                      placeholder="https://yourstore.com/safe-page"
+                      className="text-xs h-9 font-mono"
+                    />
+                  </div>
+                )}
+
+                {/* Delete Step Button */}
+                <div className="pt-4 border-t border-slate-100">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteStep(selectedStep.id)}
+                    className="w-full text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 h-8 gap-1.5 rounded-lg"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Delete rule step</span>
+                  </Button>
+                </div>
               </div>
             </div>
-
-            <div className="pt-2 border-t border-[#E0E9E4] flex items-center justify-between">
-              <span className="text-xs font-medium text-[#2D3B35]">Preview Policy</span>
-              <div className="inline-flex rounded-lg border border-[#D5DFD9] bg-white p-0.5 shadow-2xs">
-                <button
-                  type="button"
-                  onClick={() => setAllowSocialPreviews("allow")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    allowSocialPreviews === "allow"
-                      ? "bg-blue-700 text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Allow
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAllowSocialPreviews("block")}
-                  className={`px-3 py-1 text-[11px] font-bold rounded-md transition-colors ${
-                    allowSocialPreviews === "block"
-                      ? "bg-rose-600 text-white"
-                      : "text-[#64748B] hover:text-[#0F172A]"
-                  }`}
-                >
-                  Block
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tip / explanation box */}
-        <div className="bg-[#F7FAF8] border border-[#E0E9E4] rounded-xl p-3.5 flex items-center gap-3 text-xs text-[#2D3B35]">
-          <div className="w-6 h-6 rounded-md bg-[#E6F2ED] text-[#0A5C48] flex items-center justify-center shrink-0">
-            <HelpCircle className="h-3.5 w-3.5" />
-          </div>
-          <div className="text-[11px] text-[#64748B] leading-relaxed">
-            <span className="font-bold text-[#0F172A]">Safe SEO Coexistence: </span>
-            Allowing Search Engine Indexers lets Google and Bing crawl without penalty, while malicious web scrapers, automated brute-force scripts, and headless browser bots are deflected to your Bot Action.
-          </div>
-        </div>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          INTEGRATION & DEFLECTION CONFIGURATION LINK
-      ───────────────────────────────────────────────────────────── */}
-      <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4.5 flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-[#F25A2A] shadow-2xs">
-            <Zap className="h-4 w-4" />
-          </div>
-          <div>
-            <h4 className="text-xs font-bold text-[#0F172A]">Bot Deflection &amp; Target Architecture</h4>
-            <p className="text-[11px] text-[#64748B]">
-              Configure your edge deflection action (403, 404, or Fallback Redirect) and view framework integration code under the Integration tab.
-            </p>
-          </div>
-        </div>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            const tabsTrigger = document.querySelector('[value="integrations"]') as HTMLElement;
-            if (tabsTrigger) tabsTrigger.click();
-          }}
-          className="text-xs font-bold text-[#0A5C48] border-[#CCE5DB] hover:bg-[#EBF5F1] h-8"
-        >
-          <span>Configure in Integrations</span>
-          <ArrowRight className="h-3 w-3 ml-1" />
-        </Button>
-      </div>
-
-      {/* ─────────────────────────────────────────────────────────────
-          SAVE ACTION BAR
-      ───────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-white border border-[#E5EAE7] rounded-xl shadow-xs">
-        <div className="text-xs text-[#64748B] flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-[#0A5C48] shrink-0" />
-          <span>
-            {isRestrictedByCompliance
-              ? "Routing rule changes are restricted while your account status is under review."
-              : isReadOnly
-              ? "All rules remain safely saved and viewable in read-only mode."
-              : "Rules take effect in real time across all integrated tracking links."}
-          </span>
-        </div>
-        <Button
-          onClick={isRestrictedByCompliance ? undefined : isReadOnly ? onUpgradeClick : handleSave}
-          disabled={isRestrictedByCompliance || (!isReadOnly && (updateUrlsMutation.isPending || isLoadingUrls))}
-          className={`w-full sm:w-auto text-xs font-bold px-6 h-10 rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 ${
-            isRestrictedByCompliance
-              ? "bg-slate-300 text-slate-600 cursor-not-allowed border-slate-300"
-              : isReadOnly
-              ? "bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
-              : "bg-[#0A5C48] hover:bg-[#07382D] text-white"
-          }`}
-        >
-          {isRestrictedByCompliance ? (
-            <>
-              <Lock className="h-4 w-4" />
-              <span>
-                {complianceStatus === "flagged"
-                  ? "Restricted (Account Under Review)"
-                  : "Restricted (Verification Pending)"}
-              </span>
-            </>
-          ) : isReadOnly ? (
-            <>
-              <Lock className="h-4 w-4" />
-              <span>Read-Only (Upgrade to Edit)</span>
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4" />
-              <span>{updateUrlsMutation.isPending ? "Saving Rules..." : "Save Configuration"}</span>
-            </>
           )}
-        </Button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

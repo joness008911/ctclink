@@ -1757,6 +1757,7 @@ export class FirestoreStorage implements IStorage {
     allowSocialPreviews?: string;
     allowedAiBots?: string;
     customAiBots?: string;
+    rulesetsConfig?: string;
     protectionMode?: string;
     activeAdPlatforms?: string;
     interstitialEnabled?: boolean;
@@ -1786,6 +1787,7 @@ export class FirestoreStorage implements IStorage {
       allowSocialPreviews: urls.allowSocialPreviews !== undefined ? urls.allowSocialPreviews : (existing?.allowSocialPreviews || "allow"),
       allowedAiBots: urls.allowedAiBots !== undefined ? urls.allowedAiBots : (existing?.allowedAiBots || ""),
       customAiBots: urls.customAiBots !== undefined ? urls.customAiBots : (existing?.customAiBots || ""),
+      rulesetsConfig: urls.rulesetsConfig !== undefined ? urls.rulesetsConfig : (existing?.rulesetsConfig || ""),
       protectionMode: urls.protectionMode !== undefined ? urls.protectionMode : (existing?.protectionMode || "hybrid"),
       activeAdPlatforms: urls.activeAdPlatforms !== undefined ? urls.activeAdPlatforms : (existing?.activeAdPlatforms || "google,meta,tiktok,microsoft,x"),
       interstitialEnabled: urls.interstitialEnabled !== undefined ? urls.interstitialEnabled : (existing?.interstitialEnabled ?? true),

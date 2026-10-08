@@ -717,6 +717,10 @@ export function VisitorDetailsDrawer({
                       <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
                         🛡️ OFFICIAL COMPLIANCE BOT
                       </span>
+                    ) : (!isHuman || visitor.action === "Blocked") ? (
+                      <span className="text-[10px] font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                        🚨 BLOCKED PAID TRAFFIC
+                      </span>
                     ) : (
                       <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                         🎯 PAID CAMPAIGN TRAFFIC
@@ -728,6 +732,8 @@ export function VisitorDetailsDrawer({
                       ? "bg-rose-50/70 border-rose-200" 
                       : isVerifiedReviewer 
                       ? "bg-indigo-50/60 border-indigo-200" 
+                      : (!isHuman || visitor.action === "Blocked")
+                      ? "bg-rose-50/70 border-rose-200"
                       : "bg-blue-50/60 border-blue-200"
                   } space-y-3 text-xs`}>
                     <div className="grid grid-cols-2 gap-3">
@@ -765,6 +771,10 @@ export function VisitorDetailsDrawer({
                         <p className="text-indigo-900 font-medium">
                           <strong>Policy Safe:</strong> Authenticated as an official ad compliance crawler. Allowed transparent inspection to prevent account bans or campaign disapproval.
                         </p>
+                      ) : (!isHuman || visitor.action === "Blocked") ? (
+                        <p className="text-rose-900 font-medium">
+                          <strong>Paid Click Deflected (Blocked by Policy):</strong> Arrived with an authentic ad click token attributed to {visitor.adNetwork || "ad campaign"}, but was <strong>blocked by your security rules</strong> ({detectionMethod || visitor.blockReason || "Policy Violation"}). Deflected to safe destination to protect your budget and offer.
+                        </p>
                       ) : (
                         <p className="text-blue-900 font-medium">
                           <strong>Validated Paid Click:</strong> Arrived with an authentic campaign click token. Successfully attributed to {visitor.adNetwork || "ad campaign"} and routed directly to your offer.
@@ -775,16 +785,26 @@ export function VisitorDetailsDrawer({
                 </div>
               )}
 
-              {/* Organic / Direct Traffic Card (Displayed exclusively for natural human visitors without ad tokens) */}
-              {isHuman && !isPaidAdTraffic && !isVerifiedReviewer && !isSpoofed && (
+              {/* Organic / Direct Traffic Card */}
+              {!isPaidAdTraffic && !isVerifiedReviewer && !isSpoofed && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center justify-between">
                     <span>Traffic Channel & Source</span>
-                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/80">
-                      🌱 ORGANIC / DIRECT VISITOR
-                    </span>
+                    {(!isHuman || visitor.action === "Blocked") ? (
+                      <span className="text-[10px] font-bold text-rose-800 bg-rose-50 px-2 py-0.5 rounded border border-rose-200/80">
+                        🛡️ ORGANIC BLOCKED
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/80">
+                        🌱 ORGANIC / DIRECT VISITOR
+                      </span>
+                    )}
                   </h3>
-                  <div className="p-4 rounded-xl border bg-emerald-50/40 border-emerald-200/70 space-y-2.5 text-xs">
+                  <div className={`p-4 rounded-xl border ${
+                    (!isHuman || visitor.action === "Blocked")
+                      ? "bg-rose-50/50 border-rose-200/70"
+                      : "bg-emerald-50/40 border-emerald-200/70"
+                  } space-y-2.5 text-xs`}>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <span className="text-[10px] text-slate-500 font-semibold uppercase block">ACQUISITION CHANNEL</span>
@@ -795,8 +815,10 @@ export function VisitorDetailsDrawer({
                         <span className="font-semibold text-slate-700 mt-0.5 block">Unpaid Natural Traffic</span>
                       </div>
                     </div>
-                    <p className="text-[11px] leading-relaxed text-slate-600 pt-1.5 border-t border-emerald-200/60">
-                      This visitor arrived without paid advertising click tokens. Verified as an authentic residential user and forwarded to your human destination.
+                    <p className="text-[11px] leading-relaxed text-slate-600 pt-1.5 border-t border-slate-200/60">
+                      {(!isHuman || visitor.action === "Blocked")
+                        ? `This visitor arrived via direct/organic navigation, but was blocked by your security rules (${detectionMethod || visitor.blockReason || 'Traffic Policy'}). Deflected to safe destination.`
+                        : "This visitor arrived without paid advertising click tokens. Verified as an authentic residential user and forwarded to your human destination."}
                     </p>
                   </div>
                 </div>

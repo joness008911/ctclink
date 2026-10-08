@@ -188,6 +188,7 @@ export const userRedirectUrls = pgTable("user_redirect_urls", {
   allowSocialPreviews: text("allow_social_previews").default("allow"), // "allow" | "block" (default: allow link preview crawlers)
   allowedAiBots: text("allowed_ai_bots").default(""), // comma-separated operator ids allowed by user
   customAiBots: text("custom_ai_bots").default(""), // JSON string of custom added bots
+  rulesetsConfig: text("rulesets_config"), // JSON string of user rulesets
   protectionMode: text("protection_mode").default("hybrid"), // "website" | "ad_campaign" | "hybrid"
   activeAdPlatforms: text("active_ad_platforms").default("google,meta,tiktok,microsoft,x"), // comma-separated e.g. "google,meta"
   interstitialEnabled: boolean("interstitial_enabled").default(true),
