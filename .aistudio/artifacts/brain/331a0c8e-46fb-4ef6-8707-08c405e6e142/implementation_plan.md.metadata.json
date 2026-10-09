@@ -1,0 +1,6 @@
+{
+  "summary":  "Implementation plan for unifying Rules & Policies with the Integrations tab, replacing the disconnected DeflectionControlBar with a live SyncedPolicyBanner, enabling dynamic zero-redeploy edge checks, and auto-syncing active ruleset actions to legacy botUrl parameters.",
+  "updatedAt":  "2026-10-09T22:03:38.682433178Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

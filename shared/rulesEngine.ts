@@ -44,6 +44,23 @@ export interface RuleStep {
   redirectUrl?: string;
 }
 
+export interface RuleResponseConfig {
+  action: RuleAction;
+  statusCode: number;
+  headers: RuleHeader[];
+  bodyType: "application/json" | "text/html" | "text/plain";
+  body: string;
+  redirectUrl?: string;
+}
+
+export const DEFAULT_SINGLE_RESPONSE: RuleResponseConfig = {
+  action: "block_response",
+  statusCode: 403,
+  headers: [{ key: "Content-Type", value: "application/json" }],
+  bodyType: "application/json",
+  body: '{"message": "Access denied: request blocked by unified security rule"}',
+};
+
 export interface Ruleset {
   id: string;
   name: string;
@@ -55,6 +72,8 @@ export interface Ruleset {
   createdAt: string;
   updatedAt: string;
   rules: RuleStep[];
+  responseMode?: "multi" | "single";
+  singleResponse?: RuleResponseConfig;
 }
 
 export const HTTP_STATUS_OPTIONS = [
@@ -99,7 +118,7 @@ export const RULE_FIELD_DEFINITIONS: Record<RuleField, { label: string; icon: st
     label: "Request Velocity",
     icon: "activity",
     defaultOperators: ["greater_than", "is"],
-    defaultValues: ["Exceeded", "20", "50", "100"]
+    defaultValues: ["50", "20", "100", "Exceeded"]
   },
   ip_blocklist: {
     label: "IP Blocklist",
@@ -383,6 +402,93 @@ export const PREMADE_RULE_TEMPLATES: Array<{
         body: '{"message": "Session locked: unauthorized proxy tunnel"}'
       }
     ]
+  },
+  {
+    id: "multi_tier_perimeter",
+    name: "Multi-Status Perimeter Shield",
+    description: "Granular multi-status defense: 429 for velocity spikes (>50 req/min), 403 for blocklisted IPs, 403 for automated bots, and stealth 404 for VPN connections.",
+    tags: ["Bot Mitigation", "Velocity Defense", "Multi-Status", "Account Protection"],
+    rules: [
+      {
+        id: "step_mt_vel",
+        name: "Request Velocity > 50 / min",
+        stepNumber: 2,
+        enabled: true,
+        conditions: [
+          {
+            id: "cond_mt_vel",
+            field: "velocity",
+            operator: "greater_than",
+            value: "50",
+          }
+        ],
+        action: "block_response",
+        statusCode: 429,
+        headers: [
+          { key: "Content-Type", value: "application/json" },
+          { key: "Retry-After", value: "60" }
+        ],
+        bodyType: "application/json",
+        body: '{"message": "Too many requests. Velocity threshold exceeded (50 req/min). Please slow down and try again.", "status": 429}'
+      },
+      {
+        id: "step_mt_ip",
+        name: "IP Blocklist is True",
+        stepNumber: 3,
+        enabled: true,
+        conditions: [
+          {
+            id: "cond_mt_ip",
+            field: "ip_blocklist",
+            operator: "is",
+            value: "True",
+          }
+        ],
+        action: "block_response",
+        statusCode: 403,
+        headers: [{ key: "Content-Type", value: "application/json" }],
+        bodyType: "application/json",
+        body: '{"message": "You are not allowed to visit this resource", "status": 403}'
+      },
+      {
+        id: "step_mt_bot",
+        name: "Browser Bot is Bad",
+        stepNumber: 4,
+        enabled: true,
+        conditions: [
+          {
+            id: "cond_mt_bot",
+            field: "bot_threat",
+            operator: "is",
+            value: "Bad",
+          }
+        ],
+        action: "block_response",
+        statusCode: 403,
+        headers: [{ key: "Content-Type", value: "application/json" }],
+        bodyType: "application/json",
+        body: '{"message": "Forbidden: Automated bot signature detected", "status": 403}'
+      },
+      {
+        id: "step_mt_vpn",
+        name: "VPN is True",
+        stepNumber: 5,
+        enabled: true,
+        conditions: [
+          {
+            id: "cond_mt_vpn",
+            field: "vpn",
+            operator: "is",
+            value: "True",
+          }
+        ],
+        action: "block_response",
+        statusCode: 404,
+        headers: [{ key: "Content-Type", value: "text/html" }],
+        bodyType: "text/html",
+        body: '<!DOCTYPE html>\n<html>\n<head><title>404 Not Found</title></head>\n<body style="font-family:sans-serif;text-align:center;padding:80px 20px;color:#334155;">\n  <h1 style="font-size:32px;font-weight:700;">404 Not Found</h1>\n  <p>The requested resource was not found on this server.</p>\n</body>\n</html>'
+      }
+    ]
   }
 ];
 
@@ -394,6 +500,9 @@ export interface VisitorEvaluationContext {
   isTor: boolean;
   isProxy: boolean;
   isVelocitySpike: boolean;
+  velocityCount?: number;
+  deviceId?: string;
+  visitorId?: string;
   isIpBlocked: boolean;
   isDevtools: boolean;
   countryCode: string;
@@ -403,6 +512,8 @@ export interface VisitorEvaluationContext {
 export interface RuleEvaluationResult {
   matched: boolean;
   ruleName?: string;
+  rulesetName?: string;
+  responseMode?: "multi" | "single";
   action: RuleAction;
   statusCode: number;
   headers: RuleHeader[];
@@ -441,10 +552,12 @@ export function evaluateCondition(
 
     case "country": {
       const visitorCountry = (ctx.countryCode || "").trim().toUpperCase();
-      const isCountryInAllowedList = 
+      const isCountryInAllowedList: boolean = Boolean(
+        !ctx.allowedCountries ||
         ctx.allowedCountries.length === 0 || 
         ctx.allowedCountries.includes("ALL") || 
-        (visitorCountry && ctx.allowedCountries.includes(visitorCountry));
+        (visitorCountry && ctx.allowedCountries.includes(visitorCountry))
+      );
 
       const targetVal = (cond.value || "").trim().toUpperCase();
 
@@ -476,6 +589,16 @@ export function evaluateCondition(
 
     case "velocity": {
       const isVel = ctx.isVelocitySpike;
+      // Support numeric threshold comparison (e.g. greater than 50 or is 50 requests/min)
+      const numVal = parseInt(cond.value, 10);
+      if (!isNaN(numVal) && ctx.velocityCount !== undefined) {
+        if (cond.operator === "greater_than") {
+          return ctx.velocityCount > numVal;
+        }
+        if (cond.operator === "is") {
+          return ctx.velocityCount >= numVal;
+        }
+      }
       return cond.operator === "is_not" ? !isVel : isVel;
     }
 
@@ -539,15 +662,26 @@ export function evaluateVisitorRules(
       }
 
       if (ruleMatches) {
+        // Support Single Status (Unified response across all rules) vs Multi-Status (Per-rule response)
+        const isSingleMode = ruleset.responseMode === "single" && Boolean(ruleset.singleResponse);
+        const effectiveAction = isSingleMode ? ruleset.singleResponse!.action : rule.action;
+        const effectiveStatusCode = isSingleMode ? ruleset.singleResponse!.statusCode : (rule.statusCode || 403);
+        const effectiveHeaders = isSingleMode ? ruleset.singleResponse!.headers : (rule.headers || []);
+        const effectiveBodyType = isSingleMode ? ruleset.singleResponse!.bodyType : (rule.bodyType || "application/json");
+        const effectiveBody = isSingleMode ? ruleset.singleResponse!.body : (rule.body || '{"message": "Blocked by rule"}');
+        const effectiveRedirectUrl = isSingleMode ? ruleset.singleResponse!.redirectUrl : rule.redirectUrl;
+
         return {
           matched: true,
           ruleName: rule.name,
-          action: rule.action,
-          statusCode: rule.statusCode || 403,
-          headers: rule.headers || [],
-          bodyType: rule.bodyType || "application/json",
-          body: rule.body || '{"message": "Blocked by rule"}',
-          redirectUrl: rule.redirectUrl,
+          rulesetName: ruleset.name,
+          responseMode: ruleset.responseMode || "multi",
+          action: effectiveAction,
+          statusCode: effectiveStatusCode,
+          headers: effectiveHeaders,
+          bodyType: effectiveBodyType,
+          body: effectiveBody,
+          redirectUrl: effectiveRedirectUrl,
           reason: `${ruleset.name}: ${rule.name}`,
         };
       }

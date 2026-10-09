@@ -37,6 +37,7 @@ import { randomUUID } from "crypto";
 import bcrypt from "bcrypt";
 import * as ipaddr from "ipaddr.js";
 import { cacheService } from "./cacheService";
+import { classificationBuffer } from "./classificationBuffer";
 
 export class SupabaseStorage implements IStorage {
   private client: SupabaseClient;
@@ -783,6 +784,9 @@ export class SupabaseStorage implements IStorage {
       usageType: classification.usageType || null,
       timestamp: now,
     };
+
+    // Enqueue into write buffer to persist to Supabase in micro-batches
+    classificationBuffer.enqueue(record);
     return record;
   }
 
@@ -802,6 +806,41 @@ export class SupabaseStorage implements IStorage {
       };
     }
     const now = new Date();
+
+    // Query recent visit from Supabase classifications if cold in memory
+    try {
+      let query = this.client
+        .from("classifications")
+        .select("first_seen, last_seen, visit_count, visitor_id")
+        .order("timestamp", { ascending: false })
+        .limit(1);
+
+      if (apiKeyId) query = query.eq("api_key_id", apiKeyId);
+      if (deviceId && deviceId !== "unknown") {
+        query = query.eq("device_id", deviceId);
+      } else if (visitorId) {
+        query = query.eq("visitor_id", visitorId);
+      } else if (clientIp && clientIp !== "127.0.0.1" && clientIp !== "::1") {
+        query = query.eq("ip_address", clientIp);
+      }
+
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        const prev = data[0];
+        const hist = {
+          isNewVisitor: false,
+          visitCount: (prev.visit_count || 1) + 1,
+          firstSeen: prev.first_seen ? new Date(prev.first_seen) : now,
+          lastSeen: now,
+          existingVisitorId: prev.visitor_id || null,
+        };
+        cacheService.recordVisitorHistory(apiKeyId, deviceId, clientIp, hist);
+        return hist;
+      }
+    } catch {
+      // Continue to fallback
+    }
+
     const fallback = {
       isNewVisitor: true,
       visitCount: 1,

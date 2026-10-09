@@ -4742,6 +4742,18 @@ Disallow: /*`);
     } catch(e) {}
     while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
 
+    // Rule Step Custom Response (HTML or JSON)
+    if (verdict.customBody) {
+      if (typeof verdict.customBody === 'string' && /<[a-z][\s\S]*>/i.test(verdict.customBody)) {
+        document.open();
+        document.write(verdict.customBody);
+        document.close();
+        return;
+      }
+      document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><div style="display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (typeof verdict.customBody === 'string' ? verdict.customBody : JSON.stringify(verdict.customBody, null, 2)) + '</div></div>';
+      return;
+    }
+
     // Strict 404 enforcement (Stealth drop)
     if (verdict.action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || verdict.destination === '404') {
       document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
@@ -5789,12 +5801,12 @@ Disallow: /*`);
             blockReason = `Device ${resolvedDeviceId} exceeded rate limit (${deviceActivity.velocity60s} requests in 60s)`;
             console.log(`🚫 BLOCKED (Tier 1B - Device Rate Limit): ${clientIp} [${resolvedDeviceId}] - ${deviceActivity.velocity60s} req/60s`);
           } else {
-            const velocityCheck = checkRequestVelocity(clientIp);
+            const velocityCheck = checkRequestVelocity(clientIp, resolvedDeviceId);
             if (velocityCheck.isVelocityExceeded) {
               visitorType = 'Bot';
               detectionMethod = 'High-Frequency Request Velocity';
-              blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP';
-              console.log(`🚫 BLOCKED (Tier 1B - IP Velocity): ${clientIp} - ${velocityCheck.reason}`);
+              blockReason = velocityCheck.reason || 'Excessive automated click velocity from single IP / device';
+              console.log(`🚫 BLOCKED (Tier 1B - Velocity): ${clientIp} [${resolvedDeviceId}] - ${velocityCheck.reason}`);
             }
           }
         }
@@ -6267,6 +6279,17 @@ Disallow: /*`);
         const isTorDetected = Boolean(classificationData?.is_tor || clientUsage === 'TOR');
         const isProxyDetected = Boolean(classificationData?.is_proxy);
 
+        const effectiveVelocityCount = Math.max(
+          deviceActivity?.velocity60s || 0,
+          deviceActivity?.visitCount || 0
+        );
+        const isVelocityHigh = Boolean(
+          deviceActivity?.isRateLimited ||
+          effectiveVelocityCount >= 50 ||
+          detectionMethod?.toLowerCase().includes("velocity") ||
+          detectionMethod?.toLowerCase().includes("rate")
+        );
+
         const ruleEval = evaluateVisitorRules(ownerRulesets, {
           isBadBot: visitorType === 'Bot',
           isAutomatedBot: visitorType === 'Bot',
@@ -6274,8 +6297,11 @@ Disallow: /*`);
           isDatacenter: isDchDetected,
           isTor: isTorDetected,
           isProxy: isProxyDetected,
-          isVelocitySpike: Boolean(detectionMethod?.toLowerCase().includes("velocity") || detectionMethod?.toLowerCase().includes("rate")),
-          isIpBlocked: Boolean(detectionMethod?.toLowerCase().includes("ip block") || isBlockedIp || isBlockedCidr || isUserIpBlocked),
+          isVelocitySpike: isVelocityHigh,
+          velocityCount: effectiveVelocityCount,
+          deviceId: resolvedDeviceId,
+          visitorId: resolvedVisitorId,
+          isIpBlocked: Boolean(detectionMethod?.toLowerCase().includes("ip block") || detectionMethod?.toLowerCase().includes("cidr")),
           isDevtools: rawClientTokens?.webdriver === true || rawClientTokens?.missingPluginsArray === true,
           countryCode: clientCountry,
           allowedCountries: ownerAllowedCountries,
@@ -6577,10 +6603,16 @@ Disallow: /*`);
         statusCode: matchedRule?.action === "block_response" ? matchedRule.statusCode : (isErrorCode ? parseInt(finalBotUrl!) : (isHumanVisitor ? 200 : 403)),
         customHeaders: matchedRule?.headers || [],
         customBody: matchedRule?.body || null,
+        bodyType: matchedRule?.bodyType || 'application/json',
         matchedRule: matchedRule ? {
           name: matchedRule.ruleName,
+          rulesetName: matchedRule.rulesetName,
+          responseMode: matchedRule.responseMode,
           action: matchedRule.action,
           statusCode: matchedRule.statusCode,
+          bodyType: matchedRule.bodyType,
+          body: matchedRule.body,
+          headers: matchedRule.headers,
         } : null,
         detection_method: classificationData.detection_method || detectionMethod || 'IP Analysis',
         block_reason: blockReason || null,

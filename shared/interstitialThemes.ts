@@ -1048,6 +1048,29 @@ if ($res['success'] && isset($res['data'])) {
     $cData = $res['data'];
     $dest = $cData['destination'] ?? $cData['redirectUrl'] ?? $cData['url'] ?? '';
     $action = $cData['action'] ?? ($cData['isHuman'] ? 'redirect' : 'block');
+    $customBody = $cData['customBody'] ?? null;
+    $customHeaders = $cData['customHeaders'] ?? [];
+    $statusCode = $cData['statusCode'] ?? 403;
+
+    // Rule Step Custom Response (HTML, JSON, or Plaintext)
+    if (!empty($customBody) && (!$cData['isHuman'] || $action === 'Blocked' || $action === 'Restricted')) {
+        http_response_code(intval($statusCode) ?: 403);
+        $hasContentType = false;
+        if (is_array($customHeaders)) {
+            foreach ($customHeaders as $h) {
+                if (!empty($h['key']) && !empty($h['value'])) {
+                    header($h['key'] . ': ' . $h['value']);
+                    if (strtolower($h['key']) === 'content-type') $hasContentType = true;
+                }
+            }
+        }
+        if (!$hasContentType) {
+            $isHtml = (strpos($customBody, '<html') !== false || strpos($customBody, '<body') !== false || strpos($customBody, '<div') !== false);
+            header('Content-Type: ' . ($isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8'));
+        }
+        echo $customBody;
+        exit;
+    }
 
     // Strict 404 enforcement
     if ($action === '404' || $dest === '404' || ($cData['statusAction'] ?? '') === '404') {
@@ -1329,6 +1352,20 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
         ?? $result['url'] 
         ?? '';
 
+    // Custom Rule Step Response (HTML, JSON, or Plaintext)
+    if (!empty($result['customBody'])) {
+        echo json_encode([
+            'status' => 'success',
+            'action' => 'custom_response',
+            'customBody' => $result['customBody'],
+            'customHeaders' => $result['customHeaders'] ?? [],
+            'statusCode' => $result['statusCode'] ?? 403,
+            'destination' => null,
+            'visitorType' => $result['visitorType'] ?? 'Bot'
+        ]);
+        exit;
+    }
+
     if (empty($destinationUrl)) {
         http_response_code(500);
         echo json_encode([
@@ -1475,6 +1512,16 @@ ${renderedBody}
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             var data = JSON.parse(xhr.responseText);
+            if (data.customBody) {
+              if (typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody)) {
+                document.open();
+                document.write(data.customBody);
+                document.close();
+                return;
+              }
+              document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><div style="display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (typeof data.customBody === 'string' ? data.customBody : JSON.stringify(data.customBody, null, 2)) + '</div></div>';
+              return;
+            }
             if (data.action === '404') {
               document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:60px 20px;text-align:center;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">404 Not Found</h1><p style="font-size:16px;color:#64748b;">The requested page could not be found on this server.</p></div>';
               return;

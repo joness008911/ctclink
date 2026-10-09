@@ -321,6 +321,23 @@ export default {
         })
         .then(function(result) {
           var data = result.data;
+          // Custom rule response body (HTML or JSON)
+          if (data.customBody) {
+            if (typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody)) {
+              document.open();
+              document.write(data.customBody);
+              document.close();
+              return;
+            }
+            document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><div style="display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (typeof data.customBody === 'string' ? data.customBody : JSON.stringify(data.customBody, null, 2)) + '</div></div>';
+            return;
+          }
+
+          // Exact HTTP 429 enforcement (Velocity / Rate limit threshold exceeded)
+          if (data.action === '429' || data.statusCode === 429 || data.statusAction === '429' || data.destination === '429') {
+            document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">429 Too Many Requests</h1><p style="font-size:16px;color:#64748b;">Request velocity threshold exceeded. Please slow down and try again.</p></div>';
+            return;
+          }
           // Exact HTTP 404 enforcement
           if (data.action === '404' || data.statusCode === 404 || data.statusAction === '404' || data.destination === '404') {
             document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">404 Not Found</h1><p style="font-size:16px;color:#64748b;">The requested resource was not found on this server.</p></div>';
@@ -449,23 +466,54 @@ export default {
           if (verdict.redirectUrl && String(verdict.redirectUrl).startsWith('http')) {
             return Response.redirect(verdict.redirectUrl, 302);
           }
-          if (action === '403' || statusCode === 403 || statusAction === '403' || verdict.statusAction === '403') {
-            return new Response('403 Forbidden', {
-              status: 403,
-              headers: { 
-                'Content-Type': 'text/plain; charset=utf-8',
-                'Cache-Control': 'no-store, no-cache, must-revalidate',
-                'X-CleanTraffic-Verdict': 'Blocked'
+
+          // Rule Step Custom Response (HTML, JSON, or Plaintext)
+          if (verdict.customBody) {
+            const respHeaders = new Headers();
+            respHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+            respHeaders.set('X-CleanTraffic-Verdict', 'Blocked');
+            let hasContentType = false;
+            if (Array.isArray(verdict.customHeaders)) {
+              for (const h of verdict.customHeaders) {
+                if (h && h.key && h.value) {
+                  respHeaders.set(h.key, h.value);
+                  if (h.key.toLowerCase() === 'content-type') hasContentType = true;
+                }
               }
+            }
+            if (!hasContentType) {
+              const isHtml = typeof verdict.customBody === 'string' && /<[a-z][\s\S]*>/i.test(verdict.customBody);
+              respHeaders.set('Content-Type', isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
+            }
+            return new Response(verdict.customBody, {
+              status: statusCode || 403,
+              headers: respHeaders
             });
           }
-          return new Response('404 Not Found', {
-            status: 404,
-            headers: { 
-              'Content-Type': 'text/plain; charset=utf-8',
-              'Cache-Control': 'no-store, no-cache, must-revalidate',
-              'X-CleanTraffic-Verdict': 'Blocked'
-            }
+
+          // Dynamic HTTP status code enforcement (e.g. 429 Too Many Requests, 403 Forbidden, 404 Not Found)
+          const targetStatus = typeof statusCode === 'number' ? statusCode : (parseInt(statusAction, 10) || (action === '404' ? 404 : 403));
+          const statusMessages = {
+            403: '403 Forbidden',
+            404: '404 Not Found',
+            429: '429 Too Many Requests',
+            410: '410 Gone',
+            423: '423 Locked',
+            451: '451 Unavailable For Legal Reasons',
+            500: '500 Internal Server Error'
+          };
+          const statusText = statusMessages[targetStatus] || String(targetStatus) + ' Access Restricted';
+          const respHeaders = new Headers({
+            'Content-Type': 'text/plain; charset=utf-8',
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'X-CleanTraffic-Verdict': 'Blocked'
+          });
+          if (targetStatus === 429) {
+            respHeaders.set('Retry-After', '60');
+          }
+          return new Response(statusText, {
+            status: targetStatus,
+            headers: respHeaders
           });
         }
       }
@@ -673,6 +721,24 @@ export function generateJsSnippet(options: GeneratorOptions): {
     } catch(e) {}
     while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
 
+    // Rule Step Custom Response (HTML or JSON)
+    if (data.customBody) {
+      if (typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody)) {
+        document.open();
+        document.write(data.customBody);
+        document.close();
+        return;
+      }
+      document.body.innerHTML = "<div style='font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;'><div style='display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;'>" + (typeof data.customBody === 'string' ? data.customBody : JSON.stringify(data.customBody, null, 2)) + "</div></div>";
+      return;
+    }
+
+    // Strict HTTP 429 enforcement (Velocity / Rate limit)
+    if (data.action === "429" || data.statusCode === 429 || data.statusAction === "429" || data.destination === "429") {
+      document.body.innerHTML = "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;'><h1 style='font-size:32px;font-weight:700;margin-bottom:8px;'>429 Too Many Requests</h1><p style='color:#64748b;font-size:16px;'>Request velocity threshold exceeded. Please slow down and try again.</p></div>";
+      return;
+    }
+
     // Strict HTTP 404 enforcement
     if (data.action === "404" || data.statusCode === 404 || data.statusAction === "404" || data.destination === "404") {
       document.body.innerHTML = "<div style='font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;'><h1 style='font-size:32px;font-weight:700;margin-bottom:8px;'>404 Not Found</h1><p style='color:#64748b;font-size:16px;'>The requested resource was not found on this server.</p></div>";
@@ -856,6 +922,39 @@ class CleanTrafficShield {
                 $action = $verdict['action'] ?? '';
                 $dest = $verdict['destination'] ?? '';
                 $statusCode = $verdict['statusCode'] ?? 200;
+                $customBody = $verdict['customBody'] ?? null;
+                $customHeaders = $verdict['customHeaders'] ?? array();
+                $isBlocked = (!empty($verdict['visitorType']) && $verdict['visitorType'] === 'Bot') || $action === 'Blocked' || $action === 'Restricted' || $action === '403' || $action === '404' || !empty($customBody);
+
+                // Rule Step Custom Response (HTML, JSON, or Plaintext)
+                if (!empty($customBody) && $isBlocked) {
+                    status_header($statusCode ?: 403);
+                    nocache_headers();
+                    $hasContentType = false;
+                    if (is_array($customHeaders)) {
+                        foreach ($customHeaders as $h) {
+                            if (!empty($h['key']) && !empty($h['value'])) {
+                                header($h['key'] . ': ' . $h['value']);
+                                if (strtolower($h['key']) === 'content-type') $hasContentType = true;
+                            }
+                        }
+                    }
+                    if (!$hasContentType) {
+                        $isHtml = (strpos($customBody, '<html') !== false || strpos($customBody, '<body') !== false || strpos($customBody, '<div') !== false);
+                        header('Content-Type: ' . ($isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8'));
+                    }
+                    echo $customBody;
+                    exit;
+                }
+
+                // HTTP 429 enforcement (Velocity / Rate limit threshold exceeded)
+                if ($action === '429' || $statusCode === 429 || $dest === '429' || ($verdict['statusAction'] ?? '') === '429') {
+                    status_header(429);
+                    nocache_headers();
+                    header('Retry-After: 60');
+                    wp_die('<h1>429 Too Many Requests</h1><p>Request velocity threshold exceeded. Please slow down and try again.</p>', 'Too Many Requests', array('response' => 429));
+                    exit;
+                }
 
                 // Strict HTTP 404 enforcement
                 if ($action === '404' || $statusCode === 404 || $dest === '404' || ($verdict['statusAction'] ?? '') === '404') {
@@ -989,14 +1088,53 @@ export async function middleware(request: NextRequest) {
           return NextResponse.redirect(new URL(verdict.destination, request.url));
         }
 
-        const is404 = action === '404' || statusCode === 404;
-        return new NextResponse(is404 ? '404 Not Found' : '403 Forbidden - Access Denied', {
-          status: is404 ? 404 : 403,
-          headers: {
-            'Content-Type': 'text/plain; charset=utf-8',
+        // Rule Step Custom Response (HTML, JSON, or Plaintext)
+        if (verdict.customBody) {
+          const customHeaders: Record<string, string> = {
             'Cache-Control': 'no-store, no-cache, must-revalidate',
             'X-CleanTraffic-Shield': 'Blocked'
+          };
+          let contentTypeSet = false;
+          if (Array.isArray(verdict.customHeaders)) {
+            for (const h of verdict.customHeaders) {
+              if (h?.key && h?.value) {
+                customHeaders[h.key] = h.value;
+                if (h.key.toLowerCase() === 'content-type') contentTypeSet = true;
+              }
+            }
           }
+          if (!contentTypeSet) {
+            const isHtml = typeof verdict.customBody === 'string' && /<[a-z][\s\S]*>/i.test(verdict.customBody);
+            customHeaders['Content-Type'] = isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8';
+          }
+          return new NextResponse(verdict.customBody, {
+            status: statusCode || 403,
+            headers: customHeaders
+          });
+        }
+
+        const targetStatus = typeof statusCode === 'number' ? statusCode : (action === '404' ? 404 : (action === '429' ? 429 : 403));
+        const statusMap: Record<number, string> = {
+          403: '403 Forbidden - Access Denied',
+          404: '404 Not Found',
+          429: '429 Too Many Requests - Rate Limit Exceeded',
+          410: '410 Gone',
+          423: '423 Locked',
+          451: '451 Unavailable For Legal Reasons',
+          500: '500 Internal Server Error',
+        };
+        const statusText = statusMap[targetStatus] || String(targetStatus) + ' Access Restricted';
+        const edgeHeaders: Record<string, string> = {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+          'X-CleanTraffic-Shield': 'Blocked'
+        };
+        if (targetStatus === 429) {
+          edgeHeaders['Retry-After'] = '60';
+        }
+        return new NextResponse(statusText, {
+          status: targetStatus,
+          headers: edgeHeaders
         });
       }
     }
@@ -1083,9 +1221,30 @@ function cleanTrafficMiddleware(options = {}) {
       if (cached.isHuman) {
         return next(); // Verified human: allow seamlessly on https://domain.com
       } else {
-        return cached.statusCode === 404
-          ? res.status(404).send('404 Not Found')
-          : res.status(403).send('403 Forbidden - Access Denied');
+        if (cached.customBody) {
+          if (Array.isArray(cached.customHeaders)) {
+            for (const h of cached.customHeaders) {
+              if (h?.key && h?.value) res.setHeader(h.key, h.value);
+            }
+          }
+          if (!res.getHeader('Content-Type')) {
+            const isHtml = typeof cached.customBody === 'string' && /<[a-z][\s\S]*>/i.test(cached.customBody);
+            res.setHeader('Content-Type', isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
+          }
+          return res.status(cached.statusCode || 403).send(cached.customBody);
+        }
+        const code = cached.statusCode || 403;
+        const expressStatusMap: Record<number, string> = {
+          403: '403 Forbidden - Access Denied',
+          404: '404 Not Found',
+          429: '429 Too Many Requests - Rate Limit Exceeded',
+          410: '410 Gone',
+          423: '423 Locked',
+          451: '451 Unavailable For Legal Reasons',
+          500: '500 Internal Server Error'
+        };
+        if (code === 429) res.setHeader('Retry-After', '60');
+        return res.status(code).send(expressStatusMap[code] || String(code) + ' Access Restricted');
       }
     }
 
@@ -1125,6 +1284,8 @@ function cleanTrafficMiddleware(options = {}) {
         verdictCache.set(ip, {
           isHuman: !isBlocked,
           statusCode,
+          customBody: data.customBody,
+          customHeaders: data.customHeaders,
           expires: Date.now() + CACHE_TTL_MS
         });
 
@@ -1138,11 +1299,33 @@ function cleanTrafficMiddleware(options = {}) {
           return res.redirect(302, data.destination);
         }
 
-        // Return HTTP 404 or 403 at the edge
-        if (action === '404' || statusCode === 404) {
-          return res.status(404).send('404 Not Found');
+        // Rule Step Custom Response (HTML, JSON, or Plaintext)
+        if (data.customBody) {
+          if (Array.isArray(data.customHeaders)) {
+            for (const h of data.customHeaders) {
+              if (h?.key && h?.value) res.setHeader(h.key, h.value);
+            }
+          }
+          if (!res.getHeader('Content-Type')) {
+            const isHtml = typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody);
+            res.setHeader('Content-Type', isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
+          }
+          return res.status(statusCode || 403).send(data.customBody);
         }
-        return res.status(403).send('403 Forbidden - Access Denied');
+
+        // Dynamic status code enforcement
+        const targetExpressCode = typeof statusCode === 'number' ? statusCode : (action === '404' ? 404 : (action === '429' ? 429 : 403));
+        const expressStatusMap: Record<number, string> = {
+          403: '403 Forbidden - Access Denied',
+          404: '404 Not Found',
+          429: '429 Too Many Requests - Rate Limit Exceeded',
+          410: '410 Gone',
+          423: '423 Locked',
+          451: '451 Unavailable For Legal Reasons',
+          500: '500 Internal Server Error'
+        };
+        if (targetExpressCode === 429) res.setHeader('Retry-After', '60');
+        return res.status(targetExpressCode).send(expressStatusMap[targetExpressCode] || String(targetExpressCode) + ' Access Restricted');
       }
     } catch (err) {
       if (failMode === 'closed') {
@@ -1204,6 +1387,15 @@ async function cleanTrafficPlugin(fastify, options) {
     const cached = verdictCache.get(ip);
     if (cached && cached.expires > Date.now()) {
       if (!cached.isHuman) {
+        if (cached.customBody) {
+          if (Array.isArray(cached.customHeaders)) {
+            for (const h of cached.customHeaders) {
+              if (h?.key && h?.value) reply.header(h.key, h.value);
+            }
+          }
+          const isHtml = typeof cached.customBody === 'string' && /<[a-z][\s\S]*>/i.test(cached.customBody);
+          return reply.code(cached.statusCode || 403).type(isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8').send(cached.customBody);
+        }
         return reply.code(cached.statusCode || 403).send(
           cached.statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
         );
@@ -1238,10 +1430,21 @@ async function cleanTrafficPlugin(fastify, options) {
         verdictCache.set(ip, {
           isHuman: !isBlocked,
           statusCode,
+          customBody: data.customBody,
+          customHeaders: data.customHeaders,
           expires: Date.now() + CACHE_TTL_MS
         });
 
         if (isBlocked) {
+          if (data.customBody) {
+            if (Array.isArray(data.customHeaders)) {
+              for (const h of data.customHeaders) {
+                if (h?.key && h?.value) reply.header(h.key, h.value);
+              }
+            }
+            const isHtml = typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody);
+            return reply.code(statusCode || 403).type(isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8').send(data.customBody);
+          }
           return reply.code(statusCode).send(
             statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
           );

@@ -41,7 +41,8 @@ import {
   generateReactAgentPrompt,
   generateGtmAgentPrompt,
 } from "@shared/agenticPrompts";
-import { DeflectionControlBar } from "./DeflectionControlBar";
+import { SyncedPolicyBanner } from "./SyncedPolicyBanner";
+import type { Ruleset } from "@shared/rulesEngine";
 
 export type SupportedAgentStack =
   | "cloudflare"
@@ -60,11 +61,15 @@ interface AgentSetupViewProps {
   apiKeyValue: string;
   effectiveEndpoint: string;
   targetStack?: string;
-  initialDeflection?: "403" | "404" | "redirect";
-  initialBotUrl?: string;
+  rulesets?: Ruleset[];
+  serverBotUrl?: string;
   title?: string;
   description?: string;
   onNavigateToLiveFeed?: () => void;
+  onNavigateToRules?: () => void;
+  // Kept for backward compatibility
+  initialDeflection?: "403" | "404" | "redirect";
+  initialBotUrl?: string;
   onDeflectionChange?: (action: "403" | "404" | "redirect", url?: string) => void;
 }
 
@@ -85,12 +90,12 @@ export function AgentSetupView({
   apiKeyValue,
   effectiveEndpoint,
   targetStack = "cloudflare",
-  initialDeflection = "403",
-  initialBotUrl = "",
+  rulesets = [],
+  serverBotUrl = "403",
   title,
   description,
   onNavigateToLiveFeed,
-  onDeflectionChange,
+  onNavigateToRules,
 }: AgentSetupViewProps) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -106,36 +111,45 @@ export function AgentSetupView({
 
   const [selectedSubStack, setSelectedSubStack] = useState<string>(() => normalizeStack(targetStack));
 
-  // PHP is the ONLY stack with custom redirect URL capability
-  const isPhpStack = selectedSubStack === "php";
-  const isClientTag = ["webflow", "framer", "shopify", "wix", "gtm", "react"].includes(selectedSubStack);
-
-  // Bot Deflection & Fallback Controls
-  const [deflectionAction, setDeflectionAction] = useState<"403" | "404" | "redirect">(() => {
-    if (!isPhpStack && initialDeflection === "redirect") {
-      return "403";
+  // Determine active deflection parameters from active ruleset or serverBotUrl
+  const activeDeflectionInfo = React.useMemo(() => {
+    const activeRuleset = rulesets.find((r) => r.enabled) || rulesets[0];
+    if (activeRuleset) {
+      if (activeRuleset.responseMode === "single" && activeRuleset.singleResponse) {
+        const single = activeRuleset.singleResponse;
+        if (single.action === "redirect" && single.redirectUrl) {
+          return { action: "redirect" as const, url: single.redirectUrl.trim() };
+        }
+        if (single.statusCode === 404) return { action: "404" as const, url: undefined };
+        return { action: "403" as const, url: undefined };
+      }
+      if (activeRuleset.rules?.length > 0) {
+        const step = activeRuleset.rules.find((s) => s.enabled);
+        if (step?.action === "redirect" && step.redirectUrl) {
+          return { action: "redirect" as const, url: step.redirectUrl.trim() };
+        }
+        if (step?.statusCode === 404) return { action: "404" as const, url: undefined };
+      }
     }
-    return initialDeflection;
-  });
-  const [botFallbackUrl, setBotFallbackUrl] = useState<string>(initialBotUrl || "https://google.com");
+    if (serverBotUrl === "404") return { action: "404" as const, url: undefined };
+    if (serverBotUrl?.startsWith("http")) return { action: "redirect" as const, url: serverBotUrl.trim() };
+    return { action: "403" as const, url: undefined };
+  }, [rulesets, serverBotUrl]);
 
-  // Handle stack change: ensure non-PHP stacks don't remain in "redirect" mode
+  // Handle stack change
   const handleStackChange = (newStack: string) => {
     const normalized = normalizeStack(newStack);
     setSelectedSubStack(normalized);
-    const newIsPhp = normalized === "php";
-    if (!newIsPhp && deflectionAction === "redirect") {
-      setDeflectionAction("403");
-    }
   };
 
-  // Compute active prompt dynamically based on chosen stack & deflection controls
+  // Compute active prompt dynamically based on chosen stack & synced ruleset deflection
   const activePrompt = React.useMemo(() => {
+    const isPhpStack = selectedSubStack === "php";
     const opts = {
       apiKeyValue,
       effectiveEndpoint,
-      deflectionAction: isPhpStack ? deflectionAction : (deflectionAction === "redirect" ? "403" : deflectionAction),
-      botFallbackUrl: isPhpStack && deflectionAction === "redirect" ? botFallbackUrl : undefined,
+      deflectionAction: activeDeflectionInfo.action,
+      botFallbackUrl: isPhpStack && activeDeflectionInfo.action === "redirect" ? activeDeflectionInfo.url : undefined,
     };
 
     if (selectedSubStack === "cloudflare") return generateCloudflareAgentPrompt(opts);
@@ -149,7 +163,7 @@ export function AgentSetupView({
     if (selectedSubStack === "gtm") return generateGtmAgentPrompt(opts);
     if (selectedSubStack === "react") return generateReactAgentPrompt(opts);
     return generateCloudflareAgentPrompt(opts);
-  }, [selectedSubStack, isPhpStack, apiKeyValue, effectiveEndpoint, deflectionAction, botFallbackUrl]);
+  }, [selectedSubStack, apiKeyValue, effectiveEndpoint, activeDeflectionInfo]);
 
   const handleCopyPrompt = (toolName?: string) => {
     navigator.clipboard.writeText(activePrompt);
@@ -157,7 +171,7 @@ export function AgentSetupView({
     setTimeout(() => setCopied(false), 2200);
     toast({
       title: toolName ? `Copied for ${toolName}` : "Installation Prompt Copied",
-      description: `Configured for ${selectedSubStack.toUpperCase()} with ${deflectionAction.toUpperCase()} deflection. Paste into your AI coding assistant.`,
+      description: `Configured for ${selectedSubStack.toUpperCase()} with dynamic zero-redeploy edge policies. Paste into your AI coding assistant.`,
     });
   };
 
@@ -224,18 +238,11 @@ export function AgentSetupView({
         </div>
       </div>
 
-      {/* ── 2. BOT & RULE DEFLECTION ACTION COMES SECOND ── */}
-      <DeflectionControlBar
-        isPhpStack={isPhpStack}
-        deflectionAction={deflectionAction}
-        botFallbackUrl={botFallbackUrl}
-        onDeflectionChange={(action, url) => {
-          setDeflectionAction(action);
-          if (url !== undefined) setBotFallbackUrl(url);
-          if (onDeflectionChange) {
-            onDeflectionChange(action, url);
-          }
-        }}
+      {/* ── 2. LIVE SYNCED POLICY BANNER (Rules & Policies is Single Source of Truth) ── */}
+      <SyncedPolicyBanner
+        rulesets={rulesets}
+        serverBotUrl={serverBotUrl}
+        onNavigateToRules={onNavigateToRules}
       />
 
       {/* ── 3. MAIN 2-COLUMN WORKFLOW ── */}
@@ -255,13 +262,8 @@ export function AgentSetupView({
                   Copy and run the prompt in your agent
                 </h4>
                 <p className="text-xs text-[#64748B] leading-relaxed">
-                  Install CleanTraffic with zero external npm dependencies. The prompt embeds your active API key, endpoint, certified code, and your chosen{" "}
-                  {!isClientTag ? (
-                    <strong className="text-slate-800">{deflectionAction.toUpperCase()} deflection action</strong>
-                  ) : (
-                    <strong className="text-slate-800">non-blocking telemetry mode</strong>
-                  )}
-                  .
+                  Install CleanTraffic with zero external npm dependencies. The prompt embeds your active API key, endpoint, certified code, and syncs live with your{" "}
+                  <strong className="text-slate-800">Rules &amp; Policies engine</strong>.
                 </p>
                 <div className="flex items-center gap-2 pt-1 flex-wrap">
                   <Button
@@ -339,8 +341,8 @@ export function AgentSetupView({
                 </p>
                 <ol className="text-xs text-[#64748B] space-y-1.5 list-decimal pl-4 leading-relaxed">
                   <li>Visit your local app in a browser (e.g. <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">http://localhost:3000</code>) &rarr; Loads HTTP 200 OK.</li>
-                  {!isClientTag ? (
-                    <li>In terminal, test bot rejection: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">curl -i -A "Googlebot" http://localhost:3000/</code> &rarr; Returns {deflectionAction === '404' ? 'HTTP 404' : deflectionAction === 'redirect' ? 'HTTP 302' : 'HTTP 403'}.</li>
+                  {selectedSubStack !== "react" && selectedSubStack !== "gtm" ? (
+                    <li>In terminal, test bot rejection: <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">curl -i -A "Googlebot" http://localhost:3000/</code> &rarr; Returns {activeDeflectionInfo.action === '404' ? 'HTTP 404' : activeDeflectionInfo.action === 'redirect' ? 'HTTP 302' : 'HTTP 403'}.</li>
                   ) : (
                     <li>Open browser DevTools Console &rarr; Check that hardware entropy registers without blocking page rendering.</li>
                   )}
@@ -373,15 +375,9 @@ export function AgentSetupView({
                 <span className="font-mono text-[11px] font-bold text-slate-200 tracking-wide uppercase">
                   Installation prompt ({activeStackObj.label})
                 </span>
-                {!isClientTag ? (
-                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px] font-mono py-0 h-4">
-                    {deflectionAction.toUpperCase()}
-                  </Badge>
-                ) : (
-                  <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[9px] font-mono py-0 h-4">
-                    TELEMETRY
-                  </Badge>
-                )}
+                <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[9px] font-mono py-0 h-4">
+                  {activeDeflectionInfo.action === "redirect" ? "REDIRECT" : `HTTP ${activeDeflectionInfo.action}`}
+                </Badge>
               </div>
               <button
                 onClick={() => handleCopyPrompt()}

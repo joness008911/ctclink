@@ -37,9 +37,43 @@ import { UserSettingsTab } from "@/components/user-dashboard/UserSettingsTab";
 import { UserLegalTab } from "@/components/user-dashboard/UserLegalTab";
 
 export default function UserDashboard() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { toast } = useToast();
-  const [activeTab, setActiveTab] = useState("overview");
+
+  // Helper to read current tab from URL search parameters or fallback to "overview"
+  const getTabFromUrl = (): string => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      if (tabParam) {
+        if (tabParam === "traffic") return "live";
+        return tabParam;
+      }
+    }
+    return "overview";
+  };
+
+  const [activeTab, setActiveTabState] = useState<string>(() => getTabFromUrl());
+
+  // Function to set activeTab and update URL query params without reloading
+  const setActiveTab = (tab: string) => {
+    setActiveTabState(tab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  // Sync state when URL search parameters change (e.g. back/forward navigation or search query change)
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTabState(getTabFromUrl());
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [customEndpoint, setCustomEndpoint] = useState("");
   
@@ -555,6 +589,7 @@ export default function UserDashboard() {
               apiKeyValue={apiKeyValue?.keyValue || null}
               customEndpoint={customEndpoint}
               setCustomEndpoint={setCustomEndpoint}
+              onNavigateTab={(tab) => setActiveTab(tab)}
             />
           )}
 

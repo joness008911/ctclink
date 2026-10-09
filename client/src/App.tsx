@@ -89,6 +89,8 @@ function MainRouter() {
       <Route path="/signup" component={UserPortal} />
       <Route path="/signin" component={UserPortal} />
       <Route path="/api-verify" component={ApiVerify} />
+      <Route path="/dashboard" component={UserPortal} />
+      <Route path="/dashboard/:rest*" component={UserPortal} />
       <Route path="/user" component={UserPortal} />
       <Route path="/user/:rest*" component={UserPortal} />
 

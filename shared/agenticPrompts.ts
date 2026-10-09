@@ -42,16 +42,20 @@ export function generateNextJsAgentPrompt(options: AgentPromptOptions): string {
   const botFallbackUrl = options.botFallbackUrl?.trim() || "";
   const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
-  const deflectionSnippet = deflectionAction === "redirect" && botFallbackUrl
-    ? `return NextResponse.redirect(new URL('${botFallbackUrl}', request.url));`
-    : deflectionAction === "404"
-    ? `return new NextResponse('404 Not Found', {
-          status: 404,
-          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-CleanTraffic-Shield': 'Deflected-404' }
-        });`
-    : `return new NextResponse('403 Forbidden - Access Denied', {
-          status: 403,
-          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-CleanTraffic-Shield': 'Deflected-403' }
+  const deflectionSnippet = `// Dynamic deflection verdict from live CleanTraffic rules
+        if (verdict.customBody) {
+          return new NextResponse(typeof verdict.customBody === 'string' ? verdict.customBody : JSON.stringify(verdict.customBody), {
+            status: verdict.statusCode || 403,
+            headers: { 'Content-Type': verdict.bodyType || 'application/json' }
+          });
+        }
+        if (verdict.redirectUrl || verdict.destination) {
+          return NextResponse.redirect(new URL(verdict.redirectUrl || verdict.destination, request.url));
+        }
+        const statusCode = verdict.statusCode || (verdict.action === '404' || verdict.statusAction === '404' ? 404 : ${deflectionAction === '404' ? 404 : 403});
+        return new NextResponse(statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied', {
+          status: statusCode,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-CleanTraffic-Shield': 'Deflected-Edge' }
         });`;
 
   return `# Add CleanTraffic Edge Middleware to Next.js
@@ -160,11 +164,16 @@ export function generateExpressAgentPrompt(options: AgentPromptOptions): string 
   const botFallbackUrl = options.botFallbackUrl?.trim() || "";
   const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
-  const deflectionSnippet = deflectionAction === "redirect" && botFallbackUrl
-    ? `return res.redirect('${botFallbackUrl}');`
-    : deflectionAction === "404"
-    ? `return res.status(404).send('404 Not Found');`
-    : `return res.status(403).send('403 Forbidden - Access Denied');`;
+  const deflectionSnippet = `// Dynamic deflection verdict from live CleanTraffic rules
+        if (data.customBody) {
+          res.setHeader('Content-Type', data.bodyType || 'application/json');
+          return res.status(data.statusCode || 403).send(typeof data.customBody === 'string' ? data.customBody : JSON.stringify(data.customBody));
+        }
+        if (data.redirectUrl || data.destination) {
+          return res.redirect(data.redirectUrl || data.destination);
+        }
+        const statusCode = data.statusCode || (data.action === '404' || data.statusAction === '404' ? 404 : ${deflectionAction === '404' ? 404 : 403});
+        return res.status(statusCode).send(statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied');`;
 
   return `# Add CleanTraffic Middleware to Express.js / Node.js
 
@@ -266,11 +275,21 @@ export function generateCloudflareAgentPrompt(options: AgentPromptOptions): stri
   const deflectionAction = options.deflectionAction || "403";
   const botFallbackUrl = options.botFallbackUrl?.trim() || "";
 
-  const deflectionSnippet = deflectionAction === "redirect" && botFallbackUrl
-    ? `return Response.redirect('${botFallbackUrl}', 302);`
-    : deflectionAction === "404"
-    ? `return new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } });`
-    : `return new Response('403 Forbidden - Access Denied', { status: 403, headers: { 'Content-Type': 'text/plain' } });`;
+  const deflectionSnippet = `// Dynamic deflection verdict from live CleanTraffic rules
+        if (verdict.customBody) {
+          return new Response(typeof verdict.customBody === 'string' ? verdict.customBody : JSON.stringify(verdict.customBody), {
+            status: verdict.statusCode || 403,
+            headers: { 'Content-Type': verdict.bodyType || 'application/json' }
+          });
+        }
+        if (verdict.redirectUrl || verdict.destination) {
+          return Response.redirect(verdict.redirectUrl || verdict.destination, 302);
+        }
+        const statusCode = verdict.statusCode || (verdict.action === '404' || verdict.statusAction === '404' ? 404 : ${deflectionAction === '404' ? 404 : 403});
+        return new Response(statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied', {
+          status: statusCode,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-CleanTraffic-Shield': 'Deflected-Edge' }
+        });`;
 
   return `# Deploy CleanTraffic Cloudflare Edge Worker
 

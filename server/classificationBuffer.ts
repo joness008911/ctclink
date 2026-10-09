@@ -9,8 +9,6 @@
  * - Updates in-memory visitor cache immediately so repeat visits are recognized in RAM.
  */
 
-import { doc, writeBatch, setDoc } from "firebase/firestore";
-import { firestore } from "./firebase";
 import type { InsertClassification, Classification } from "@shared/schema";
 import { cacheService } from "./cacheService";
 import { pool, isDatabaseConfigured } from "./db";
@@ -58,7 +56,7 @@ class ClassificationWriteBuffer {
 
   private registerProcessHooks() {
     const handleShutdown = async (signal: string) => {
-      console.log(`[SHUTDOWN] Received ${signal}. Flushing ${this.queue.length} buffered classifications to Firestore...`);
+      console.log(`[SHUTDOWN] Received ${signal}. Flushing ${this.queue.length} buffered classifications to database...`);
       try {
         await this.flush();
       } catch (err) {
@@ -240,54 +238,10 @@ class ClassificationWriteBuffer {
       }
     }
 
-    if (flushedToSupabase) {
-      this.isFlushing = false;
-      if (this.queue.length >= this.BATCH_SIZE_THRESHOLD) {
-        void this.flush();
-      }
-      return;
-    }
-
-    if (!firestore) {
-      this.isFlushing = false;
-      return;
-    }
-
-    try {
-      if (batchItems.length === 1) {
-        // Single document write
-        const item = batchItems[0];
-        const docRef = doc(firestore, "classifications", item.id);
-        await setDoc(docRef, {
-          ...item.data,
-          firstSeen: item.data.firstSeen ? item.data.firstSeen.toISOString() : null,
-          lastSeen: item.data.lastSeen ? item.data.lastSeen.toISOString() : null,
-          timestamp: item.data.timestamp.toISOString(),
-        });
-      } else {
-        // Multi-document atomic batch
-        const batch = writeBatch(firestore);
-        for (const item of batchItems) {
-          const docRef = doc(firestore, "classifications", item.id);
-          batch.set(docRef, {
-            ...item.data,
-            firstSeen: item.data.firstSeen ? item.data.firstSeen.toISOString() : null,
-            lastSeen: item.data.lastSeen ? item.data.lastSeen.toISOString() : null,
-            timestamp: item.data.timestamp.toISOString(),
-          });
-        }
-        await batch.commit();
-      }
-    } catch (error: any) {
-      // If Firestore quota is exhausted or temporary network issue, log warning
-      // but do NOT crash the server
-      console.warn(`[CLASSIFICATION_BUFFER] Failed to flush batch of ${batchItems.length} items to Firestore:`, error?.message || error);
-    } finally {
-      this.isFlushing = false;
-      // If items accumulated while we were flushing, trigger another flush
-      if (this.queue.length >= this.BATCH_SIZE_THRESHOLD) {
-        void this.flush();
-      }
+    this.isFlushing = false;
+    // If items accumulated while we were flushing, trigger another flush
+    if (this.queue.length >= this.BATCH_SIZE_THRESHOLD) {
+      void this.flush();
     }
   }
 

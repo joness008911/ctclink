@@ -56,7 +56,9 @@ import {
   RuleAction, 
   HTTP_STATUS_OPTIONS, 
   PREMADE_RULE_TEMPLATES, 
-  RULE_FIELD_DEFINITIONS 
+  RULE_FIELD_DEFINITIONS,
+  RuleResponseConfig,
+  DEFAULT_SINGLE_RESPONSE
 } from "@shared/rulesEngine";
 
 interface UserIpRule {
@@ -111,6 +113,8 @@ export function UserRoutingTab({
   
   // Selected rule step in canvas for the right inspector drawer
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  // Whether the Unified Single Status is selected for the inspector drawer
+  const [isSingleResponseSelected, setIsSingleResponseSelected] = useState<boolean>(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
   // Dirty state tracker
@@ -223,7 +227,7 @@ export function UserRoutingTab({
       .filter(Boolean);
   }, [allowedCountries]);
 
-  // Mutation to persist rulesets to backend
+  // Mutation to persist rulesets to backend with automatic legacy botUrl sync
   const saveMutation = useMutation({
     mutationFn: async (updatedRulesets: Ruleset[]) => {
       // Find default or first active ruleset to sync legacy parameters
@@ -232,9 +236,36 @@ export function UserRoutingTab({
         step.conditions.some((c) => c.field === "vpn" && c.value === "True")
       );
 
+      // Auto-sync legacy botUrl from active ruleset so downstream integrations and legacy checks stay 100% in sync
+      let syncedBotTarget = botUrl.trim();
+      if (activeBotRule) {
+        if (activeBotRule.responseMode === "single" && activeBotRule.singleResponse) {
+          const single = activeBotRule.singleResponse;
+          if (single.action === "redirect" && single.redirectUrl) {
+            syncedBotTarget = single.redirectUrl.trim();
+          } else if (single.statusCode) {
+            syncedBotTarget = String(single.statusCode);
+          }
+        } else if (activeBotRule.rules && activeBotRule.rules.length > 0) {
+          // If multi-status, pick the first active rule step's action as the default fallback
+          const firstActiveStep = activeBotRule.rules.find((s) => s.enabled);
+          if (firstActiveStep) {
+            if (firstActiveStep.action === "redirect" && firstActiveStep.redirectUrl) {
+              syncedBotTarget = firstActiveStep.redirectUrl.trim();
+            } else if (firstActiveStep.statusCode) {
+              syncedBotTarget = String(firstActiveStep.statusCode);
+            }
+          }
+        }
+      }
+
+      if (!syncedBotTarget) {
+        syncedBotTarget = "403";
+      }
+
       const payload = {
         humanUrl: humanUrl.trim() || "https://yourdomain.com",
-        botUrl: botUrl.trim() || "403",
+        botUrl: syncedBotTarget,
         blockVpn: hasVpnRule ? "block" : "allow",
         rulesetsConfig: JSON.stringify(updatedRulesets),
       };
@@ -244,10 +275,11 @@ export function UserRoutingTab({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
       setHasUnsavedChanges(false);
       toast({
-        title: "Rules published successfully",
-        description: "Your ruleset changes are now enforced live across all integration endpoints.",
+        title: "Rules published & synced live",
+        description: "Your ruleset changes and deflection actions are now enforced live across all integration endpoints.",
       });
     },
     onError: (err: any) => {
@@ -629,6 +661,18 @@ export function UserRoutingTab({
       r.id === selectedStepId ? { ...r, ...updates } : r
     );
     setCurrentRuleset({ ...currentRuleset, rules: updatedRules });
+    setHasUnsavedChanges(true);
+  };
+
+  // Update unified single response fields
+  const handleUpdateSingleResponse = (updates: Partial<RuleResponseConfig>) => {
+    if (!currentRuleset) return;
+    const existing = currentRuleset.singleResponse || DEFAULT_SINGLE_RESPONSE;
+    const updatedSingle: RuleResponseConfig = { ...existing, ...updates };
+    setCurrentRuleset({
+      ...currentRuleset,
+      singleResponse: updatedSingle,
+    });
     setHasUnsavedChanges(true);
   };
 
@@ -1788,6 +1832,50 @@ export function UserRoutingTab({
               Settings
             </button>
           </div>
+
+          {/* Response Status Mode: Multi-Status vs Single Status */}
+          <div className="hidden md:flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs ml-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentRuleset({
+                  ...currentRuleset,
+                  responseMode: "multi",
+                });
+                setIsSingleResponseSelected(false);
+                setHasUnsavedChanges(true);
+              }}
+              className={`px-2.5 py-1 font-semibold rounded-md transition-all flex items-center gap-1.5 ${
+                (currentRuleset.responseMode || "multi") === "multi"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Multi-Status Mode: Each rule triggers its own custom status code (e.g. 429 for velocity, 403 for bot, 404 for VPN)"
+            >
+              <Layers className="h-3 w-3 text-blue-600" />
+              <span>Multi-Status (Per Rule)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentRuleset({
+                  ...currentRuleset,
+                  responseMode: "single",
+                  singleResponse: currentRuleset.singleResponse || DEFAULT_SINGLE_RESPONSE,
+                });
+                setHasUnsavedChanges(true);
+              }}
+              className={`px-2.5 py-1 font-semibold rounded-md transition-all flex items-center gap-1.5 ${
+                currentRuleset.responseMode === "single"
+                  ? "bg-white text-slate-900 shadow-2xs font-bold"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              title="Single Status Mode: All triggered rules route through one unified response status code at the end"
+            >
+              <SlidersHorizontal className="h-3 w-3 text-[#0A5C48]" />
+              <span>Single Status (Unified)</span>
+            </button>
+          </div>
         </div>
 
         {/* Right Action Buttons */}
@@ -1877,6 +1965,67 @@ export function UserRoutingTab({
                 }}
                 className="data-[state=checked]:bg-[#0A5C48]"
               />
+            </div>
+          </div>
+
+          {/* Status Response Strategy */}
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-xs space-y-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Status Response Strategy</h3>
+              <p className="text-[11px] text-slate-500">Choose between granular per-rule status codes or a unified ruleset exit status.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div
+                onClick={() => {
+                  setCurrentRuleset({
+                    ...currentRuleset,
+                    responseMode: "multi",
+                  });
+                  setHasUnsavedChanges(true);
+                }}
+                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  (currentRuleset.responseMode || "multi") === "multi"
+                    ? "border-blue-500 bg-blue-50/20 shadow-2xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-5 h-5 rounded-md bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <Layers className="h-3 w-3" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">Multi-Status (Per Rule)</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Each rule step defines its own distinct status code (e.g. 429 for velocity spikes, 403 for bot threats, 404 for VPN users).
+                </p>
+              </div>
+
+              <div
+                onClick={() => {
+                  setCurrentRuleset({
+                    ...currentRuleset,
+                    responseMode: "single",
+                    singleResponse: currentRuleset.singleResponse || DEFAULT_SINGLE_RESPONSE,
+                  });
+                  setHasUnsavedChanges(true);
+                }}
+                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  currentRuleset.responseMode === "single"
+                    ? "border-[#0A5C48] bg-emerald-50/20 shadow-2xs"
+                    : "border-slate-200 hover:border-slate-300 bg-white"
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <div className="w-5 h-5 rounded-md bg-emerald-50 text-[#0A5C48] flex items-center justify-center">
+                    <SlidersHorizontal className="h-3 w-3" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">Single Status (Unified)</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  All triggered rules consolidate into a single unified status code ({currentRuleset.singleResponse?.statusCode || 403}) and custom body at the pipeline exit.
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1979,7 +2128,9 @@ export function UserRoutingTab({
                             {rule.name}
                           </div>
                           <div className="text-[10px] text-slate-500 font-medium">
-                            {rule.stepNumber}. {rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action}
+                            {rule.stepNumber}. {currentRuleset.responseMode === "single" 
+                              ? `Block (Routes to Unified ${currentRuleset.singleResponse?.statusCode || 403})`
+                              : (rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action)}
                           </div>
                         </div>
                       </div>
@@ -2031,12 +2182,19 @@ export function UserRoutingTab({
                       <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
                         Then
                       </div>
-                      <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200/60 text-[11px] font-semibold text-rose-800">
-                        <X className="h-3 w-3 text-rose-600" />
-                        <span>
-                          {rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action}
-                        </span>
-                      </div>
+                      {currentRuleset.responseMode === "single" ? (
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200/80 text-[11px] font-semibold text-[#0A5C48]">
+                          <SlidersHorizontal className="h-3 w-3 text-[#0A5C48]" />
+                          <span>Routes to Unified Status ({currentRuleset.singleResponse?.statusCode || 403})</span>
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-50 border border-rose-200/60 text-[11px] font-semibold text-rose-800">
+                          <X className="h-3 w-3 text-rose-600" />
+                          <span>
+                            {rule.action === "block_response" ? `Block with response (${rule.statusCode})` : rule.action}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -2045,6 +2203,51 @@ export function UserRoutingTab({
                 </div>
               );
             })}
+
+            {/* ─── UNIFIED EXIT STATUS NODE (When Single Status Mode is Active) ─── */}
+            {currentRuleset.responseMode === "single" && (
+              <>
+                <div className="w-0.5 h-8 bg-slate-300 shrink-0" />
+                <div
+                  onClick={() => {
+                    setIsSingleResponseSelected(true);
+                    setSelectedStepId(null);
+                    setIsInspectorOpen(true);
+                  }}
+                  className={`w-80 bg-white rounded-xl p-4 cursor-pointer transition-all shrink-0 ${
+                    isSingleResponseSelected
+                      ? "border-2 border-[#0A5C48] shadow-md ring-2 ring-[#0A5C48]/15"
+                      : "border border-emerald-200 hover:border-emerald-300 bg-emerald-50/20 shadow-xs"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md bg-emerald-100/80 border border-emerald-300 flex items-center justify-center text-[#0A5C48]">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-900">
+                          Unified Exit Status
+                        </div>
+                        <div className="text-[10px] text-emerald-700 font-semibold">
+                          Single Status Mode Active
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">
+                      {currentRuleset.singleResponse?.statusCode || 403}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mb-2.5">
+                    All triggered rules above deflect traffic with this unified status code and custom response body.
+                  </p>
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px] text-slate-600 font-medium">
+                    <span>Content: {currentRuleset.singleResponse?.bodyType || "application/json"}</span>
+                    <span className="text-[#0A5C48] font-bold">Configure Status →</span>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Bottom Add Step Button */}
             <div className="w-0.5 h-6 bg-slate-300 shrink-0" />
@@ -2092,314 +2295,654 @@ export function UserRoutingTab({
           {/* ─────────────────────────────────────────────────────────
               RIGHT INSPECTOR DRAWER (Screenshots 4 & 5)
           ───────────────────────────────────────────────────────── */}
-          {isInspectorOpen && selectedStep && (
+          {isInspectorOpen && (selectedStep || (isSingleResponseSelected && currentRuleset)) && (
             <div className="w-80 sm:w-96 bg-white border-l border-[#E2E8F0] shadow-lg flex flex-col z-20 overflow-y-auto">
-              {/* Inspector Header */}
-              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-[#F8FAFC]">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
-                    {getFieldIcon(selectedStep.conditions[0]?.field || "bot_threat")}
-                  </div>
-                  <h4 className="text-xs font-bold text-slate-900 truncate">
-                    {selectedStep.name}
-                  </h4>
-                </div>
-
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setIsInspectorOpen(false)}
-                    className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Inspector Body */}
-              <div className="p-5 space-y-6 flex-1">
-                {/* ─── SECTION IF (Screenshot 5) ─── */}
-                <div className="space-y-3">
-                  <div className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between">
-                    <span>If</span>
-                  </div>
-
-                  {selectedStep.conditions.map((cond, cIdx) => (
-                    <div key={cond.id} className="space-y-2">
-                      {cIdx > 0 && (
-                        <div className="flex items-center justify-center gap-2 py-1">
-                          <div className="h-px bg-slate-200 flex-1" />
-                          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 shadow-2xs">
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateCondition(cond.id, { logicalOp: "AND" })}
-                              className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
-                                (cond.logicalOp || "AND") === "AND"
-                                  ? "bg-[#0A5C48] text-white shadow-xs"
-                                  : "text-slate-600 hover:text-slate-900"
-                              }`}
-                            >
-                              AND
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateCondition(cond.id, { logicalOp: "OR" })}
-                              className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
-                                cond.logicalOp === "OR"
-                                  ? "bg-[#0A5C48] text-white shadow-xs"
-                                  : "text-slate-600 hover:text-slate-900"
-                              }`}
-                            >
-                              OR
-                            </button>
-                          </div>
-                          <div className="h-px bg-slate-200 flex-1" />
-                        </div>
-                      )}
-
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5 relative">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-[11px] font-semibold text-slate-600">
-                            Condition {cIdx + 1}
-                            {cIdx > 0 && (
-                              <span className="ml-1.5 font-mono text-[10px] text-slate-400">
-                                ({cond.logicalOp || "AND"})
-                              </span>
-                            )}
-                          </Label>
-                          {selectedStep.conditions.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveCondition(cond.id)}
-                              className="text-slate-400 hover:text-rose-600 p-0.5"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Dropdown 1: Field Selector */}
-                        <select
-                          value={cond.field}
-                          onChange={(e) => handleUpdateCondition(cond.id, { field: e.target.value as RuleField })}
-                          className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                        >
-                          {Object.entries(RULE_FIELD_DEFINITIONS).map(([key, def]) => (
-                            <option key={key} value={key}>
-                              {def.label}
-                            </option>
-                          ))}
-                        </select>
-
-                        {/* Dropdown 2 & 3: Operator and Value */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <select
-                            value={cond.operator}
-                            onChange={(e) => handleUpdateCondition(cond.id, { operator: e.target.value as RuleOperator })}
-                            className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                          >
-                            <option value="is">Is</option>
-                            <option value="is_not">Is Not</option>
-                            <option value="in">In</option>
-                            <option value="not_in">Not In</option>
-                            <option value="greater_than">Greater than</option>
-                          </select>
-
-                          <select
-                            value={cond.value}
-                            onChange={(e) => handleUpdateCondition(cond.id, { value: e.target.value })}
-                            className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                          >
-                            {RULE_FIELD_DEFINITIONS[cond.field]?.defaultValues.map((v) => (
-                              <option key={v} value={v}>
-                                {v}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Helper info & deep link for Country condition */}
-                        {cond.field === "country" && (
-                          <div className="p-2 rounded-lg bg-amber-50/80 border border-amber-200/60 text-[11px] text-amber-900 flex items-center justify-between">
-                            <span>Checks Geo-Fencing allowed list</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveView("directory");
-                                setMainSubTab("geofencing");
-                              }}
-                              className="font-bold underline text-amber-950 hover:text-amber-800"
-                            >
-                              Configure Geo-Fencing →
-                            </button>
-                          </div>
-                        )}
-
-                        {/* Helper info & deep link for IP Blocklist condition */}
-                        {cond.field === "ip_blocklist" && (
-                          <div className="p-2 rounded-lg bg-red-50/80 border border-red-200/60 text-[11px] text-red-900 flex items-center justify-between">
-                            <span>Checks custom IP blocklist</span>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveView("directory");
-                                setMainSubTab("ip_lists");
-                              }}
-                              className="font-bold underline text-red-950 hover:text-red-800"
-                            >
-                              Manage IP Blocklist →
-                            </button>
-                          </div>
-                        )}
+              {/* ═══ DRAWER VARIANT A: UNIFIED EXIT STATUS DRAWER ═══ */}
+              {isSingleResponseSelected && currentRuleset ? (
+                <>
+                  {/* Inspector Header */}
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-emerald-50/40">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md bg-emerald-100 border border-emerald-300 flex items-center justify-center text-[#0A5C48]">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-900">
+                          Unified Exit Status
+                        </h4>
+                        <span className="text-[10px] text-emerald-700 font-medium">
+                          Single Status Mode
+                        </span>
                       </div>
                     </div>
-                  ))}
 
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddCondition}
-                    className="w-full text-xs font-semibold text-slate-600 border-slate-200 rounded-lg h-8 gap-1"
-                  >
-                    <Plus className="h-3 w-3" />
-                    <span>Add condition</span>
-                  </Button>
-                </div>
-
-                {/* ─── SECTION THEN (Screenshot 5) ─── */}
-                <div className="space-y-3">
-                  <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                    Then
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSingleResponseSelected(false);
+                          setIsInspectorOpen(false);
+                        }}
+                        className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
 
-                  <select
-                    value={selectedStep.action}
-                    onChange={(e) => handleUpdateStep({ action: e.target.value as RuleAction })}
-                    className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                  >
-                    <option value="block_response">Block with response</option>
-                    <option value="redirect">Redirect to URL</option>
-                    <option value="challenge">Interactive Challenge</option>
-                    <option value="allow">Allow</option>
-                  </select>
-                </div>
-
-                {/* ─── STATUS CODE SELECTOR (Screenshot 4) ─── */}
-                {selectedStep.action === "block_response" && (
-                  <>
-                    <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-slate-700">Status</Label>
-                      <select
-                        value={selectedStep.statusCode}
-                        onChange={(e) => handleUpdateStep({ statusCode: parseInt(e.target.value) })}
-                        className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg p-2.5 focus:ring-1 focus:ring-[#0A5C48]"
-                      >
-                        {HTTP_STATUS_OPTIONS.map((opt) => (
-                          <option key={opt.code} value={opt.code}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="text-[11px] text-slate-400">
-                        {HTTP_STATUS_OPTIONS.find((o) => o.code === selectedStep.statusCode)?.description}
+                  {/* Inspector Body */}
+                  <div className="p-5 space-y-6 flex-1">
+                    {/* Unified Mode Summary Box */}
+                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1.5">
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <Shield className="h-3.5 w-3.5 text-[#0A5C48]" />
+                        <span>Consolidated Edge Response</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        In Single Status mode, all triggered rules route through this unified status code and custom body. This response is delivered at the edge across all integrations (Cloudflare, Next.js, WordPress, Express, 1-Line JS).
                       </p>
                     </div>
 
-                    {/* ─── HEADERS (Screenshot 5) ─── */}
+                    {/* Action Selector */}
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-slate-700">Headers</Label>
-                        <button
-                          type="button"
-                          onClick={handleAddHeader}
-                          className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
-                        >
-                          <Plus className="h-3 w-3" />
-                          <span>Add</span>
-                        </button>
-                      </div>
+                      <Label className="text-xs font-semibold text-slate-700">Action</Label>
+                      <select
+                        value={currentRuleset.singleResponse?.action || "block_response"}
+                        onChange={(e) => handleUpdateSingleResponse({ action: e.target.value as RuleAction })}
+                        className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                      >
+                        <option value="block_response">Block with response</option>
+                        <option value="redirect">Redirect to URL</option>
+                      </select>
+                    </div>
 
-                      <div className="space-y-1.5">
-                        {selectedStep.headers.map((h, hIdx) => (
-                          <div key={hIdx} className="flex items-center gap-2">
-                            <Input
-                              type="text"
-                              value={h.key}
-                              onChange={(e) => handleUpdateHeader(hIdx, e.target.value, h.value)}
-                              placeholder="Key"
-                              className="text-xs h-8 font-mono"
-                            />
-                            <Input
-                              type="text"
-                              value={h.value}
-                              onChange={(e) => handleUpdateHeader(hIdx, h.key, e.target.value)}
-                              placeholder="Value"
-                              className="text-xs h-8 font-mono"
-                            />
+                    {(currentRuleset.singleResponse?.action || "block_response") === "block_response" && (
+                      <>
+                        {/* Status Code Selector */}
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold text-slate-700">Unified HTTP Status</Label>
+                          <select
+                            value={currentRuleset.singleResponse?.statusCode || 403}
+                            onChange={(e) => handleUpdateSingleResponse({ statusCode: parseInt(e.target.value, 10) })}
+                            className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg p-2.5 focus:ring-1 focus:ring-[#0A5C48]"
+                          >
+                            {HTTP_STATUS_OPTIONS.map((opt) => (
+                              <option key={opt.code} value={opt.code}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-slate-400">
+                            {HTTP_STATUS_OPTIONS.find((o) => o.code === (currentRuleset.singleResponse?.statusCode || 403))?.description}
+                          </p>
+                        </div>
+
+                        {/* Headers */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold text-slate-700">Headers</Label>
                             <button
                               type="button"
-                              onClick={() => handleRemoveHeader(hIdx)}
-                              className="text-slate-400 hover:text-rose-600 p-1"
+                              onClick={() => {
+                                const currentH = currentRuleset.singleResponse?.headers || [];
+                                handleUpdateSingleResponse({
+                                  headers: [...currentH, { key: "X-Security-Policy", value: "active" }],
+                                });
+                              }}
+                              className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
                             >
-                              <X className="h-3.5 w-3.5" />
+                              <Plus className="h-3 w-3" />
+                              <span>Add</span>
                             </button>
                           </div>
-                        ))}
+
+                          <div className="space-y-1.5">
+                            {(currentRuleset.singleResponse?.headers || []).map((h, hIdx) => (
+                              <div key={hIdx} className="flex items-center gap-2">
+                                <Input
+                                  type="text"
+                                  value={h.key}
+                                  onChange={(e) => {
+                                    const next = [...(currentRuleset.singleResponse?.headers || [])];
+                                    next[hIdx] = { ...next[hIdx], key: e.target.value };
+                                    handleUpdateSingleResponse({ headers: next });
+                                  }}
+                                  placeholder="Key"
+                                  className="text-xs h-8 font-mono"
+                                />
+                                <Input
+                                  type="text"
+                                  value={h.value}
+                                  onChange={(e) => {
+                                    const next = [...(currentRuleset.singleResponse?.headers || [])];
+                                    next[hIdx] = { ...next[hIdx], value: e.target.value };
+                                    handleUpdateSingleResponse({ headers: next });
+                                  }}
+                                  placeholder="Value"
+                                  className="text-xs h-8 font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const next = (currentRuleset.singleResponse?.headers || []).filter((_, idx) => idx !== hIdx);
+                                    handleUpdateSingleResponse({ headers: next });
+                                  }}
+                                  className="text-slate-400 hover:text-rose-600 p-1"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Body Type & Presets */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs font-semibold text-slate-700">Response Body</Label>
+                            <select
+                              value={currentRuleset.singleResponse?.bodyType || "application/json"}
+                              onChange={(e) => {
+                                const newType = e.target.value as "application/json" | "text/html" | "text/plain";
+                                const currentHeaders = currentRuleset.singleResponse?.headers || [];
+                                const hasContentType = currentHeaders.some((h) => h.key.toLowerCase() === "content-type");
+                                const updatedHeaders = hasContentType
+                                  ? currentHeaders.map((h) => h.key.toLowerCase() === "content-type" ? { ...h, value: newType } : h)
+                                  : [...currentHeaders, { key: "Content-Type", value: newType }];
+                                
+                                let newBody = currentRuleset.singleResponse?.body || "";
+                                if (newType === "text/html" && (newBody.trim().startsWith("{") || !newBody.trim())) {
+                                  newBody = '<!DOCTYPE html>\n<html>\n<head><title>Access Denied</title></head>\n<body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;">\n  <h1 style="font-size:32px;font-weight:700;">403 Forbidden</h1>\n  <p>Access to this resource has been restricted by unified security policy.</p>\n</body>\n</html>';
+                                } else if (newType === "application/json" && newBody.trim().startsWith("<")) {
+                                  newBody = '{"message": "Access denied: request blocked by unified security rule", "status": 403}';
+                                }
+
+                                handleUpdateSingleResponse({
+                                  bodyType: newType,
+                                  headers: updatedHeaders,
+                                  body: newBody,
+                                });
+                              }}
+                              className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded px-2 py-0.5"
+                            >
+                              <option value="application/json">JSON Content-Type: application/json</option>
+                              <option value="text/html">HTML Content-Type: text/html</option>
+                              <option value="text/plain">Text Content-Type: text/plain</option>
+                            </select>
+                          </div>
+
+                          <textarea
+                            value={currentRuleset.singleResponse?.body || ""}
+                            onChange={(e) => handleUpdateSingleResponse({ body: e.target.value })}
+                            className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0A5C48]"
+                            rows={5}
+                          />
+
+                          {/* Quick Body Presets */}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            <span className="text-[10px] text-slate-400 font-semibold uppercase">Presets:</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleUpdateSingleResponse({
+                                  statusCode: 429,
+                                  bodyType: "application/json",
+                                  body: '{"message": "Too many requests. Please slow down and try again.", "status": 429}',
+                                });
+                              }}
+                              className="text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-0.5 rounded border border-slate-200"
+                            >
+                              429 Rate Limit JSON
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleUpdateSingleResponse({
+                                  statusCode: 403,
+                                  bodyType: "text/html",
+                                  body: '<!DOCTYPE html>\n<html>\n<head><title>Access Denied</title></head>\n<body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;">\n  <h1 style="font-size:32px;font-weight:700;">403 Forbidden</h1>\n  <p>You are not allowed to visit this resource.</p>\n</body>\n</html>',
+                                });
+                              }}
+                              className="text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-0.5 rounded border border-slate-200"
+                            >
+                              403 Forbidden HTML
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleUpdateSingleResponse({
+                                  statusCode: 404,
+                                  bodyType: "text/html",
+                                  body: '<!DOCTYPE html>\n<html>\n<head><title>404 Not Found</title></head>\n<body style="font-family:sans-serif;text-align:center;padding:80px 20px;color:#334155;">\n  <h1 style="font-size:32px;font-weight:700;">404 Not Found</h1>\n  <p>The requested resource was not found on this server.</p>\n</body>\n</html>',
+                                });
+                              }}
+                              className="text-[10px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-0.5 rounded border border-slate-200"
+                            >
+                              404 Not Found HTML
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {currentRuleset.singleResponse?.action === "redirect" && (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
+                        <Input
+                          type="text"
+                          value={currentRuleset.singleResponse?.redirectUrl || botUrl}
+                          onChange={(e) => handleUpdateSingleResponse({ redirectUrl: e.target.value })}
+                          placeholder="https://yourstore.com/safe-page"
+                          className="text-xs h-9 font-mono"
+                        />
                       </div>
+                    )}
+
+                    {/* Mode Toggle Option */}
+                    <div className="pt-4 border-t border-slate-100">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setCurrentRuleset({
+                            ...currentRuleset,
+                            responseMode: "multi",
+                          });
+                          setIsSingleResponseSelected(false);
+                          setHasUnsavedChanges(true);
+                        }}
+                        className="w-full text-xs font-semibold text-slate-700 hover:bg-slate-50 border-slate-200 h-8 gap-1.5 rounded-lg"
+                      >
+                        <Layers className="h-3.5 w-3.5 text-blue-600" />
+                        <span>Switch to Multi-Status (Per-Rule) Mode</span>
+                      </Button>
                     </div>
-
-                    {/* ─── BODY (Screenshot 5) ─── */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold text-slate-700">Body</Label>
-                        <select
-                          value={selectedStep.bodyType}
-                          onChange={(e) => handleUpdateStep({ bodyType: e.target.value as any })}
-                          className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded px-2 py-0.5"
-                        >
-                          <option value="application/json">JSON Content-Type: application/json</option>
-                          <option value="text/html">HTML Content-Type: text/html</option>
-                          <option value="text/plain">Text Content-Type: text/plain</option>
-                        </select>
-                      </div>
-
-                      <textarea
-                        value={selectedStep.body}
-                        onChange={(e) => handleUpdateStep({ body: e.target.value })}
-                        className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0A5C48]"
-                        rows={4}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {/* If Redirect */}
-                {selectedStep.action === "redirect" && (
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
-                    <Input
-                      type="text"
-                      value={selectedStep.redirectUrl || botUrl}
-                      onChange={(e) => handleUpdateStep({ redirectUrl: e.target.value })}
-                      placeholder="https://yourstore.com/safe-page"
-                      className="text-xs h-9 font-mono"
-                    />
                   </div>
-                )}
+                </>
+              ) : selectedStep ? (
+                <>
+                  {/* ═══ DRAWER VARIANT B: RULE STEP INSPECTOR ═══ */}
+                  {/* Inspector Header */}
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-[#F8FAFC]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-md bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
+                        {getFieldIcon(selectedStep.conditions[0]?.field || "bot_threat")}
+                      </div>
+                      <h4 className="text-xs font-bold text-slate-900 truncate">
+                        {selectedStep.name}
+                      </h4>
+                    </div>
 
-                {/* Delete Step Button */}
-                <div className="pt-4 border-t border-slate-100">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDeleteStep(selectedStep.id)}
-                    className="w-full text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 h-8 gap-1.5 rounded-lg"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Delete rule step</span>
-                  </Button>
-                </div>
-              </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsInspectorOpen(false)}
+                        className="p-1 text-slate-400 hover:text-slate-700 rounded-lg"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Inspector Body */}
+                  <div className="p-5 space-y-6 flex-1">
+                    {/* ─── SECTION IF (Screenshot 5) ─── */}
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center justify-between">
+                        <span>If</span>
+                      </div>
+
+                      {selectedStep.conditions.map((cond, cIdx) => (
+                        <div key={cond.id} className="space-y-2">
+                          {cIdx > 0 && (
+                            <div className="flex items-center justify-center gap-2 py-1">
+                              <div className="h-px bg-slate-200 flex-1" />
+                              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateCondition(cond.id, { logicalOp: "AND" })}
+                                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                                    (cond.logicalOp || "AND") === "AND"
+                                      ? "bg-[#0A5C48] text-white shadow-xs"
+                                      : "text-slate-600 hover:text-slate-900"
+                                  }`}
+                                >
+                                  AND
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateCondition(cond.id, { logicalOp: "OR" })}
+                                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                                    cond.logicalOp === "OR"
+                                      ? "bg-[#0A5C48] text-white shadow-xs"
+                                      : "text-slate-600 hover:text-slate-900"
+                                  }`}
+                                >
+                                  OR
+                                </button>
+                              </div>
+                              <div className="h-px bg-slate-200 flex-1" />
+                            </div>
+                          )}
+
+                          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5 relative">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-[11px] font-semibold text-slate-600">
+                                Condition {cIdx + 1}
+                                {cIdx > 0 && (
+                                  <span className="ml-1.5 font-mono text-[10px] text-slate-400">
+                                    ({cond.logicalOp || "AND"})
+                                  </span>
+                                )}
+                              </Label>
+                              {selectedStep.conditions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveCondition(cond.id)}
+                                  className="text-slate-400 hover:text-rose-600 p-0.5"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Dropdown 1: Field Selector */}
+                            <select
+                              value={cond.field}
+                              onChange={(e) => handleUpdateCondition(cond.id, { field: e.target.value as RuleField })}
+                              className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                            >
+                              {Object.entries(RULE_FIELD_DEFINITIONS).map(([key, def]) => (
+                                <option key={key} value={key}>
+                                  {def.label}
+                                </option>
+                              ))}
+                            </select>
+
+                            {/* Dropdown 2 & 3: Operator and Value */}
+                            <div className="grid grid-cols-2 gap-2">
+                              <select
+                                value={cond.operator}
+                                onChange={(e) => handleUpdateCondition(cond.id, { operator: e.target.value as RuleOperator })}
+                                className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                              >
+                                <option value="is">Is</option>
+                                <option value="is_not">Is Not</option>
+                                <option value="in">In</option>
+                                <option value="not_in">Not In</option>
+                                <option value="greater_than">Greater than</option>
+                              </select>
+
+                              <select
+                                value={cond.value}
+                                onChange={(e) => handleUpdateCondition(cond.id, { value: e.target.value })}
+                                className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                              >
+                                {RULE_FIELD_DEFINITIONS[cond.field]?.defaultValues.map((v) => (
+                                  <option key={v} value={v}>
+                                    {v}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Helper info & deep link for Country condition */}
+                            {cond.field === "country" && (
+                              <div className="p-2 rounded-lg bg-amber-50/80 border border-amber-200/60 text-[11px] text-amber-900 flex items-center justify-between">
+                                <span>Checks Geo-Fencing allowed list</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveView("directory");
+                                    setMainSubTab("geofencing");
+                                  }}
+                                  className="font-bold underline text-amber-950 hover:text-amber-800"
+                                >
+                                  Configure Geo-Fencing →
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Helper info & deep link for IP Blocklist condition */}
+                            {cond.field === "ip_blocklist" && (
+                              <div className="p-2 rounded-lg bg-red-50/80 border border-red-200/60 text-[11px] text-red-900 flex items-center justify-between">
+                                <span>Checks custom IP blocklist</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveView("directory");
+                                    setMainSubTab("ip_lists");
+                                  }}
+                                  className="font-bold underline text-red-950 hover:text-red-800"
+                                >
+                                  Manage IP Blocklist →
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Helper info for Request Velocity condition */}
+                            {cond.field === "velocity" && (
+                              <div className="p-2 rounded-lg bg-blue-50/80 border border-blue-200/60 text-[11px] text-blue-900 flex items-center justify-between">
+                                <span>Monitored per Visitor ID, Device ID &amp; IP in 60s window</span>
+                                <span className="font-mono font-bold text-blue-950">60s rate limit</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleAddCondition}
+                        className="w-full text-xs font-semibold text-slate-600 border-slate-200 rounded-lg h-8 gap-1"
+                      >
+                        <Plus className="h-3 w-3" />
+                        <span>Add condition</span>
+                      </Button>
+                    </div>
+
+                    {/* ─── SECTION THEN ─── */}
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                        Then
+                      </div>
+
+                      {/* If Single Status mode is active for this ruleset, show that it routes to Unified Status */}
+                      {currentRuleset.responseMode === "single" ? (
+                        <div className="p-3 bg-emerald-50/70 border border-emerald-200/90 rounded-xl space-y-2.5">
+                          <div className="flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-md bg-emerald-100 flex items-center justify-center text-[#0A5C48]">
+                              <SlidersHorizontal className="h-3 w-3" />
+                            </div>
+                            <div className="text-xs font-bold text-[#0A5C48]">
+                              Routes to Unified Status ({currentRuleset.singleResponse?.statusCode || 403})
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-slate-600 leading-relaxed">
+                            This ruleset is operating in <strong>Single Status (Unified)</strong> mode. When this rule matches, visitors receive the unified exit status code and custom body.
+                          </p>
+                          <div className="flex items-center gap-2 pt-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => {
+                                setIsSingleResponseSelected(true);
+                                setSelectedStepId(null);
+                              }}
+                              className="h-7 text-[11px] font-semibold bg-[#0A5C48] hover:bg-[#084838] text-white rounded-lg shadow-2xs"
+                            >
+                              Configure Unified Status →
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setCurrentRuleset({
+                                  ...currentRuleset,
+                                  responseMode: "multi"
+                                });
+                                setHasUnsavedChanges(true);
+                              }}
+                              className="h-7 text-[11px] font-semibold border-slate-200 text-slate-700 rounded-lg"
+                            >
+                              Switch to Multi-Status
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Multi-Status Mode: Per-Rule Configuration */
+                        <>
+                          <select
+                            value={selectedStep.action}
+                            onChange={(e) => handleUpdateStep({ action: e.target.value as RuleAction })}
+                            className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                          >
+                            <option value="block_response">Block with response</option>
+                            <option value="redirect">Redirect to URL</option>
+                            <option value="challenge">Interactive Challenge</option>
+                            <option value="allow">Allow</option>
+                          </select>
+
+                          {/* ─── STATUS CODE SELECTOR (Multi-Status Mode) ─── */}
+                          {selectedStep.action === "block_response" && (
+                            <>
+                              <div className="space-y-2">
+                                <Label className="text-xs font-semibold text-slate-700">Status</Label>
+                                <select
+                                  value={selectedStep.statusCode}
+                                  onChange={(e) => handleUpdateStep({ statusCode: parseInt(e.target.value) })}
+                                  className="w-full text-xs font-bold text-slate-800 bg-white border border-slate-200 rounded-lg p-2.5 focus:ring-1 focus:ring-[#0A5C48]"
+                                >
+                                  {HTTP_STATUS_OPTIONS.map((opt) => (
+                                    <option key={opt.code} value={opt.code}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <p className="text-[11px] text-slate-400">
+                                  {HTTP_STATUS_OPTIONS.find((o) => o.code === selectedStep.statusCode)?.description}
+                                </p>
+                              </div>
+
+                              {/* ─── HEADERS ─── */}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs font-semibold text-slate-700">Headers</Label>
+                                  <button
+                                    type="button"
+                                    onClick={handleAddHeader}
+                                    className="text-[11px] font-semibold text-[#0A5C48] hover:text-[#084838] flex items-center gap-1"
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    <span>Add</span>
+                                  </button>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  {selectedStep.headers.map((h, hIdx) => (
+                                    <div key={hIdx} className="flex items-center gap-2">
+                                      <Input
+                                        type="text"
+                                        value={h.key}
+                                        onChange={(e) => handleUpdateHeader(hIdx, e.target.value, h.value)}
+                                        placeholder="Key"
+                                        className="text-xs h-8 font-mono"
+                                      />
+                                      <Input
+                                        type="text"
+                                        value={h.value}
+                                        onChange={(e) => handleUpdateHeader(hIdx, h.key, e.target.value)}
+                                        placeholder="Value"
+                                        className="text-xs h-8 font-mono"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveHeader(hIdx)}
+                                        className="text-slate-400 hover:text-rose-600 p-1"
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* ─── BODY ─── */}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs font-semibold text-slate-700">Body</Label>
+                                  <select
+                                    value={selectedStep.bodyType}
+                                    onChange={(e) => {
+                                      const newType = e.target.value as "application/json" | "text/html" | "text/plain";
+                                      const currentHeaders = selectedStep.headers || [];
+                                      const hasContentType = currentHeaders.some((h) => h.key.toLowerCase() === "content-type");
+                                      const updatedHeaders = hasContentType
+                                        ? currentHeaders.map((h) => h.key.toLowerCase() === "content-type" ? { ...h, value: newType } : h)
+                                        : [...currentHeaders, { key: "Content-Type", value: newType }];
+                                      
+                                      let newBody = selectedStep.body;
+                                      if (newType === "text/html" && (selectedStep.body.trim().startsWith("{") || !selectedStep.body.trim())) {
+                                        newBody = '<!DOCTYPE html>\n<html>\n<head><title>Access Denied</title></head>\n<body style="font-family:sans-serif;text-align:center;padding:60px 20px;color:#334155;">\n  <h1 style="font-size:32px;font-weight:700;">403 Forbidden</h1>\n  <p>Access to this resource has been restricted by security policy.</p>\n</body>\n</html>';
+                                      } else if (newType === "application/json" && selectedStep.body.trim().startsWith("<")) {
+                                        newBody = '{"message": "Blocked by security policy", "status": 403}';
+                                      }
+
+                                      handleUpdateStep({ bodyType: newType, headers: updatedHeaders, body: newBody });
+                                    }}
+                                    className="text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 rounded px-2 py-0.5"
+                                  >
+                                    <option value="application/json">JSON Content-Type: application/json</option>
+                                    <option value="text/html">HTML Content-Type: text/html</option>
+                                    <option value="text/plain">Text Content-Type: text/plain</option>
+                                  </select>
+                                </div>
+
+                                <textarea
+                                  value={selectedStep.body}
+                                  onChange={(e) => handleUpdateStep({ body: e.target.value })}
+                                  className="w-full text-xs font-mono p-2.5 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-[#0A5C48]"
+                                  rows={4}
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {/* If Redirect */}
+                          {selectedStep.action === "redirect" && (
+                            <div className="space-y-2">
+                              <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
+                              <Input
+                                type="text"
+                                value={selectedStep.redirectUrl || botUrl}
+                                onChange={(e) => handleUpdateStep({ redirectUrl: e.target.value })}
+                                placeholder="https://yourstore.com/safe-page"
+                                className="text-xs h-9 font-mono"
+                              />
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Delete Step Button */}
+                    <div className="pt-4 border-t border-slate-100">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteStep(selectedStep.id)}
+                        className="w-full text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 h-8 gap-1.5 rounded-lg"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span>Delete rule step</span>
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           )}
         </div>

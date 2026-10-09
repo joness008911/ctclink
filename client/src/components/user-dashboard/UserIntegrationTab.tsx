@@ -75,7 +75,8 @@ import {
   WixLogo,
 } from "./IntegrationLogos";
 import { AgentSetupView } from "./AgentSetupView";
-import { DeflectionControlBar } from "./DeflectionControlBar";
+import { SyncedPolicyBanner } from "./SyncedPolicyBanner";
+import type { Ruleset } from "@shared/rulesEngine";
 
 export type IntegrationStack =
   | "cloudflare"
@@ -108,16 +109,35 @@ interface UserIntegrationTabProps {
   apiKeyValue: string | null;
   customEndpoint: string;
   setCustomEndpoint: (val: string) => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 export function UserIntegrationTab({
   apiKeyValue,
   customEndpoint,
   setCustomEndpoint,
+  onNavigateTab,
 }: UserIntegrationTabProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Helper to navigate tabs in dashboard or use router
+  const handleNavigateToRules = () => {
+    if (onNavigateTab) {
+      onNavigateTab("routing");
+    } else {
+      navigate("/user?tab=routing");
+    }
+  };
+
+  const handleNavigateToLiveFeed = () => {
+    if (onNavigateTab) {
+      onNavigateTab("live");
+    } else {
+      navigate("/user?tab=live");
+    }
+  };
 
   // Navigation: null = Directory View; set to stack = Dedicated Integration Detail View
   const [selectedIntegration, setSelectedIntegration] = useState<IntegrationStack | null>(null);
@@ -189,61 +209,35 @@ export function UserIntegrationTab({
     }
   }, [userSettings]);
 
-  // Manual Deflection State (Edge 403, 404, or PHP Fallback Redirect)
-  const [manualDeflectionAction, setManualDeflectionAction] = useState<"403" | "404" | "redirect">(() => {
-    return userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403");
-  });
-  const [manualBotFallbackUrl, setManualBotFallbackUrl] = useState<string>(
-    userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : "https://google.com"
-  );
+  // Rulesets parsed from user settings to drive live synced status
+  const parsedRulesets: Ruleset[] = useMemo(() => {
+    if (!userSettings?.rulesetsConfig) return [];
+    try {
+      const parsed = JSON.parse(userSettings.rulesetsConfig);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }, [userSettings?.rulesetsConfig]);
 
-  useEffect(() => {
-    if (userSettings?.botUrl) {
-      if (userSettings.botUrl === "404") setManualDeflectionAction("404");
-      else if (userSettings.botUrl.startsWith("http")) {
-        setManualDeflectionAction("redirect");
-        setManualBotFallbackUrl(userSettings.botUrl);
-      } else {
-        setManualDeflectionAction("403");
+  // Effective bot target derived directly from active ruleset or legacy botUrl
+  const effectiveManualBotTarget = useMemo(() => {
+    const activeRuleset = parsedRulesets.find((r) => r.enabled);
+    if (activeRuleset) {
+      if (activeRuleset.responseMode === "single" && activeRuleset.singleResponse) {
+        const single = activeRuleset.singleResponse;
+        if (single.action === "redirect" && single.redirectUrl) return single.redirectUrl.trim();
+        if (single.statusCode) return String(single.statusCode);
+      } else if (activeRuleset.rules?.length > 0) {
+        const activeStep = activeRuleset.rules.find((s) => s.enabled);
+        if (activeStep) {
+          if (activeStep.action === "redirect" && activeStep.redirectUrl) return activeStep.redirectUrl.trim();
+          if (activeStep.statusCode) return String(activeStep.statusCode);
+        }
       }
     }
-  }, [userSettings?.botUrl]);
-
-  const updateUrlsMutation = useMutation({
-    mutationFn: async (payload: { botUrl: string; humanUrl?: string }) => {
-      const res = await apiRequest("POST", "/api/user/urls", payload);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
-      toast({
-        title: "Deflection Action Updated",
-        description: "Your bot and rule deflection policy has been updated across all integrations.",
-      });
-    },
-    onError: (err: any) => {
-      toast({
-        title: "Failed to update deflection",
-        description: err.message || "Failed to persist deflection setting.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleManualDeflectionChange = (action: "403" | "404" | "redirect", url?: string) => {
-    setManualDeflectionAction(action);
-    const effectiveUrl = url !== undefined ? url : manualBotFallbackUrl;
-    if (url !== undefined) setManualBotFallbackUrl(url);
-
-    const payloadBot = action === "redirect" ? (effectiveUrl || "https://google.com") : action;
-    updateUrlsMutation.mutate({
-      botUrl: payloadBot,
-      humanUrl: userSettings?.humanUrl || "https://yourdomain.com",
-    });
-  };
-
-  const effectiveManualBotTarget = manualDeflectionAction === "redirect" ? manualBotFallbackUrl : manualDeflectionAction;
+    return userSettings?.botUrl?.trim() || "403";
+  }, [parsedRulesets, userSettings?.botUrl]);
 
   // Current selected theme object
   const activeTheme = themes.find((t) => t.id === selectedThemeId) || themes[0] || DEFAULT_INTERSTITIAL_THEMES[0];
@@ -816,25 +810,20 @@ export function UserIntegrationTab({
                     apiKeyValue={apiKeyValue || ""}
                     effectiveEndpoint={effectiveEndpoint}
                     targetStack={selectedIntegration}
-                    initialDeflection={userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403")}
-                    initialBotUrl={userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : ""}
-                    onNavigateToLiveFeed={() => navigate("/dashboard?tab=traffic")}
-                    onDeflectionChange={handleManualDeflectionChange}
+                    rulesets={parsedRulesets}
+                    serverBotUrl={userSettings?.botUrl}
+                    onNavigateToLiveFeed={handleNavigateToLiveFeed}
+                    onNavigateToRules={handleNavigateToRules}
                   />
                 </div>
               ) : (
                 <>
-                  {/* Deflection Control Bar for Manual Mode */}
+                  {/* Synced Policy Status Banner for Manual Mode */}
                   {selectedIntegration && (
-                    <DeflectionControlBar
-                      isPhpStack={selectedIntegration === "php"}
-                      deflectionAction={
-                        (selectedIntegration !== "php" && manualDeflectionAction === "redirect")
-                          ? "403"
-                          : manualDeflectionAction
-                      }
-                      botFallbackUrl={manualBotFallbackUrl}
-                      onDeflectionChange={handleManualDeflectionChange}
+                    <SyncedPolicyBanner
+                      rulesets={parsedRulesets}
+                      serverBotUrl={userSettings?.botUrl}
+                      onNavigateToRules={handleNavigateToRules}
                       className="mb-2"
                     />
                   )}
@@ -2419,10 +2408,10 @@ export function useCleanTraffic() {
                 apiKeyValue={apiKeyValue || ""}
                 effectiveEndpoint={effectiveEndpoint}
                 targetStack="nextjs"
-                initialDeflection={userSettings?.botUrl === "404" ? "404" : (userSettings?.botUrl?.startsWith("http") ? "redirect" : "403")}
-                initialBotUrl={userSettings?.botUrl?.startsWith("http") ? userSettings.botUrl : ""}
-                onNavigateToLiveFeed={() => navigate("/dashboard?tab=traffic")}
-                onDeflectionChange={handleManualDeflectionChange}
+                rulesets={parsedRulesets}
+                serverBotUrl={userSettings?.botUrl}
+                onNavigateToLiveFeed={handleNavigateToLiveFeed}
+                onNavigateToRules={handleNavigateToRules}
               />
             </div>
           ) : (
