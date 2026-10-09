@@ -54,6 +54,7 @@ import * as ipaddr from "ipaddr.js";
 import { getTierCallLimit } from "@shared/subscription";
 import { cacheService } from "./cacheService";
 import { classificationBuffer } from "./classificationBuffer";
+import { SupabaseStorage } from "./supabaseStorage";
 import fs from "fs";
 import path from "path";
 
@@ -65,8 +66,14 @@ export class FirestoreStorage implements IStorage {
   private readonly CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache to avoid free tier quota exhaustion
   private quotaExceededUntil = 0;
   private lastQuotaIncidentTimestamp = 0;
+  private supabaseFallback: SupabaseStorage | null = null;
 
   constructor() {
+    if (process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)) {
+      try {
+        this.supabaseFallback = new SupabaseStorage();
+      } catch {}
+    }
     this.seedInMemoryDefaults();
     this.initPromise = this.bootstrapDefaults();
   }
@@ -294,6 +301,10 @@ export class FirestoreStorage implements IStorage {
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        const sbUser = await this.supabaseFallback.getUserByUsername(username);
+        if (sbUser) return sbUser;
+      }
       if (username === "admin") {
         return {
           id: "default-admin-id",
@@ -308,6 +319,10 @@ export class FirestoreStorage implements IStorage {
       const q = query(collection(this.db, "users"), where("username", "==", username), limit(1));
       const snaps = await getDocs(q);
       if (snaps.empty) {
+        if (this.supabaseFallback) {
+          const sbUser = await this.supabaseFallback.getUserByUsername(username);
+          if (sbUser) return sbUser;
+        }
         if (username === "admin") {
           return {
             id: "default-admin-id",
@@ -320,6 +335,10 @@ export class FirestoreStorage implements IStorage {
       return snaps.docs[0].data() as User;
     } catch (e) {
       this.handleQuotaExceeded(e, `getUserByUsername(${username})`);
+      if (this.supabaseFallback) {
+        const sbUser = await this.supabaseFallback.getUserByUsername(username);
+        if (sbUser) return sbUser;
+      }
       if (username === "admin") {
         return {
           id: "default-admin-id",
@@ -726,6 +745,10 @@ export class FirestoreStorage implements IStorage {
     }
 
     if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        const sbKey = await this.supabaseFallback.getApiKey(keyValue);
+        if (sbKey) return sbKey;
+      }
       if (keyValue === "ctc_demo_key_2026") {
         const demoKey: ApiKey = {
           id: "demo-api-key-id",
@@ -797,6 +820,10 @@ export class FirestoreStorage implements IStorage {
     }
 
     if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        const sbKey = await this.supabaseFallback.getApiKeyById(id);
+        if (sbKey) return sbKey;
+      }
       if (id === "demo-api-key-id") {
         const demoKey: ApiKey = {
           id: "demo-api-key-id",
@@ -1471,6 +1498,10 @@ export class FirestoreStorage implements IStorage {
     if (cached) return cached;
 
     if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        const u = await this.supabaseFallback.getClientUser(id);
+        if (u) return u;
+      }
       if (id === "demo-client-user-id") {
         const demoUser = this.getFallbackDemoUser();
         cacheService.setClientUser(demoUser);
@@ -1481,7 +1512,12 @@ export class FirestoreStorage implements IStorage {
 
     try {
       const snap = await getDoc(doc(this.db, "client_users", id));
-      if (!snap.exists()) return undefined;
+      if (!snap.exists()) {
+        if (this.supabaseFallback) {
+          return await this.supabaseFallback.getClientUser(id);
+        }
+        return undefined;
+      }
       const data = snap.data();
       const user = {
         ...data,
@@ -1496,6 +1532,10 @@ export class FirestoreStorage implements IStorage {
       return user;
     } catch (e) {
       this.handleQuotaExceeded(e, `getClientUser(${id})`);
+      if (this.supabaseFallback) {
+        const u = await this.supabaseFallback.getClientUser(id);
+        if (u) return u;
+      }
       if (id === "demo-client-user-id") {
         const demoUser = this.getFallbackDemoUser();
         cacheService.setClientUser(demoUser);
@@ -1507,6 +1547,10 @@ export class FirestoreStorage implements IStorage {
 
   async getClientUserByUsername(username: string): Promise<ClientUser | undefined> {
     if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        const u = await this.supabaseFallback.getClientUserByUsername(username);
+        if (u) return u;
+      }
       if (username === "demo") {
         const demoUser = this.getFallbackDemoUser();
         cacheService.setClientUser(demoUser);
@@ -1518,7 +1562,12 @@ export class FirestoreStorage implements IStorage {
     try {
       const q = query(collection(this.db, "client_users"), where("username", "==", username), limit(1));
       const snaps = await getDocs(q);
-      if (snaps.empty) return undefined;
+      if (snaps.empty) {
+        if (this.supabaseFallback) {
+          return await this.supabaseFallback.getClientUserByUsername(username);
+        }
+        return undefined;
+      }
       const data = snaps.docs[0].data();
       const user = {
         ...data,
@@ -1533,6 +1582,10 @@ export class FirestoreStorage implements IStorage {
       return user;
     } catch (e) {
       this.handleQuotaExceeded(e, `getClientUserByUsername(${username})`);
+      if (this.supabaseFallback) {
+        const u = await this.supabaseFallback.getClientUserByUsername(username);
+        if (u) return u;
+      }
       if (username === "demo") {
         const demoUser = this.getFallbackDemoUser();
         cacheService.setClientUser(demoUser);
@@ -1543,10 +1596,22 @@ export class FirestoreStorage implements IStorage {
   }
 
   async getClientUserByEmail(email: string): Promise<ClientUser | undefined> {
+    if (this.isQuotaActive()) {
+      if (this.supabaseFallback) {
+        return await this.supabaseFallback.getClientUserByEmail(email);
+      }
+      return undefined;
+    }
+
     try {
       const q = query(collection(this.db, "client_users"), where("email", "==", email), limit(1));
       const snaps = await getDocs(q);
-      if (snaps.empty) return undefined;
+      if (snaps.empty) {
+        if (this.supabaseFallback) {
+          return await this.supabaseFallback.getClientUserByEmail(email);
+        }
+        return undefined;
+      }
       const data = snaps.docs[0].data();
       const user = {
         ...data,
@@ -1560,17 +1625,33 @@ export class FirestoreStorage implements IStorage {
       cacheService.setClientUser(user);
       return user;
     } catch (e) {
+      if (this.supabaseFallback) {
+        return await this.supabaseFallback.getClientUserByEmail(email);
+      }
       return undefined;
     }
   }
 
   async getClientUserByUsernameOrEmail(identifier: string): Promise<ClientUser | undefined> {
+    if (this.isQuotaActive() && this.supabaseFallback) {
+      const u = await this.supabaseFallback.getClientUserByUsernameOrEmail(identifier);
+      if (u) return u;
+    }
+
     try {
       const cleanId = identifier.trim();
       const byUser = await this.getClientUserByUsername(cleanId);
       if (byUser) return byUser;
-      return await this.getClientUserByEmail(cleanId);
+      const byEmail = await this.getClientUserByEmail(cleanId);
+      if (byEmail) return byEmail;
+      if (this.supabaseFallback) {
+        return await this.supabaseFallback.getClientUserByUsernameOrEmail(cleanId);
+      }
+      return undefined;
     } catch (e) {
+      if (this.supabaseFallback) {
+        return await this.supabaseFallback.getClientUserByUsernameOrEmail(identifier);
+      }
       return undefined;
     }
   }
@@ -1713,9 +1794,18 @@ export class FirestoreStorage implements IStorage {
     const cached = cacheService.getRedirectUrls(userId);
     if (cached) return cached;
 
+    if (this.isQuotaActive() && this.supabaseFallback) {
+      return await this.supabaseFallback.getUserRedirectUrls(userId);
+    }
+
     try {
       const snap = await getDoc(doc(this.db, "user_redirect_urls", userId));
-      if (!snap.exists()) return undefined;
+      if (!snap.exists()) {
+        if (this.supabaseFallback) {
+          return await this.supabaseFallback.getUserRedirectUrls(userId);
+        }
+        return undefined;
+      }
       const data = snap.data();
       const urls = {
         ...data,
@@ -1724,6 +1814,9 @@ export class FirestoreStorage implements IStorage {
       cacheService.setRedirectUrls(userId, urls);
       return urls;
     } catch (e) {
+      if (this.supabaseFallback) {
+        return await this.supabaseFallback.getUserRedirectUrls(userId);
+      }
       return undefined;
     }
   }

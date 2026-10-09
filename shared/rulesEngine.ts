@@ -248,7 +248,7 @@ export const PREMADE_RULE_TEMPLATES: Array<{
     rules: [
       {
         id: "step_geo_1",
-        name: "Country is Not Allowed",
+        name: "Country is Not Allowed AND VPN is True",
         stepNumber: 2,
         enabled: true,
         conditions: [
@@ -257,32 +257,54 @@ export const PREMADE_RULE_TEMPLATES: Array<{
             field: "country",
             operator: "not_in",
             value: "Not Allowed",
+          },
+          {
+            id: "cond_geo_2",
+            field: "vpn",
+            operator: "is",
+            value: "True",
+            logicalOp: "AND",
           }
         ],
         action: "block_response",
         statusCode: 451,
         headers: [{ key: "Content-Type", value: "application/json" }],
         bodyType: "application/json",
-        body: '{"message": "Service unavailable in your region or country"}'
-      },
+        body: '{"message": "Access restricted: unpermitted region with VPN tunnel"}'
+      }
+    ]
+  },
+  {
+    id: "bot_or_vpn",
+    name: "Bot or VPN Protection",
+    description: "Block visitors if they are identified as an automated browser bot OR connecting through a VPN tunnel.",
+    tags: ["Bot Mitigation", "Account Protection", "Fraud Prevention"],
+    rules: [
       {
-        id: "step_geo_2",
-        name: "VPN Spoofing is True",
-        stepNumber: 3,
+        id: "step_bot_vpn_1",
+        name: "Browser Bot is Bad OR VPN is True",
+        stepNumber: 2,
         enabled: true,
         conditions: [
           {
-            id: "cond_geo_2",
+            id: "cond_bv_1",
+            field: "bot_threat",
+            operator: "is",
+            value: "Bad",
+          },
+          {
+            id: "cond_bv_2",
             field: "vpn",
             operator: "is",
             value: "True",
+            logicalOp: "OR",
           }
         ],
         action: "block_response",
         statusCode: 403,
         headers: [{ key: "Content-Type", value: "application/json" }],
         bodyType: "application/json",
-        body: '{"message": "Geographic location obfuscation detected"}'
+        body: '{"message": "Blocked: automated bot or VPN tunnel detected"}'
       }
     ]
   },
@@ -390,6 +412,102 @@ export interface RuleEvaluationResult {
   reason?: string;
 }
 
+// Authoritative single-condition evaluator
+export function evaluateCondition(
+  cond: RuleCondition,
+  ctx: VisitorEvaluationContext
+): boolean {
+  switch (cond.field) {
+    case "bot_threat": {
+      const isBot = ctx.isBadBot || Boolean(ctx.isAutomatedBot);
+      return cond.operator === "is_not" ? !isBot : isBot;
+    }
+
+    case "vpn": {
+      const isVpn = ctx.isVpn;
+      if (cond.operator === "is_not" || cond.value === "False") {
+        return !isVpn;
+      }
+      return isVpn;
+    }
+
+    case "datacenter": {
+      const isDch = ctx.isDatacenter;
+      if (cond.operator === "is_not" || cond.value === "False") {
+        return !isDch;
+      }
+      return isDch;
+    }
+
+    case "country": {
+      const visitorCountry = (ctx.countryCode || "").trim().toUpperCase();
+      const isCountryInAllowedList = 
+        ctx.allowedCountries.length === 0 || 
+        ctx.allowedCountries.includes("ALL") || 
+        (visitorCountry && ctx.allowedCountries.includes(visitorCountry));
+
+      const targetVal = (cond.value || "").trim().toUpperCase();
+
+      if (cond.operator === "not_in") {
+        if (targetVal === "NOT ALLOWED" || targetVal === "RESTRICTED") {
+          return !isCountryInAllowedList;
+        }
+        const codes = targetVal.split(",").map((s) => s.trim()).filter(Boolean);
+        return codes.length > 0 ? !codes.includes(visitorCountry) : !isCountryInAllowedList;
+      } else if (cond.operator === "in") {
+        if (targetVal === "ALLOWED" || targetVal === "ALL") {
+          return isCountryInAllowedList;
+        }
+        const codes = targetVal.split(",").map((s) => s.trim()).filter(Boolean);
+        return codes.length > 0 ? codes.includes(visitorCountry) : isCountryInAllowedList;
+      } else if (cond.operator === "is") {
+        if (targetVal === "NOT ALLOWED" || targetVal === "RESTRICTED") {
+          return !isCountryInAllowedList;
+        }
+        return visitorCountry === targetVal;
+      } else if (cond.operator === "is_not") {
+        if (targetVal === "NOT ALLOWED" || targetVal === "RESTRICTED") {
+          return isCountryInAllowedList;
+        }
+        return visitorCountry !== targetVal;
+      }
+      return !isCountryInAllowedList;
+    }
+
+    case "velocity": {
+      const isVel = ctx.isVelocitySpike;
+      return cond.operator === "is_not" ? !isVel : isVel;
+    }
+
+    case "ip_blocklist": {
+      const isBlocked = ctx.isIpBlocked;
+      if (cond.operator === "is_not" || cond.value === "False") {
+        return !isBlocked;
+      }
+      return isBlocked;
+    }
+
+    case "tor_proxy": {
+      const isTorOrProxy = ctx.isTor || ctx.isProxy;
+      if (cond.operator === "is_not" || cond.value === "False") {
+        return !isTorOrProxy;
+      }
+      return isTorOrProxy;
+    }
+
+    case "devtools": {
+      const isDev = ctx.isDevtools;
+      if (cond.operator === "is_not" || cond.value === "False") {
+        return !isDev;
+      }
+      return isDev;
+    }
+
+    default:
+      return false;
+  }
+}
+
 // Authoritative rule evaluator used across API ingress and live integrations
 export function evaluateVisitorRules(
   rulesets: Ruleset[],
@@ -403,70 +521,24 @@ export function evaluateVisitorRules(
     for (const rule of activeRules) {
       if (!rule.conditions || rule.conditions.length === 0) continue;
 
-      let allConditionsPass = true;
+      // Compound evaluation supporting AND / OR chaining
+      // Condition 0 is the starting evaluation.
+      // Each subsequent condition has its logicalOp (default "AND") connecting it to previous expression.
+      let ruleMatches = evaluateCondition(rule.conditions[0], ctx);
 
-      for (const cond of rule.conditions) {
-        let condPassed = false;
+      for (let i = 1; i < rule.conditions.length; i++) {
+        const cond = rule.conditions[i];
+        const condResult = evaluateCondition(cond, ctx);
+        const op = cond.logicalOp || "AND";
 
-        switch (cond.field) {
-          case "bot_threat":
-            condPassed = ctx.isBadBot || Boolean(ctx.isAutomatedBot);
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "vpn":
-            condPassed = ctx.isVpn;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "datacenter":
-            condPassed = ctx.isDatacenter;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "country":
-            const isCountryAllowed = ctx.allowedCountries.length === 0 || 
-              ctx.allowedCountries.includes("ALL") || 
-              ctx.allowedCountries.includes(ctx.countryCode.toUpperCase());
-            
-            if (cond.operator === "not_in" || cond.value === "Not Allowed") {
-              condPassed = !isCountryAllowed;
-            } else {
-              condPassed = isCountryAllowed;
-            }
-            break;
-
-          case "velocity":
-            condPassed = ctx.isVelocitySpike;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "ip_blocklist":
-            condPassed = ctx.isIpBlocked;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "tor_proxy":
-            condPassed = ctx.isTor || ctx.isProxy;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          case "devtools":
-            condPassed = ctx.isDevtools;
-            if (cond.operator === "is_not") condPassed = !condPassed;
-            break;
-
-          default:
-            condPassed = false;
-        }
-
-        if (!condPassed) {
-          allConditionsPass = false;
-          break;
+        if (op === "OR") {
+          ruleMatches = ruleMatches || condResult;
+        } else {
+          ruleMatches = ruleMatches && condResult;
         }
       }
 
-      if (allConditionsPass) {
+      if (ruleMatches) {
         return {
           matched: true,
           ruleName: rule.name,

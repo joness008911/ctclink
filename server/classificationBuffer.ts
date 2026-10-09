@@ -14,6 +14,13 @@ import { firestore } from "./firebase";
 import type { InsertClassification, Classification } from "@shared/schema";
 import { cacheService } from "./cacheService";
 import { pool, isDatabaseConfigured } from "./db";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseClient: SupabaseClient | null = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
 export interface BufferedClassificationItem {
   id: string;
@@ -115,7 +122,8 @@ class ClassificationWriteBuffer {
     const batchItems = this.queue.splice(0, this.MAX_BATCH_SIZE);
 
     const isSupabase = (process.env.STORAGE_BACKEND || "").toLowerCase().trim() === "supabase" || 
-                       (process.env.STORAGE_BACKEND || "").toLowerCase().trim() === "postgres";
+                       (process.env.STORAGE_BACKEND || "").toLowerCase().trim() === "postgres" ||
+                       !!supabaseClient;
 
     let flushedToSupabase = false;
     if (isSupabase && pool) {
@@ -176,7 +184,59 @@ class ClassificationWriteBuffer {
         }
         flushedToSupabase = true;
       } catch (err: any) {
-        console.warn(`[CLASSIFICATION_BUFFER] Failed to flush batch to Supabase:`, err?.message || err);
+        console.warn(`[CLASSIFICATION_BUFFER] Failed to flush batch to Supabase pool:`, err?.message || err);
+      }
+    }
+
+    if (!flushedToSupabase && isSupabase && supabaseClient) {
+      try {
+        const rows = batchItems.map((item) => {
+          const d = item.data;
+          return {
+            id: item.id,
+            ip_address: d.ipAddress || "0.0.0.0",
+            location: d.location || null,
+            country: d.country || null,
+            country_code: d.countryCode || null,
+            city: d.city || null,
+            region: d.region || null,
+            visitor_type: d.visitorType || "Human",
+            detection_method: d.detectionMethod || "Direct",
+            connection_type: d.connectionType || null,
+            isp: d.isp || null,
+            browser: d.browser || null,
+            device_type: d.deviceType || null,
+            device_id: d.deviceId || null,
+            visitor_id: d.visitorId || null,
+            is_new_visitor: d.isNewVisitor ?? null,
+            first_seen: d.firstSeen ? new Date(d.firstSeen).toISOString() : null,
+            last_seen: d.lastSeen ? new Date(d.lastSeen).toISOString() : null,
+            visit_count: d.visitCount ?? null,
+            api_key_id: d.apiKeyId || null,
+            ad_network: d.adNetwork || null,
+            click_token: d.clickToken || null,
+            click_id: d.clickId || null,
+            traffic_type: d.trafficType || null,
+            is_verified_reviewer: d.isVerifiedReviewer === true,
+            reviewer_platform: d.reviewerPlatform || null,
+            user_agent: d.userAgent || null,
+            client_signals: d.clientSignals || null,
+            request_headers: d.requestHeaders || null,
+            response_details: d.responseDetails || null,
+            timeline_events: d.timelineEvents || null,
+            risk_score: d.riskScore ?? null,
+            usage_type: d.usageType || null,
+            timestamp: d.timestamp ? new Date(d.timestamp).toISOString() : new Date().toISOString(),
+          };
+        });
+        const { error } = await supabaseClient.from("classifications").upsert(rows, { onConflict: "id" });
+        if (!error) {
+          flushedToSupabase = true;
+        } else {
+          console.warn(`[CLASSIFICATION_BUFFER] Supabase REST flush error:`, error.message);
+        }
+      } catch (err: any) {
+        console.warn(`[CLASSIFICATION_BUFFER] Supabase REST client error:`, err?.message || err);
       }
     }
 

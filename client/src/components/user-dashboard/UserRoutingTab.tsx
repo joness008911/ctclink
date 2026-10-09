@@ -46,6 +46,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { COUNTRIES_LIST, getCountryFlag } from "@/lib/countries";
 import { 
   Ruleset, 
   RuleStep, 
@@ -57,6 +58,15 @@ import {
   PREMADE_RULE_TEMPLATES, 
   RULE_FIELD_DEFINITIONS 
 } from "@shared/rulesEngine";
+
+interface UserIpRule {
+  id: string;
+  ipOrCidr: string;
+  label?: string;
+  reason?: string;
+  enabled: boolean;
+  createdAt: string;
+}
 
 interface UserRoutingTabProps {
   isReadOnly?: boolean;
@@ -81,6 +91,9 @@ export function UserRoutingTab({
   // View state: "directory" (Rules Engine list), "starter" (Choose template vs scratch), "canvas" (Workflow editor)
   const [activeView, setActiveView] = useState<"directory" | "starter" | "canvas">("directory");
   
+  // Top-level subtab for directory view: "rules" | "geofencing" | "ip_lists" | "policies"
+  const [mainSubTab, setMainSubTab] = useState<"rules" | "geofencing" | "ip_lists" | "policies">("rules");
+
   // Ruleset editor tab: "rules" (canvas) or "settings"
   const [editorTab, setEditorTab] = useState<"rules" | "settings">("rules");
 
@@ -111,7 +124,11 @@ export function UserRoutingTab({
     humanUrl: string;
     botUrl: string;
     allowedCountries?: string;
+    allowedDevices?: string;
+    desktopOsFilter?: string;
     blockVpn?: string;
+    blockDatacenter?: string;
+    blockTor?: string;
     rulesetsConfig?: string;
   }>({
     queryKey: ["/api/user/redirect-urls"],
@@ -122,14 +139,48 @@ export function UserRoutingTab({
   const [humanUrl, setHumanUrl] = useState("");
   const [botUrl, setBotUrl] = useState("");
 
+  // Geo-Fencing state
+  const [allowedCountries, setAllowedCountries] = useState("ALL");
+  const [countrySearch, setCountrySearch] = useState("");
+  const [geoFencingPending, setGeoFencingPending] = useState(false);
+
+  // Device & Traffic Policies state
+  const [allowedDevices, setAllowedDevices] = useState("all");
+  const [desktopOsFilter, setDesktopOsFilter] = useState("both");
+  const [blockVpnSetting, setBlockVpnSetting] = useState("block");
+  const [blockDatacenterSetting, setBlockDatacenterSetting] = useState("block");
+  const [blockTorSetting, setBlockTorSetting] = useState("block");
+  const [policiesPending, setPoliciesPending] = useState(false);
+
+  // IP Access Lists query & state
+  const [ipTab, setIpTab] = useState<"blocklist" | "allowlist">("blocklist");
+  const [newBlockIp, setNewBlockIp] = useState("");
+  const [newBlockReason, setNewBlockReason] = useState("");
+  const [newAllowIp, setNewAllowIp] = useState("");
+  const [newAllowLabel, setNewAllowLabel] = useState("");
+
+  const { data: ipRulesData, isLoading: isLoadingIpRules } = useQuery<{
+    blocklist: UserIpRule[];
+    allowlist: UserIpRule[];
+  }>({
+    queryKey: ["/api/user/ip-rules"],
+    refetchOnMount: true,
+  });
+
   // All User Rulesets
   const [rulesets, setRulesets] = useState<Ruleset[]>([]);
 
-  // Initialize rulesets from serverConfig
+  // Initialize from serverConfig
   useEffect(() => {
     if (serverConfig) {
       setHumanUrl(serverConfig.humanUrl || "https://yourdomain.com");
       setBotUrl(serverConfig.botUrl || "403");
+      setAllowedCountries(serverConfig.allowedCountries || "ALL");
+      setAllowedDevices(serverConfig.allowedDevices || "all");
+      setDesktopOsFilter(serverConfig.desktopOsFilter || "both");
+      setBlockVpnSetting(serverConfig.blockVpn || "block");
+      setBlockDatacenterSetting(serverConfig.blockDatacenter || "block");
+      setBlockTorSetting(serverConfig.blockTor || "block");
 
       if (serverConfig.rulesetsConfig) {
         try {
@@ -160,6 +211,17 @@ export function UserRoutingTab({
       setRulesets([seeded]);
     }
   }, [serverConfig]);
+
+  // Selected Country codes array
+  const selectedCountryCodes = useMemo(() => {
+    if (!allowedCountries || allowedCountries.trim().toUpperCase() === "ALL") {
+      return ["ALL"];
+    }
+    return allowedCountries
+      .split(",")
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean);
+  }, [allowedCountries]);
 
   // Mutation to persist rulesets to backend
   const saveMutation = useMutation({
@@ -196,6 +258,169 @@ export function UserRoutingTab({
       });
     },
   });
+
+  // Save IP rules mutation
+  const saveIpRulesMutation = useMutation({
+    mutationFn: async (payload: { blocklist: UserIpRule[]; allowlist: UserIpRule[] }) => {
+      const res = await apiRequest("POST", "/api/user/ip-rules", payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/ip-rules"] });
+      toast({
+        title: "IP Access Lists updated",
+        description: "Your custom IP blocklist and allowlist have been saved.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Failed to update IP lists",
+        description: err.message || "An error occurred.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle add to IP Blocklist
+  const handleAddBlockIp = () => {
+    if (!newBlockIp.trim()) return;
+    const currentBlocklist = ipRulesData?.blocklist || [];
+    const currentAllowlist = ipRulesData?.allowlist || [];
+    const newEntry: UserIpRule = {
+      id: `blk_${Date.now()}`,
+      ipOrCidr: newBlockIp.trim(),
+      reason: newBlockReason.trim() || undefined,
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+    saveIpRulesMutation.mutate({
+      blocklist: [newEntry, ...currentBlocklist],
+      allowlist: currentAllowlist,
+    });
+    setNewBlockIp("");
+    setNewBlockReason("");
+  };
+
+  // Handle delete from IP Blocklist
+  const handleDeleteBlockIp = (id: string) => {
+    const currentBlocklist = (ipRulesData?.blocklist || []).filter((i) => i.id !== id);
+    const currentAllowlist = ipRulesData?.allowlist || [];
+    saveIpRulesMutation.mutate({
+      blocklist: currentBlocklist,
+      allowlist: currentAllowlist,
+    });
+  };
+
+  // Handle toggle blocklist entry
+  const handleToggleBlockIp = (id: string, enabled: boolean) => {
+    const currentBlocklist = (ipRulesData?.blocklist || []).map((i) => 
+      i.id === id ? { ...i, enabled } : i
+    );
+    const currentAllowlist = ipRulesData?.allowlist || [];
+    saveIpRulesMutation.mutate({
+      blocklist: currentBlocklist,
+      allowlist: currentAllowlist,
+    });
+  };
+
+  // Handle add to IP Allowlist
+  const handleAddAllowIp = () => {
+    if (!newAllowIp.trim()) return;
+    const currentBlocklist = ipRulesData?.blocklist || [];
+    const currentAllowlist = ipRulesData?.allowlist || [];
+    const newEntry: UserIpRule = {
+      id: `alw_${Date.now()}`,
+      ipOrCidr: newAllowIp.trim(),
+      label: newAllowLabel.trim() || "Trusted Client",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+    saveIpRulesMutation.mutate({
+      blocklist: currentBlocklist,
+      allowlist: [newEntry, ...currentAllowlist],
+    });
+    setNewAllowIp("");
+    setNewAllowLabel("");
+  };
+
+  // Handle delete from IP Allowlist
+  const handleDeleteAllowIp = (id: string) => {
+    const currentBlocklist = ipRulesData?.blocklist || [];
+    const currentAllowlist = (ipRulesData?.allowlist || []).filter((i) => i.id !== id);
+    saveIpRulesMutation.mutate({
+      blocklist: currentBlocklist,
+      allowlist: currentAllowlist,
+    });
+  };
+
+  // Handle toggle allowlist entry
+  const handleToggleAllowIp = (id: string, enabled: boolean) => {
+    const currentBlocklist = ipRulesData?.blocklist || [];
+    const currentAllowlist = (ipRulesData?.allowlist || []).map((i) => 
+      i.id === id ? { ...i, enabled } : i
+    );
+    saveIpRulesMutation.mutate({
+      blocklist: currentBlocklist,
+      allowlist: currentAllowlist,
+    });
+  };
+
+  // Save Geo-Fencing
+  const handleSaveGeoFencing = async (newCountryList: string) => {
+    setGeoFencingPending(true);
+    try {
+      const payload = {
+        humanUrl: humanUrl.trim() || "https://yourdomain.com",
+        botUrl: botUrl.trim() || "403",
+        allowedCountries: newCountryList,
+      };
+      await apiRequest("PUT", "/api/user/redirect-urls", payload);
+      setAllowedCountries(newCountryList);
+      queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
+      toast({
+        title: "Geo-Fencing policy saved",
+        description: newCountryList === "ALL" ? "All countries are currently permitted." : `Allowed countries list updated (${newCountryList.split(',').length} countries).`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to save Geo-Fencing",
+        description: err.message || "An error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setGeoFencingPending(false);
+    }
+  };
+
+  // Save Device & Traffic policies
+  const handleSavePolicies = async () => {
+    setPoliciesPending(true);
+    try {
+      const payload = {
+        humanUrl: humanUrl.trim() || "https://yourdomain.com",
+        botUrl: botUrl.trim() || "403",
+        allowedDevices,
+        desktopOsFilter,
+        blockVpn: blockVpnSetting,
+        blockDatacenter: blockDatacenterSetting,
+        blockTor: blockTorSetting,
+      };
+      await apiRequest("PUT", "/api/user/redirect-urls", payload);
+      queryClient.invalidateQueries({ queryKey: ["/api/user/redirect-urls"] });
+      toast({
+        title: "Policies updated",
+        description: "Device and baseline shield policies have been updated.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Failed to save policies",
+        description: err.message || "An error occurred.",
+        variant: "destructive",
+      });
+    } finally {
+      setPoliciesPending(false);
+    }
+  };
 
   // Filtered rulesets for directory view
   const filteredRulesets = useMemo(() => {
@@ -475,36 +700,115 @@ export function UserRoutingTab({
   };
 
   // ═════════════════════════════════════════════════════════════════
-  // VIEW 1: RULES ENGINE DIRECTORY (Screenshot 3)
+  // VIEW 1: RULES ENGINE DIRECTORY & POLICIES (Screenshot 3)
   // ═════════════════════════════════════════════════════════════════
   if (activeView === "directory") {
+    const totalIpRulesCount = (ipRulesData?.blocklist?.length || 0) + (ipRulesData?.allowlist?.length || 0);
+
     return (
       <div className="w-full space-y-6 pb-12">
         {/* Top Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              Rules Engine
+              Rules & Policies
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              Deploy no-code rules to protect pages and API endpoints from bots, abuse, and fraud.
+              Configure detection rules, geographic boundaries, custom IP access lists, and device policies.
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => setActiveView("starter")}
-              className="bg-[#0A5C48] hover:bg-[#084838] text-white text-xs font-semibold h-8.5 px-3.5 rounded-lg gap-1.5 shadow-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>New ruleset</span>
-            </Button>
-          </div>
+          {mainSubTab === "rules" && (
+            <div className="flex items-center gap-2.5">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setActiveView("starter")}
+                className="bg-[#0A5C48] hover:bg-[#084838] text-white text-xs font-semibold h-8.5 px-3.5 rounded-lg gap-1.5 shadow-xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>New ruleset</span>
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* Search Bar & Filters */}
+        {/* Sub-Navigation Tabs */}
+        <div className="flex items-center gap-1.5 border-b border-slate-200 pb-2 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setMainSubTab("rules")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 shrink-0 ${
+              mainSubTab === "rules"
+                ? "bg-slate-900 text-white font-bold"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <span>Rules Engine</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              mainSubTab === "rules" ? "bg-slate-800 text-slate-200" : "bg-slate-100 text-slate-600"
+            }`}>
+              {rulesets.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainSubTab("geofencing")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 shrink-0 ${
+              mainSubTab === "geofencing"
+                ? "bg-slate-900 text-white font-bold"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Globe className="h-3.5 w-3.5" />
+            <span>Geo-Fencing</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              mainSubTab === "geofencing" ? "bg-slate-800 text-slate-200" : "bg-slate-100 text-slate-600"
+            }`}>
+              {allowedCountries === "ALL" ? "Global" : `${selectedCountryCodes.length} allowed`}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainSubTab("ip_lists")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 shrink-0 ${
+              mainSubTab === "ip_lists"
+                ? "bg-slate-900 text-white font-bold"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Lock className="h-3.5 w-3.5" />
+            <span>IP Access Lists</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              mainSubTab === "ip_lists" ? "bg-slate-800 text-slate-200" : "bg-slate-100 text-slate-600"
+            }`}>
+              {totalIpRulesCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setMainSubTab("policies")}
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 shrink-0 ${
+              mainSubTab === "policies"
+                ? "bg-slate-900 text-white font-bold"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+            }`}
+          >
+            <Shield className="h-3.5 w-3.5" />
+            <span>Device & Traffic Policies</span>
+          </button>
+        </div>
+
+        {/* ─────────────────────────────────────────────────────────────
+            SUBTAB 1: RULES ENGINE DIRECTORY
+        ───────────────────────────────────────────────────────────── */}
+        {mainSubTab === "rules" && (
+          <div className="space-y-6">
+            {/* Search Bar & Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 border border-[#E2E8F0] rounded-xl shadow-xs">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -671,6 +975,557 @@ export function UserRoutingTab({
             )}
           </div>
         </div>
+      </div>
+    )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            SUBTAB 2: GEO-FENCING CONFIGURATION
+        ───────────────────────────────────────────────────────────── */}
+        {mainSubTab === "geofencing" && (
+          <div className="space-y-6">
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-xs space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-[#0A5C48]" />
+                    <span>Geographic Boundary Policy</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Select which countries are permitted to view your destination pages. All other traffic triggers your deflection rules.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={geoFencingPending}
+                    onClick={() => handleSaveGeoFencing(allowedCountries)}
+                    className="bg-[#0A5C48] hover:bg-[#084838] text-white text-xs font-semibold h-8.5 px-4 rounded-lg shadow-xs"
+                  >
+                    <Save className="h-3.5 w-3.5 mr-1.5" />
+                    <span>{geoFencingPending ? "Saving..." : "Save Geo-Fencing"}</span>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Presets Bar */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Quick Regional Presets</Label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("ALL")}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                      allowedCountries === "ALL"
+                        ? "bg-[#0A5C48] text-white border-[#0A5C48]"
+                        : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    🌐 Global Traffic (Allow All)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("US,CA,GB,AU,NZ")}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  >
+                    🇺🇸 Tier-1 English (US, CA, GB, AU, NZ)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("US,CA,MX")}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  >
+                    🌎 North America (US, CA, MX)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("DE,FR,IT,ES,NL,BE,AT,SE,NO,DK,FI,IE,PL,PT,GR,CH")}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  >
+                    🇪🇺 Core Europe (EU + EFTA)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("JP,KR,SG,AU,NZ,HK,TW")}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                  >
+                    🌏 APAC Core (JP, KR, SG, AU, NZ)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAllowedCountries("")}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border bg-white text-slate-500 border-slate-200 hover:text-rose-600 hover:bg-rose-50"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              {/* Current Status Banner */}
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="text-xs font-semibold text-slate-900">
+                    Active Policy: {allowedCountries === "ALL" ? "All countries allowed (Global)" : `${selectedCountryCodes.length} countries permitted`}
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-500 font-mono">
+                  {allowedCountries === "ALL" ? "ALL" : allowedCountries || "None selected (Strict Block)"}
+                </div>
+              </div>
+
+              {/* Selected Tags list */}
+              {allowedCountries !== "ALL" && selectedCountryCodes.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-semibold text-slate-600">Selected Countries ({selectedCountryCodes.length})</div>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto p-2 bg-white rounded-lg border border-slate-200">
+                    {selectedCountryCodes.map((code) => {
+                      const item = COUNTRIES_LIST.find((c) => c.code === code);
+                      return (
+                        <span
+                          key={code}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800"
+                        >
+                          <span>{item?.flag || getCountryFlag(code)}</span>
+                          <span>{item?.name || code}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const remaining = selectedCountryCodes.filter((c) => c !== code);
+                              setAllowedCountries(remaining.join(","));
+                            }}
+                            className="text-slate-400 hover:text-rose-600 ml-0.5"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Search & Country List */}
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    type="text"
+                    placeholder="Search countries by name or 2-letter ISO code (e.g., US, Germany)..."
+                    value={countrySearch}
+                    onChange={(e) => setCountrySearch(e.target.value)}
+                    className="pl-9 h-9 text-xs border-slate-200"
+                  />
+                </div>
+
+                <div className="border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto divide-y divide-slate-100">
+                  {COUNTRIES_LIST.filter((c) => c.code !== "ALL").filter((c) => 
+                    !countrySearch.trim() || 
+                    c.name.toLowerCase().includes(countrySearch.toLowerCase()) ||
+                    c.code.toLowerCase().includes(countrySearch.toLowerCase())
+                  ).map((c) => {
+                    const isSelected = allowedCountries !== "ALL" && selectedCountryCodes.includes(c.code);
+                    return (
+                      <div
+                        key={c.code}
+                        onClick={() => {
+                          if (allowedCountries === "ALL") {
+                            setAllowedCountries(c.code);
+                          } else {
+                            if (isSelected) {
+                              const remaining = selectedCountryCodes.filter((item) => item !== c.code);
+                              setAllowedCountries(remaining.join(","));
+                            } else {
+                              setAllowedCountries([...selectedCountryCodes, c.code].join(","));
+                            }
+                          }
+                        }}
+                        className={`px-4 py-2.5 flex items-center justify-between text-xs cursor-pointer transition-colors ${
+                          isSelected ? "bg-emerald-50/60 font-semibold" : "hover:bg-slate-50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-base leading-none">{c.flag}</span>
+                          <span className="text-slate-900">{c.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono uppercase bg-slate-100 px-1 py-0.2 rounded border border-slate-200/60">
+                            {c.code}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center">
+                          {isSelected ? (
+                            <div className="w-5 h-5 rounded-md bg-[#0A5C48] text-white flex items-center justify-center">
+                              <Check className="h-3.5 w-3.5" />
+                            </div>
+                          ) : (
+                            <div className="w-5 h-5 rounded-md border border-slate-300" />
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            SUBTAB 3: CUSTOM IP ACCESS LISTS (Blocklist & Allowlist)
+        ───────────────────────────────────────────────────────────── */}
+        {mainSubTab === "ip_lists" && (
+          <div className="space-y-6">
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-xs space-y-6">
+              {/* Header and Sub-Tabs */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Lock className="h-4 w-4 text-[#0A5C48]" />
+                    <span>IP Access Control Lists</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Manage client-specific IP blocklists for scrapers and IP allowlists for team/QA bypass.
+                  </p>
+                </div>
+
+                <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setIpTab("blocklist")}
+                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                      ipTab === "blocklist"
+                        ? "bg-slate-900 text-white shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    IP Blocklist ({ipRulesData?.blocklist?.length || 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIpTab("allowlist")}
+                    className={`px-3 py-1 font-semibold rounded-md transition-all ${
+                      ipTab === "allowlist"
+                        ? "bg-[#0A5C48] text-white shadow-2xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    IP Allowlist ({ipRulesData?.allowlist?.length || 0})
+                  </button>
+                </div>
+              </div>
+
+              {/* IP Blocklist Tab */}
+              {ipTab === "blocklist" && (
+                <div className="space-y-6">
+                  {/* Add IP Form */}
+                  <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+                    <div className="text-xs font-bold text-slate-900">Add IP to Custom Blocklist</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                      <div className="sm:col-span-6 space-y-1">
+                        <Label className="text-[11px] font-semibold text-slate-600">IP Address or CIDR Range</Label>
+                        <Input
+                          type="text"
+                          placeholder="e.g. 198.51.100.1 or 192.168.1.0/24"
+                          value={newBlockIp}
+                          onChange={(e) => setNewBlockIp(e.target.value)}
+                          className="h-8.5 text-xs bg-white font-mono"
+                        />
+                      </div>
+                      <div className="sm:col-span-4 space-y-1">
+                        <Label className="text-[11px] font-semibold text-slate-600">Reason / Note</Label>
+                        <Input
+                          type="text"
+                          placeholder="e.g. Malicious scraper"
+                          value={newBlockReason}
+                          onChange={(e) => setNewBlockReason(e.target.value)}
+                          className="h-8.5 text-xs bg-white"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 flex items-end">
+                        <Button
+                          type="button"
+                          onClick={handleAddBlockIp}
+                          disabled={!newBlockIp.trim()}
+                          className="w-full h-8.5 text-xs font-semibold bg-slate-900 hover:bg-black text-white rounded-lg"
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          <span>Add IP</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Blocklist Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="grid grid-cols-12 py-2.5 px-4 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <div className="col-span-5 sm:col-span-5">IP / CIDR Range</div>
+                      <div className="col-span-4 sm:col-span-4">Reason / Note</div>
+                      <div className="col-span-3 sm:col-span-3 text-right">Actions</div>
+                    </div>
+
+                    <div className="divide-y divide-slate-100">
+                      {(ipRulesData?.blocklist || []).map((item) => (
+                        <div key={item.id} className="grid grid-cols-12 items-center py-3 px-4 hover:bg-slate-50/70 transition-colors">
+                          <div className="col-span-5 sm:col-span-5 flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900">{item.ipOrCidr}</span>
+                            {!item.enabled && (
+                              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
+                                Paused
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-4 sm:col-span-4 text-xs text-slate-500 truncate">
+                            {item.reason || "Custom Block"}
+                          </div>
+                          <div className="col-span-3 sm:col-span-3 flex items-center justify-end gap-3">
+                            <Switch
+                              checked={item.enabled}
+                              onCheckedChange={(checked) => handleToggleBlockIp(item.id, checked)}
+                              className="data-[state=checked]:bg-slate-900"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteBlockIp(item.id)}
+                              className="text-slate-400 hover:text-rose-600 p-1"
+                              title="Delete entry"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {(!ipRulesData?.blocklist || ipRulesData.blocklist.length === 0) && (
+                        <div className="py-12 text-center text-slate-400 text-xs">
+                          No custom IP blocklist entries. Add an IP or CIDR range above to block specific traffic.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* IP Allowlist Tab */}
+              {ipTab === "allowlist" && (
+                <div className="space-y-6">
+                  {/* Add Allowlist IP Form */}
+                  <div className="p-4 bg-emerald-50/40 rounded-xl border border-emerald-200/60 space-y-3">
+                    <div className="text-xs font-bold text-slate-900">Add IP to Trusted Allowlist (Bypass)</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                      <div className="sm:col-span-6 space-y-1">
+                        <Label className="text-[11px] font-semibold text-slate-600">IP Address or CIDR Range</Label>
+                        <Input
+                          type="text"
+                          placeholder="e.g. 203.0.113.1 or 10.0.0.0/8"
+                          value={newAllowIp}
+                          onChange={(e) => setNewAllowIp(e.target.value)}
+                          className="h-8.5 text-xs bg-white font-mono"
+                        />
+                      </div>
+                      <div className="sm:col-span-4 space-y-1">
+                        <Label className="text-[11px] font-semibold text-slate-600">Label / Name</Label>
+                        <Input
+                          type="text"
+                          placeholder="e.g. Office HQ or QA Team"
+                          value={newAllowLabel}
+                          onChange={(e) => setNewAllowLabel(e.target.value)}
+                          className="h-8.5 text-xs bg-white"
+                        />
+                      </div>
+                      <div className="sm:col-span-2 flex items-end">
+                        <Button
+                          type="button"
+                          onClick={handleAddAllowIp}
+                          disabled={!newAllowIp.trim()}
+                          className="w-full h-8.5 text-xs font-semibold bg-[#0A5C48] hover:bg-[#084838] text-white rounded-lg"
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          <span>Allow IP</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Allowlist Table */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <div className="grid grid-cols-12 py-2.5 px-4 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                      <div className="col-span-5 sm:col-span-5">IP / CIDR Range</div>
+                      <div className="col-span-4 sm:col-span-4">Label</div>
+                      <div className="col-span-3 sm:col-span-3 text-right">Actions</div>
+                    </div>
+
+                    <div className="divide-y divide-slate-100">
+                      {(ipRulesData?.allowlist || []).map((item) => (
+                        <div key={item.id} className="grid grid-cols-12 items-center py-3 px-4 hover:bg-slate-50/70 transition-colors">
+                          <div className="col-span-5 sm:col-span-5 flex items-center gap-2">
+                            <span className="font-mono text-xs font-bold text-slate-900">{item.ipOrCidr}</span>
+                            {!item.enabled && (
+                              <span className="text-[10px] font-medium text-slate-400 bg-slate-100 px-1.5 py-0.2 rounded">
+                                Paused
+                              </span>
+                            )}
+                          </div>
+                          <div className="col-span-4 sm:col-span-4 text-xs text-slate-500 truncate">
+                            {item.label || "Trusted Client"}
+                          </div>
+                          <div className="col-span-3 sm:col-span-3 flex items-center justify-end gap-3">
+                            <Switch
+                              checked={item.enabled}
+                              onCheckedChange={(checked) => handleToggleAllowIp(item.id, checked)}
+                              className="data-[state=checked]:bg-[#0A5C48]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteAllowIp(item.id)}
+                              className="text-slate-400 hover:text-rose-600 p-1"
+                              title="Delete entry"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {(!ipRulesData?.allowlist || ipRulesData.allowlist.length === 0) && (
+                        <div className="py-12 text-center text-slate-400 text-xs">
+                          No custom IP allowlist entries. Add an IP to bypass bot checks for office or developer testing.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ─────────────────────────────────────────────────────────────
+            SUBTAB 4: TRAFFIC & DEVICE POLICIES
+        ───────────────────────────────────────────────────────────── */}
+        {mainSubTab === "policies" && (
+          <div className="space-y-6">
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-6 shadow-xs space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-[#0A5C48]" />
+                    <span>Device & Traffic Policies</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Configure device-level restrictions, operating system targeting, and baseline threat mitigation.
+                  </p>
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={policiesPending}
+                  onClick={handleSavePolicies}
+                  className="bg-[#0A5C48] hover:bg-[#084838] text-white text-xs font-semibold h-8.5 px-4 rounded-lg shadow-xs"
+                >
+                  <Save className="h-3.5 w-3.5 mr-1.5" />
+                  <span>{policiesPending ? "Saving..." : "Save Policies"}</span>
+                </Button>
+              </div>
+
+              {/* Target Devices */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Target Device Restrictions</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    { id: "all", label: "All Devices" },
+                    { id: "desktop", label: "Desktop Only" },
+                    { id: "mobile", label: "Mobile Only" },
+                    { id: "mobile_tablet", label: "Mobile & Tablet" }
+                  ].map((dev) => (
+                    <button
+                      key={dev.id}
+                      type="button"
+                      onClick={() => setAllowedDevices(dev.id)}
+                      className={`p-3 text-xs font-semibold rounded-lg border text-left transition-all ${
+                        allowedDevices === dev.id
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {dev.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Desktop OS Filter */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Desktop Operating System</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: "both", label: "Windows & macOS" },
+                    { id: "windows", label: "Windows Only" },
+                    { id: "mac", label: "macOS Only" }
+                  ].map((os) => (
+                    <button
+                      key={os.id}
+                      type="button"
+                      onClick={() => setDesktopOsFilter(os.id)}
+                      className={`p-3 text-xs font-semibold rounded-lg border text-left transition-all ${
+                        desktopOsFilter === os.id
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      {os.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Baseline Threat Switches */}
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">Block VPN & Anonymizers</div>
+                    <div className="text-[11px] text-slate-500">Block visitors routing through commercial VPN tunnels</div>
+                  </div>
+                  <Switch
+                    checked={blockVpnSetting === "block"}
+                    onCheckedChange={(checked) => setBlockVpnSetting(checked ? "block" : "allow")}
+                    className="data-[state=checked]:bg-[#0A5C48]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">Block Datacenter Cloud ASNs</div>
+                    <div className="text-[11px] text-slate-500">Block AWS, Azure, Google Cloud, and hosting provider IP ranges</div>
+                  </div>
+                  <Switch
+                    checked={blockDatacenterSetting === "block"}
+                    onCheckedChange={(checked) => setBlockDatacenterSetting(checked ? "block" : "allow")}
+                    className="data-[state=checked]:bg-[#0A5C48]"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-3 rounded-lg border border-slate-200 bg-slate-50/50">
+                  <div>
+                    <div className="text-xs font-bold text-slate-900">Block Tor Exit Nodes</div>
+                    <div className="text-[11px] text-slate-500">Block traffic originating from active Tor network relays</div>
+                  </div>
+                  <Switch
+                    checked={blockTorSetting === "block"}
+                    onCheckedChange={(checked) => setBlockTorSetting(checked ? "block" : "allow")}
+                    className="data-[state=checked]:bg-[#0A5C48]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1149,13 +2004,23 @@ export function UserRoutingTab({
                         If
                       </div>
                       <div className="space-y-1">
-                        {rule.conditions.map((cond) => (
-                          <div
-                            key={cond.id}
-                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700 max-w-full truncate"
-                          >
-                            {getFieldIcon(cond.field)}
-                            <span>{RULE_FIELD_DEFINITIONS[cond.field]?.label || cond.field} is {cond.value}</span>
+                        {rule.conditions.map((cond, cIdx) => (
+                          <div key={cond.id} className="flex flex-col gap-1">
+                            {cIdx > 0 && (
+                              <div className="flex items-center gap-1.5 my-0.5">
+                                <div className="h-px bg-slate-200 flex-1" />
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-700 bg-slate-100 px-1.5 py-0.2 rounded border border-slate-200">
+                                  {cond.logicalOp || "AND"}
+                                </span>
+                                <div className="h-px bg-slate-200 flex-1" />
+                              </div>
+                            )}
+                            <div
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-[11px] font-medium text-slate-700 max-w-full truncate"
+                            >
+                              {getFieldIcon(cond.field)}
+                              <span>{RULE_FIELD_DEFINITIONS[cond.field]?.label || cond.field} is {cond.value}</span>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1260,58 +2125,132 @@ export function UserRoutingTab({
                   </div>
 
                   {selectedStep.conditions.map((cond, cIdx) => (
-                    <div key={cond.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5 relative">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-[11px] font-semibold text-slate-600">Condition {cIdx + 1}</Label>
-                        {selectedStep.conditions.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveCondition(cond.id)}
-                            className="text-slate-400 hover:text-rose-600 p-0.5"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        )}
-                      </div>
+                    <div key={cond.id} className="space-y-2">
+                      {cIdx > 0 && (
+                        <div className="flex items-center justify-center gap-2 py-1">
+                          <div className="h-px bg-slate-200 flex-1" />
+                          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 shadow-2xs">
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateCondition(cond.id, { logicalOp: "AND" })}
+                              className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                                (cond.logicalOp || "AND") === "AND"
+                                  ? "bg-[#0A5C48] text-white shadow-xs"
+                                  : "text-slate-600 hover:text-slate-900"
+                              }`}
+                            >
+                              AND
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateCondition(cond.id, { logicalOp: "OR" })}
+                              className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                                cond.logicalOp === "OR"
+                                  ? "bg-[#0A5C48] text-white shadow-xs"
+                                  : "text-slate-600 hover:text-slate-900"
+                              }`}
+                            >
+                              OR
+                            </button>
+                          </div>
+                          <div className="h-px bg-slate-200 flex-1" />
+                        </div>
+                      )}
 
-                      {/* Dropdown 1: Field Selector */}
-                      <select
-                        value={cond.field}
-                        onChange={(e) => handleUpdateCondition(cond.id, { field: e.target.value as RuleField })}
-                        className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                      >
-                        {Object.entries(RULE_FIELD_DEFINITIONS).map(([key, def]) => (
-                          <option key={key} value={key}>
-                            {def.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80 space-y-2.5 relative">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-semibold text-slate-600">
+                            Condition {cIdx + 1}
+                            {cIdx > 0 && (
+                              <span className="ml-1.5 font-mono text-[10px] text-slate-400">
+                                ({cond.logicalOp || "AND"})
+                              </span>
+                            )}
+                          </Label>
+                          {selectedStep.conditions.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCondition(cond.id)}
+                              className="text-slate-400 hover:text-rose-600 p-0.5"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
 
-                      {/* Dropdown 2 & 3: Operator and Value */}
-                      <div className="grid grid-cols-2 gap-2">
+                        {/* Dropdown 1: Field Selector */}
                         <select
-                          value={cond.operator}
-                          onChange={(e) => handleUpdateCondition(cond.id, { operator: e.target.value as RuleOperator })}
-                          className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                          value={cond.field}
+                          onChange={(e) => handleUpdateCondition(cond.id, { field: e.target.value as RuleField })}
+                          className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
                         >
-                          <option value="is">Is</option>
-                          <option value="is_not">Is Not</option>
-                          <option value="in">In</option>
-                          <option value="not_in">Not In</option>
-                          <option value="greater_than">Greater than</option>
-                        </select>
-
-                        <select
-                          value={cond.value}
-                          onChange={(e) => handleUpdateCondition(cond.id, { value: e.target.value })}
-                          className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
-                        >
-                          {RULE_FIELD_DEFINITIONS[cond.field]?.defaultValues.map((v) => (
-                            <option key={v} value={v}>
-                              {v}
+                          {Object.entries(RULE_FIELD_DEFINITIONS).map(([key, def]) => (
+                            <option key={key} value={key}>
+                              {def.label}
                             </option>
                           ))}
                         </select>
+
+                        {/* Dropdown 2 & 3: Operator and Value */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={cond.operator}
+                            onChange={(e) => handleUpdateCondition(cond.id, { operator: e.target.value as RuleOperator })}
+                            className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                          >
+                            <option value="is">Is</option>
+                            <option value="is_not">Is Not</option>
+                            <option value="in">In</option>
+                            <option value="not_in">Not In</option>
+                            <option value="greater_than">Greater than</option>
+                          </select>
+
+                          <select
+                            value={cond.value}
+                            onChange={(e) => handleUpdateCondition(cond.id, { value: e.target.value })}
+                            className="text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
+                          >
+                            {RULE_FIELD_DEFINITIONS[cond.field]?.defaultValues.map((v) => (
+                              <option key={v} value={v}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Helper info & deep link for Country condition */}
+                        {cond.field === "country" && (
+                          <div className="p-2 rounded-lg bg-amber-50/80 border border-amber-200/60 text-[11px] text-amber-900 flex items-center justify-between">
+                            <span>Checks Geo-Fencing allowed list</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveView("directory");
+                                setMainSubTab("geofencing");
+                              }}
+                              className="font-bold underline text-amber-950 hover:text-amber-800"
+                            >
+                              Configure Geo-Fencing →
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Helper info & deep link for IP Blocklist condition */}
+                        {cond.field === "ip_blocklist" && (
+                          <div className="p-2 rounded-lg bg-red-50/80 border border-red-200/60 text-[11px] text-red-900 flex items-center justify-between">
+                            <span>Checks custom IP blocklist</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveView("directory");
+                                setMainSubTab("ip_lists");
+                              }}
+                              className="font-bold underline text-red-950 hover:text-red-800"
+                            >
+                              Manage IP Blocklist →
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

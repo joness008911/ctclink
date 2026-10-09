@@ -2689,6 +2689,54 @@ Disallow: /*`);
     }
   });
 
+  // Client user IP Access Lists (Custom IP Blocklist & IP Allowlist)
+  app.get("/api/user/ip-rules", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      const raw = await storage.getSetting(`user_ip_rules_${userId}`);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          return res.json({
+            blocklist: Array.isArray(parsed.blocklist) ? parsed.blocklist : [],
+            allowlist: Array.isArray(parsed.allowlist) ? parsed.allowlist : []
+          });
+        } catch {
+          // fallback
+        }
+      }
+      res.json({ blocklist: [], allowlist: [] });
+    } catch (error) {
+      console.error("Get user IP rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.post("/api/user/ip-rules", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      const { blocklist, allowlist } = req.body;
+      const cleanBlocklist = Array.isArray(blocklist) ? blocklist : [];
+      const cleanAllowlist = Array.isArray(allowlist) ? allowlist : [];
+      await storage.setSetting(`user_ip_rules_${userId}`, JSON.stringify({
+        blocklist: cleanBlocklist,
+        allowlist: cleanAllowlist
+      }));
+      res.json({ success: true, blocklist: cleanBlocklist, allowlist: cleanAllowlist });
+    } catch (error) {
+      console.error("Save user IP rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // Get client user's classifications (their traffic logs)
   // Preserved and accessible even after trial expires (read-only history)
   app.get("/api/user/classifications", requireClientAuth, async (req: any, res) => {
@@ -5505,11 +5553,25 @@ Disallow: /*`);
       let ownerProtectionMode: string = "hybrid";
       let ownerActiveAdPlatforms: string[] = ["google", "meta", "tiktok", "microsoft", "x"];
       let ownerRulesets: any[] = [];
+      let ownerCustomIpBlocklist: any[] = [];
+      let ownerCustomIpAllowlist: any[] = [];
 
       if (apiKeyId) {
         try {
           ownerUser = await storage.getClientUserByApiKey(apiKeyId);
           if (ownerUser) {
+            // Load user-specific IP Access Lists (IP Blocklist & Allowlist)
+            try {
+              const rawIpRules = await storage.getSetting(`user_ip_rules_${ownerUser.id}`);
+              if (rawIpRules) {
+                const parsedIpRules = JSON.parse(rawIpRules);
+                if (Array.isArray(parsedIpRules.blocklist)) ownerCustomIpBlocklist = parsedIpRules.blocklist;
+                if (Array.isArray(parsedIpRules.allowlist)) ownerCustomIpAllowlist = parsedIpRules.allowlist;
+              }
+            } catch (ipRulesErr) {
+              // fallback gracefully
+            }
+
             const redirectUrls = await storage.getUserRedirectUrls(ownerUser.id);
             if (redirectUrls) {
               configuredHumanUrl = redirectUrls.humanUrl?.trim() || null;
@@ -5780,9 +5842,80 @@ Disallow: /*`);
           }
         }
 
+        // Check User IP Allowlist (Bypasses bot filters for trusted tester/client IPs)
+        let isUserIpWhitelisted = false;
+        if (ownerCustomIpAllowlist.length > 0) {
+          try {
+            const parsedTarget = ipaddr.parse(clientIp.replace(/^::ffff:/, ''));
+            for (const item of ownerCustomIpAllowlist) {
+              if (item.enabled === false) continue;
+              const raw = (item.ipOrCidr || item.ip || item.cidr || '').trim();
+              if (!raw) continue;
+              try {
+                if (raw.includes('/')) {
+                  const [range, prefix] = ipaddr.parseCIDR(raw);
+                  if (parsedTarget.kind() === range.kind() && parsedTarget.match(range, prefix)) {
+                    isUserIpWhitelisted = true;
+                    break;
+                  }
+                } else {
+                  const parsedItem = ipaddr.parse(raw);
+                  if (parsedTarget.toString() === parsedItem.toString()) {
+                    isUserIpWhitelisted = true;
+                    break;
+                  }
+                }
+              } catch {}
+            }
+          } catch {}
+        }
+
+        if (isUserIpWhitelisted) {
+          visitorType = 'Human';
+          detectionMethod = 'Custom IP Allowlist';
+          blockReason = '';
+          console.log(`✅ ALLOWED (User Custom IP Allowlist): ${clientIp}`);
+        }
+
+        // Check user custom IP blocklist
+        let isUserIpBlocked = false;
+        if (visitorType !== 'Bot' && !isUserIpWhitelisted && ownerCustomIpBlocklist.length > 0) {
+          try {
+            const parsedTarget = ipaddr.parse(clientIp.replace(/^::ffff:/, ''));
+            for (const item of ownerCustomIpBlocklist) {
+              if (item.enabled === false) continue;
+              const raw = (item.ipOrCidr || item.ip || item.cidr || '').trim();
+              if (!raw) continue;
+              try {
+                if (raw.includes('/')) {
+                  const [range, prefix] = ipaddr.parseCIDR(raw);
+                  if (parsedTarget.kind() === range.kind() && parsedTarget.match(range, prefix)) {
+                    isUserIpBlocked = true;
+                    break;
+                  }
+                } else {
+                  const parsedItem = ipaddr.parse(raw);
+                  if (parsedTarget.toString() === parsedItem.toString()) {
+                    isUserIpBlocked = true;
+                    break;
+                  }
+                }
+              } catch {}
+            }
+          } catch {}
+
+          if (isUserIpBlocked) {
+            visitorType = 'Bot';
+            detectionMethod = 'Custom IP Blocklist';
+            blockReason = `IP is on your custom blocklist: ${clientIp}`;
+            console.log(`🚫 BLOCKED (User Custom IP Blocklist): ${clientIp}`);
+          }
+        }
+
         // Check IP blocklist
-        if (visitorType !== 'Bot') {
-          const isBlockedIp = await storage.isIpBlocked(clientIp);
+        let isBlockedIp = false;
+        if (visitorType !== 'Bot' && !isUserIpWhitelisted) {
+          isBlockedIp = await storage.isIpBlocked(clientIp);
           if (isBlockedIp) {
             visitorType = 'Bot';
             detectionMethod = 'IP Blocklist';
@@ -5792,8 +5925,9 @@ Disallow: /*`);
         }
 
         // Check CIDR blocklist
-        if (visitorType !== 'Bot') {
-          const isBlockedCidr = await storage.isIpInBlockedCidrRange(clientIp);
+        let isBlockedCidr = false;
+        if (visitorType !== 'Bot' && !isUserIpWhitelisted) {
+          isBlockedCidr = await storage.isIpInBlockedCidrRange(clientIp);
           if (isBlockedCidr) {
             visitorType = 'Bot';
             detectionMethod = 'CIDR Blocklist';
@@ -6141,7 +6275,7 @@ Disallow: /*`);
           isTor: isTorDetected,
           isProxy: isProxyDetected,
           isVelocitySpike: Boolean(detectionMethod?.toLowerCase().includes("velocity") || detectionMethod?.toLowerCase().includes("rate")),
-          isIpBlocked: Boolean(detectionMethod?.toLowerCase().includes("ip block")),
+          isIpBlocked: Boolean(detectionMethod?.toLowerCase().includes("ip block") || isBlockedIp || isBlockedCidr || isUserIpBlocked),
           isDevtools: rawClientTokens?.webdriver === true || rawClientTokens?.missingPluginsArray === true,
           countryCode: clientCountry,
           allowedCountries: ownerAllowedCountries,

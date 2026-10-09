@@ -58,6 +58,7 @@ import bcrypt from "bcrypt";
 import { db, isDatabaseConfigured } from "./db";
 import { isFirestoreAvailable } from "./firebase";
 import { FirestoreStorage } from "./firestoreStorage";
+import { SupabaseStorage } from "./supabaseStorage";
 import { eq, desc, sql, count, lt, or, and, inArray } from "drizzle-orm";
 import { getTierCallLimit } from "@shared/subscription";
 
@@ -2553,14 +2554,22 @@ function createResilientStorage(primary: IStorage, fallback: IStorage | null): I
 // Configurable storage backend: 'supabase' (or 'postgres'), 'firestore', or fallback
 const configuredBackend = (process.env.STORAGE_BACKEND || "").toLowerCase().trim();
 
-const firestoreInstance = isFirestoreAvailable ? new FirestoreStorage() : null;
+export const isSupabaseConfigured = !!(
+  process.env.SUPABASE_URL &&
+  (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
+);
+
+const supabaseInstance = isSupabaseConfigured ? new SupabaseStorage() : null;
+const firestoreInstance = (!isSupabaseConfigured && isFirestoreAvailable) ? new FirestoreStorage() : null;
 const databaseInstance = isDatabaseConfigured && db !== null ? new DatabaseStorage() : null;
 
+// Primary storage selection: Supabase (REST HTTPS) takes priority because it contains all 41 live accounts
+// and avoids container IPv6 TCP restrictions on port 5432 and Firestore daily free read quota exhaustion
 const initialStorage: IStorage = 
-  (configuredBackend === "supabase" || configuredBackend === "postgres" || configuredBackend === "database") && databaseInstance
+  supabaseInstance
+    ? supabaseInstance
+    : (configuredBackend === "supabase" || configuredBackend === "postgres" || configuredBackend === "database") && databaseInstance
     ? createResilientStorage(databaseInstance, firestoreInstance)
-    : (configuredBackend === "firestore" && firestoreInstance)
-    ? firestoreInstance
     : firestoreInstance
     ? firestoreInstance
     : databaseInstance
