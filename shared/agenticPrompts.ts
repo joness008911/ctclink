@@ -367,17 +367,27 @@ export function generatePhpAgentPrompt(options: AgentPromptOptions): string {
   const deflectionAction = options.deflectionAction || "403";
   const botFallbackUrl = options.botFallbackUrl?.trim() || "";
 
-  const deflectionSnippet = deflectionAction === "redirect" && botFallbackUrl
-    ? `header("Location: ${botFallbackUrl}", true, 302);
-        exit;`
-    : deflectionAction === "404"
-    ? `http_response_code(404);
+  const deflectionSnippet = `// Dynamic deflection verdict from live CleanTraffic rules
+        // 1. Dynamic Redirect URL from active Rules & Policies
+        $redirectUrl = $verdict['redirectUrl'] ?? $verdict['redirect_url'] ?? $verdict['destination'] ?? null;
+        if (!empty($redirectUrl)) {
+            header("Location: " . $redirectUrl, true, 302);
+            exit;
+        }
+
+        // 2. Dynamic HTTP Status Code & Custom Body from active Rules & Policies
+        $statusCode = intval($verdict['statusCode'] ?? (${deflectionAction === "404" ? "404" : "403"}));
+        http_response_code($statusCode);
+
+        if (!empty($verdict['customBody'])) {
+            $bodyType = $verdict['bodyType'] ?? 'application/json';
+            header("Content-Type: $bodyType; charset=utf-8");
+            echo is_string($verdict['customBody']) ? $verdict['customBody'] : json_encode($verdict['customBody']);
+            exit;
+        }
+
         header('Content-Type: text/plain; charset=utf-8');
-        echo "404 Not Found";
-        exit;`
-    : `http_response_code(403);
-        header('Content-Type: text/plain; charset=utf-8');
-        echo "403 Forbidden - Access Denied";
+        echo $statusCode === 404 ? "404 Not Found" : "403 Forbidden - Access Denied";
         exit;`;
 
   return `# Add CleanTraffic Protection to PHP / Apache / Nginx
@@ -523,15 +533,25 @@ function cleantraffic_verify_visitor() {
 
         if ($isBlocked) {
             nocache_headers();
-            ${deflectionAction === '404' 
-              ? `status_header(404);
+            $redirectUrl = $body['redirectUrl'] ?? $body['redirect_url'] ?? $body['destination'] ?? null;
+            if (!empty($redirectUrl)) {
+                wp_redirect($redirectUrl, 302);
+                exit;
+            }
+
+            $statusCode = intval($body['statusCode'] ?? (${deflectionAction === '404' ? '404' : '403'}));
+            status_header($statusCode);
+
+            if (!empty($body['customBody'])) {
+                $bodyType = $body['bodyType'] ?? 'application/json';
+                header("Content-Type: $bodyType; charset=utf-8");
+                echo is_string($body['customBody']) ? $body['customBody'] : json_encode($body['customBody']);
+                exit;
+            }
+
             header('Content-Type: text/plain; charset=utf-8');
-            echo "404 Not Found";
-            exit;` 
-              : `status_header(403);
-            header('Content-Type: text/plain; charset=utf-8');
-            echo "403 Forbidden - Access Denied";
-            exit;`}
+            echo $statusCode === 404 ? "404 Not Found" : "403 Forbidden - Access Denied";
+            exit;
         }
     }
 }

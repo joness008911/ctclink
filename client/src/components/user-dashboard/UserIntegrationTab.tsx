@@ -170,8 +170,8 @@ export function UserIntegrationTab({
   const [protectionFailMode, setProtectionFailMode] = useState<"open" | "closed">("open");
   const [protectionTimeoutMs, setProtectionTimeoutMs] = useState<number>(2000);
 
-  // PHP Interstitial & Theme customizer state
-  const [enableLoading, setEnableLoading] = useState<boolean>(false);
+  // PHP Interstitial & Theme customizer state (Interstitial Loading is the dedicated mode)
+  const [enableLoading, setEnableLoading] = useState<boolean>(true);
   const [selectedThemeCategory, setSelectedThemeCategory] = useState<string>("All");
   const [selectedThemeId, setSelectedThemeId] = useState<string>("clean_light");
   const [customHeading, setCustomHeading] = useState<string>("Verifying your connection...");
@@ -193,9 +193,7 @@ export function UserIntegrationTab({
   // Sync state once user settings are loaded
   useEffect(() => {
     if (userSettings) {
-      if (userSettings.interstitialEnabled !== undefined) {
-        setEnableLoading(Boolean(userSettings.interstitialEnabled));
-      }
+      setEnableLoading(true);
       if (userSettings.interstitialThemeId) {
         setSelectedThemeId(userSettings.interstitialThemeId);
       }
@@ -476,11 +474,11 @@ export function UserIntegrationTab({
         `CleanTraffic - Drop-in Verification Gateway & Security Package\n\n` +
         `DEPLOYMENT INSTRUCTIONS:\n` +
         `1. Upload index.php to your web server or campaign root (e.g., public_html/promo/index.php).\n` +
-        `2. Protection Mode: ${enableLoading ? `Interstitial Loading Screen (${activeTheme.name})` : "Transparent Inline Guard (Zero Visual Delay)"}\n` +
-        (enableLoading ? `3. Heading Text: "${customHeading}"\n` : `3. Direct cURL server-side evaluation active.\n`) +
+        `2. Protection Mode: Interstitial Loading Verification Shield (${activeTheme.name})\n` +
+        `3. Heading Text: "${customHeading}"\n` +
         `4. Ensure PHP 7.4+ with standard cURL extension is enabled.\n` +
-        `5. ${enableLoading ? "Visitors see the clean verification splash (<15ms) while classification executes in the background." : "Visitors experience zero visual splash delay; bots are blocked inline with authentic 403/404 headers."}\n` +
-        `6. All paid ad click tokens (fbclid, gclid, ttclid, msclkid, twclid, wbraid, gbraid) are automatically captured.\n` +
+        `5. Real human visitors see the clean verification splash (<15ms) while security tokens are validated in the background.\n` +
+        `6. All paid ad click tokens (fbclid, gclid, ttclid, msclkid, twclid, wbraid, gbraid) and UTM parameters are automatically captured.\n` +
         `7. Testing: Visit https://yourdomain.com/index.php?gclid=test1234\n`
       );
 
@@ -488,7 +486,7 @@ export function UserIntegrationTab({
       const url = window.URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = url;
-      a.download = enableLoading ? `cleantraffic-${activeTheme.id}-php.zip` : `cleantraffic-inline-guard-php.zip`;
+      a.download = `cleantraffic-${activeTheme.id}-php.zip`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -745,41 +743,147 @@ export function UserIntegrationTab({
       {/* ──────────────────────────────────────────────────────────── */}
       {selectedIntegration && currentItem ? (
         <div className="space-y-6">
-          {/* Breadcrumb Back Button */}
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setSelectedIntegration(null)}
-              className="inline-flex items-center gap-2 text-xs font-bold text-[#64748B] hover:text-[#0F172A] transition-colors group px-2.5 py-1.5 rounded-lg hover:bg-slate-100"
-            >
-              <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 text-[#0A5C48]" />
-              <span>Libraries &amp; integrations</span>
-            </button>
+          {/* Top Header Strip with Breadcrumb Back Button and Quick Docs/Support Actions */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white border border-[#E5EAE7] rounded-xl p-4 shadow-xs">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSelectedIntegration(null)}
+                className="inline-flex items-center gap-2 text-xs font-bold text-[#64748B] hover:text-[#0F172A] transition-colors group px-2.5 py-1.5 rounded-lg hover:bg-slate-100"
+              >
+                <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5 text-[#0A5C48]" />
+                <span>Libraries &amp; integrations</span>
+              </button>
 
-            <div className="flex items-center gap-2 text-xs text-[#64748B]">
-              <span className="font-medium">Integration:</span>
-              <span className="font-bold text-[#0F172A]">{currentItem.name}</span>
+              <span className="text-slate-300">|</span>
+
+              <div className="flex items-center gap-2 text-xs text-[#64748B]">
+                <span className="font-medium">Active:</span>
+                <span className="font-bold text-[#0F172A]">{currentItem.name}</span>
+              </div>
+            </div>
+
+            {/* Quick Actions: Docs & Support links */}
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/docs#installation")}
+                className="h-8 text-xs border-[#D5DFD9] text-[#0F172A] hover:bg-[#F2F6F4] gap-1.5 rounded-lg font-medium"
+              >
+                <BookOpen className="h-3.5 w-3.5 text-[#0A5C48]" />
+                <span>Docs</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/docs#support")}
+                className="h-8 text-xs border-[#D5DFD9] text-[#0F172A] hover:bg-[#F2F6F4] gap-1.5 rounded-lg font-medium"
+              >
+                <MessageSquare className="h-3.5 w-3.5 text-[#0A5C48]" />
+                <span>Support</span>
+              </Button>
             </div>
           </div>
 
-          {/* Main 2-Column Content Layout (70% Content / 30% Details Sidebar) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            
-            {/* ── LEFT COLUMN (70% - lg:col-span-8) ── */}
-            <div className="lg:col-span-8 space-y-6">
-
-              {/* Segmented Control: Agent setup vs Manual setup (Screenshot Inspo) */}
-              <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/90 w-fit">
+          {/* Compact Horizontal Integration Configuration Bar */}
+          <div className="bg-white border border-[#E5EAE7] rounded-xl p-3.5 shadow-xs">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs">
+              {/* Assigned API Key */}
+              <div className="flex items-center gap-2.5 bg-[#F8FAF9] border border-[#E0E9E4] rounded-lg px-3 py-1.5">
+                <div>
+                  <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">Assigned API Key</span>
+                  <span className="font-mono text-xs font-bold text-[#0A5C48]">
+                    {apiKeyValue ? (showKey ? apiKeyValue : maskKey(apiKeyValue)) : "Loading key..."}
+                  </span>
+                </div>
                 <button
-                  onClick={() => setDetailSetupMode("agent")}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    detailSetupMode === "agent"
-                      ? "bg-white text-slate-900 shadow-2xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
+                  type="button"
+                  onClick={() => setShowKey(!showKey)}
+                  className="text-xs text-[#0A5C48] hover:text-[#07382D] font-bold p-1 hover:bg-emerald-50 rounded"
+                  title={showKey ? "Hide key" : "Reveal key"}
                 >
-                  <Sparkles className="h-3.5 w-3.5 text-[#F25A2A]" />
-                  <span>Agent setup</span>
+                  {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                 </button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyKey}
+                  className="h-7 w-7 p-0 text-[#64748B] hover:text-[#0F172A]"
+                  title="Copy API Key"
+                >
+                  {copiedKey ? <Check className="h-3.5 w-3.5 text-[#0A5C48]" /> : <Copy className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+
+              {/* Edge Fallback, Timeout & Host controls */}
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Fallback */}
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-lg p-1">
+                  <span className="text-[10px] font-bold text-[#64748B] uppercase px-1">Fallback:</span>
+                  <button
+                    type="button"
+                    onClick={() => setProtectionFailMode("open")}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${
+                      protectionFailMode === "open"
+                        ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    title="Fail-Open: High availability"
+                  >
+                    Fail-Open
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProtectionFailMode("closed")}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${
+                      protectionFailMode === "closed"
+                        ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    title="Fail-Closed: Maximum security"
+                  >
+                    Fail-Closed
+                  </button>
+                </div>
+
+                {/* Timeout */}
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-lg p-1">
+                  <span className="text-[10px] font-bold text-[#64748B] uppercase px-1">Timeout:</span>
+                  {[250, 400, 600].map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setProtectionTimeoutMs(t)}
+                      className={`px-2 py-1 rounded text-xs transition-colors ${
+                        protectionTimeoutMs === t
+                          ? "bg-[#0A5C48] text-white font-bold"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {t}ms
+                    </button>
+                  ))}
+                </div>
+
+                {/* Host */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-[#64748B] uppercase">Host:</span>
+                  <Input
+                    value={customEndpoint}
+                    onChange={(e) => setCustomEndpoint(e.target.value)}
+                    placeholder="https://your-domain.com"
+                    className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs font-mono h-8 w-44"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Main Full-Width Content Layout */}
+          <div className="space-y-6">
+            {/* Segmented Control: Manual setup vs Agent setup */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/90 w-fit">
                 <button
                   onClick={() => setDetailSetupMode("manual")}
                   className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -791,10 +895,22 @@ export function UserIntegrationTab({
                   <User className="h-3.5 w-3.5 text-slate-500" />
                   <span>Manual setup</span>
                 </button>
+                <button
+                  onClick={() => setDetailSetupMode("agent")}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                    detailSetupMode === "agent"
+                      ? "bg-white text-slate-900 shadow-2xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-[#F25A2A]" />
+                  <span>Agent setup</span>
+                </button>
               </div>
+            </div>
 
-              {detailSetupMode === "agent" ? (
-                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs">
+            {detailSetupMode === "agent" ? (
+              <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs w-full">
                   <div className="mb-4 pb-3 border-b border-slate-100 flex items-center justify-between">
                     <div>
                       <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
@@ -1375,7 +1491,7 @@ export function UserIntegrationTab({
                   <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
                     <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
                     <p className="text-xs text-[#64748B] leading-relaxed">
-                      Upload index.php to your web directory or ad campaign root. Choose between an instant interstitial loading verification splash or a zero-delay transparent inline cURL guard.
+                      Upload <code className="bg-slate-100 px-1 py-0.5 rounded font-mono text-[11px] text-slate-800">index.php</code> to your web directory or ad campaign root. Visitors see an instant, customizable interstitial loading verification splash (&lt;15ms) while security tokens and client entropy are validated in the background. Automated bots and malicious scrapers are blocked before touching your application.
                     </p>
                   </div>
 
@@ -1427,81 +1543,188 @@ export function UserIntegrationTab({
 
                   {phpSubTab === "themes" && (
                     <div className="space-y-5">
-                      {/* Mode Toggle */}
-                      <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs font-bold text-[#0F172A] uppercase">Protection Mode</Label>
-                          <Button
-                            onClick={() => saveThemeMutation.mutate()}
-                            disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
-                            className={`h-7 px-3 text-xs font-bold rounded-lg ${
-                              hasUnsavedThemeChanges ? "bg-[#0A5C48] text-white" : "bg-slate-100 text-slate-400"
-                            }`}
-                          >
-                            Save Preference
-                          </Button>
+                      {/* Active Interstitial Loading Banner & Actions */}
+                      <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <ShieldCheck className="h-4 w-4 text-[#0A5C48]" />
+                              <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+                                Interstitial Loading Verification Shield
+                              </span>
+                              <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                                &lt;15ms Visual Splash
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                              Preview and choose your preferred loading style below. Real human visitors see the high-speed security splash while background tokens are verified.
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setPreviewTheme(activeTheme)}
+                              className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold shadow-2xs"
+                            >
+                              <Eye className="h-3.5 w-3.5 text-[#0A5C48]" />
+                              <span>Preview Current Theme</span>
+                            </Button>
+
+                            <Button
+                              onClick={() => saveThemeMutation.mutate()}
+                              disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
+                              className={`h-8 px-4 text-xs font-bold rounded-lg transition-all shadow-2xs ${
+                                hasUnsavedThemeChanges
+                                  ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
+                                  : "bg-slate-100 text-slate-400 cursor-not-allowed"
+                              }`}
+                            >
+                              <Check className="h-3.5 w-3.5 mr-1" />
+                              <span>{saveThemeMutation.isPending ? "Saving..." : "Save Preference"}</span>
+                            </Button>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => handleToggleLoading(false)}
-                            className={`p-3 rounded-lg border text-left transition-all ${
-                              !enableLoading ? "bg-emerald-50 border-[#0A5C48] ring-1 ring-[#0A5C48]" : "bg-white border-slate-200"
-                            }`}
-                          >
-                            <span className="text-xs font-bold text-[#0F172A] block">Transparent Inline Guard</span>
-                            <span className="text-[11px] text-[#64748B] block mt-1">Zero visual delay. Legitimate humans see no splash screen.</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleLoading(true)}
-                            className={`p-3 rounded-lg border text-left transition-all ${
-                              enableLoading ? "bg-emerald-50 border-[#0A5C48] ring-1 ring-[#0A5C48]" : "bg-white border-slate-200"
-                            }`}
-                          >
-                            <span className="text-xs font-bold text-[#0F172A] block">Interstitial Loading Splash</span>
-                            <span className="text-[11px] text-[#64748B] block mt-1">Renders security badge while validating tokens in background.</span>
-                          </button>
+
+                        {/* Text Customization Row */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-[#E0E9E4]">
+                          <div>
+                            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
+                              <span>Headline Text</span>
+                              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{HEADING}}"}</span>
+                            </Label>
+                            <Input
+                              value={customHeading}
+                              onChange={(e) => handleHeadingChange(e.target.value)}
+                              placeholder="Verifying your connection..."
+                              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
+                              <span>Subnote Text</span>
+                              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{SUBNOTE}}"}</span>
+                            </Label>
+                            <Input
+                              value={customSubnote}
+                              onChange={(e) => handleSubnoteChange(e.target.value)}
+                              placeholder="Please wait while we secure your session."
+                              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
+                            />
+                          </div>
                         </div>
                       </div>
 
-                      {enableLoading && (
-                        <div className="space-y-4">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div>
-                              <Label className="text-xs font-bold text-[#0F172A]">Headline Text</Label>
-                              <Input
-                                value={customHeading}
-                                onChange={(e) => handleHeadingChange(e.target.value)}
-                                className="bg-white text-xs h-9 mt-1"
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-xs font-bold text-[#0F172A]">Subnote Text</Label>
-                              <Input
-                                value={customSubnote}
-                                onChange={(e) => handleSubnoteChange(e.target.value)}
-                                className="bg-white text-xs h-9 mt-1"
-                              />
-                            </div>
+                      {/* Theme Selector Section */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <Palette className="h-4 w-4 text-[#0A5C48]" />
+                            <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+                              Choose Loading Style ({filteredThemes.length})
+                            </span>
                           </div>
+                          <span className="text-xs text-[#64748B]">
+                            Current: <strong className="text-[#0F172A]">{activeTheme.name}</strong>
+                          </span>
+                        </div>
 
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                            {filteredThemes.slice(0, 6).map((t) => (
+                        {/* Category Filter Pills */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {["All", "Light", "Minimal", "Corporate", "Security", "Dark"].map((cat) => (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => setSelectedThemeCategory(cat)}
+                              className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                                selectedThemeCategory.toLowerCase() === cat.toLowerCase()
+                                  ? "bg-[#0A5C48] text-white shadow-xs"
+                                  : "bg-white border border-slate-200 text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50"
+                              }`}
+                            >
+                              {cat}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Theme Cards Grid with Preview Mode */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
+                          {filteredThemes.map((t) => {
+                            const isSelected = selectedThemeId === t.id;
+                            return (
                               <div
                                 key={t.id}
-                                onClick={() => handleSelectTheme(t.id)}
-                                className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                                  selectedThemeId === t.id ? "border-[#0A5C48] bg-emerald-50/50" : "bg-white border-slate-200"
+                                className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+                                  isSelected
+                                    ? "border-[#0A5C48] bg-emerald-50/40 ring-1 ring-[#0A5C48] shadow-xs"
+                                    : "bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs"
                                 }`}
                               >
-                                <span className="text-xs font-bold text-[#0F172A] block">{t.name}</span>
-                                <span className="text-[10px] text-[#64748B]">{t.category}</span>
+                                <div>
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <div
+                                        className="w-5 h-5 rounded-full border border-slate-300 shadow-2xs shrink-0 flex items-center justify-center"
+                                        style={{ backgroundColor: t.previewBg }}
+                                        title={`Accent: ${t.previewAccent}`}
+                                      >
+                                        <div
+                                          className="w-2.5 h-2.5 rounded-full"
+                                          style={{ backgroundColor: t.previewAccent }}
+                                        />
+                                      </div>
+                                      <span className="text-xs font-bold text-[#0F172A] line-clamp-1">{t.name}</span>
+                                    </div>
+                                    {isSelected ? (
+                                      <Badge className="bg-[#0A5C48] text-white text-[10px] font-bold px-1.5 py-0">
+                                        Active
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200 font-medium px-1.5 py-0">
+                                        {t.category}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <p className="text-[11px] text-[#64748B] leading-relaxed line-clamp-2 min-h-[32px]">
+                                    {t.description || "Fast security verification interstitial."}
+                                  </p>
+                                </div>
+
+                                <div className="flex items-center gap-2 mt-3.5 pt-2.5 border-t border-slate-100">
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewTheme(t);
+                                    }}
+                                    className="h-7 text-xs border-slate-200 hover:bg-slate-100 text-slate-700 flex-1 gap-1 font-semibold rounded-md"
+                                  >
+                                    <Eye className="h-3 w-3 text-slate-500" />
+                                    <span>Preview</span>
+                                  </Button>
+
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => handleSelectTheme(t.id)}
+                                    className={`h-7 text-xs flex-1 gap-1 font-bold rounded-md ${
+                                      isSelected
+                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-default"
+                                        : "bg-white border border-[#0A5C48] text-[#0A5C48] hover:bg-emerald-50"
+                                    }`}
+                                  >
+                                    {isSelected ? <Check className="h-3 w-3" /> : null}
+                                    <span>{isSelected ? "Selected" : "Choose Style"}</span>
+                                  </Button>
+                                </div>
                               </div>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
-                      )}
+                      </div>
                     </div>
                   )}
 
@@ -2178,150 +2401,6 @@ export function useCleanTraffic() {
                 </>
               )}
             </div>
-
-            {/* ── RIGHT COLUMN: DETAILS SIDEBAR (Inspired by Screenshot 2) ── */}
-            <div className="lg:col-span-4 space-y-4">
-              <div className="bg-white border border-[#E5EAE7] rounded-xl p-5 shadow-xs space-y-5">
-                <h3 className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
-                  Details
-                </h3>
-
-                {/* Docs & Support Links (Screenshot 2 Inspo) */}
-                <div className="divide-y divide-slate-100 text-xs">
-                  <div className="flex items-center justify-between py-2.5">
-                    <div className="flex items-center gap-2 text-[#0F172A] font-semibold">
-                      <BookOpen className="h-4 w-4 text-[#0A5C48]" />
-                      <span>Docs</span>
-                    </div>
-                    <button
-                      onClick={() => navigate("/docs#installation")}
-                      className="text-[#0A5C48] hover:underline font-bold"
-                    >
-                      Read
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between py-2.5">
-                    <div className="flex items-center gap-2 text-[#0F172A] font-semibold">
-                      <MessageSquare className="h-4 w-4 text-[#0A5C48]" />
-                      <span>Support</span>
-                    </div>
-                    <button
-                      onClick={() => navigate("/docs#support")}
-                      className="text-[#0A5C48] hover:underline font-bold"
-                    >
-                      Contact us
-                    </button>
-                  </div>
-                </div>
-
-                {/* API Key Box */}
-                <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-lg p-3 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px] font-bold text-[#64748B] uppercase">Assigned API Key</Label>
-                    <button
-                      type="button"
-                      onClick={() => setShowKey(!showKey)}
-                      className="text-[10px] text-[#0A5C48] font-bold flex items-center gap-1"
-                    >
-                      {showKey ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                      <span>{showKey ? "Hide" : "Reveal"}</span>
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="font-mono text-xs font-bold text-[#0A5C48] truncate">
-                      {apiKeyValue ? (showKey ? apiKeyValue : maskKey(apiKeyValue)) : "Loading key..."}
-                    </span>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleCopyKey}
-                      className="h-6 w-6 p-0 text-[#64748B] hover:text-[#0F172A]"
-                    >
-                      {copiedKey ? <Check className="h-3.5 w-3.5 text-[#0A5C48]" /> : <Copy className="h-3.5 w-3.5" />}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Fail Mode / Protection Policy */}
-                <div className="space-y-2 pt-1 border-t border-slate-100">
-                  <Label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider block">
-                    Edge Fallback Policy
-                  </Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setProtectionFailMode("open")}
-                      className={`p-2.5 rounded-lg border text-left text-xs transition-colors ${
-                        protectionFailMode === "open"
-                          ? "bg-emerald-50 border-[#0A5C48] text-[#0A5C48] font-bold"
-                          : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
-                      }`}
-                    >
-                      Fail-Open
-                      <span className="block text-[10px] font-normal text-slate-500 mt-0.5">High availability</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setProtectionFailMode("closed")}
-                      className={`p-2.5 rounded-lg border text-left text-xs transition-colors ${
-                        protectionFailMode === "closed"
-                          ? "bg-emerald-50 border-[#0A5C48] text-[#0A5C48] font-bold"
-                          : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
-                      }`}
-                    >
-                      Fail-Closed
-                      <span className="block text-[10px] font-normal text-slate-500 mt-0.5">Maximum security</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Gateway Timeout */}
-                <div className="space-y-2 pt-1 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">
-                      Timeout Threshold
-                    </Label>
-                    <span className="text-[11px] font-bold text-[#0F172A]">{protectionTimeoutMs}ms</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {[
-                      { label: "250ms", val: 250 },
-                      { label: "400ms", val: 400 },
-                      { label: "600ms", val: 600 },
-                    ].map((t) => (
-                      <button
-                        key={t.val}
-                        type="button"
-                        onClick={() => setProtectionTimeoutMs(t.val)}
-                        className={`text-xs py-1.5 rounded border transition-colors font-medium ${
-                          protectionTimeoutMs === t.val
-                            ? "bg-[#0A5C48] text-white border-[#0A5C48]"
-                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Gateway Endpoint */}
-                <div className="space-y-1.5 pt-1 border-t border-slate-100">
-                  <Label className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">
-                    API Endpoint Host
-                  </Label>
-                  <Input
-                    value={customEndpoint}
-                    onChange={(e) => setCustomEndpoint(e.target.value)}
-                    placeholder="https://your-domain.com"
-                    className="bg-white border-[#D5DFD9] text-[#0F172A] text-xs font-mono h-8"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       ) : (
         /* ──────────────────────────────────────────────────────────── */

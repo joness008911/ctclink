@@ -589,6 +589,22 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Global CORS handler for cross-origin client scripts (/api/classify, /v1/protect.js)
+  app.use((req, res, next) => {
+    // Only apply open CORS to public client-agent endpoints
+    if (req.path === '/api/classify' || req.path === '/v1/protect.js' || req.path.startsWith('/v1/protect')) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept');
+      res.setHeader('Access-Control-Max-Age', '86400');
+
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+    }
+    next();
+  });
+
   // Initialize proactive IP2Location health probe and background checking
   ip2LocationHealth.init(getEffectiveIp2GeoKey);
 
@@ -4770,6 +4786,7 @@ Disallow: /*`);
     dismissOverlay();
   })
   .catch(function(err) {
+    console.warn('[CleanTraffic Shield] Classification error:', err);
     // Fail-safe pass-through on transient network error
     dismissOverlay();
   });

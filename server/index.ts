@@ -15,6 +15,21 @@ app.get(["/health", "/_ah/health", "/_health", "/api/health"], (_req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Enable cross-origin calls for client-side protection script and classification API
+app.use((req, res, next) => {
+  if (req.path === '/api/classify' || req.path === '/v1/protect.js' || req.path.startsWith('/v1/protect')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept, Origin');
+    res.setHeader('Access-Control-Max-Age', '86400');
+
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+  }
+  next();
+});
+
 // Security headers with Helmet - configured to allow iframe preview and inline scripts
 app.use(helmet({
   contentSecurityPolicy: {
