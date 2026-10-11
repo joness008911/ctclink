@@ -154,13 +154,13 @@ export default function UserDashboard() {
 
   const { data: classifications = [] } = useQuery<any[]>({
     queryKey: ["/api/user/classifications"],
-    refetchInterval: 30000,
+    refetchInterval: 5000,
     refetchIntervalInBackground: false,
   });
 
   const { data: apiKeyDetails } = useQuery<any>({
     queryKey: ["/api/user/api-key-details"],
-    refetchInterval: 30000,
+    refetchInterval: 10000,
     refetchIntervalInBackground: false,
   });
 

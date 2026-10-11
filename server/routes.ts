@@ -595,8 +595,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     if (req.path === '/api/classify' || req.path === '/v1/protect.js' || req.path.startsWith('/v1/protect')) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept, Origin, X-Requested-With');
       res.setHeader('Access-Control-Max-Age', '86400');
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+      res.setHeader('Timing-Allow-Origin', '*');
 
       if (req.method === 'OPTIONS') {
         return res.status(204).end();
@@ -4546,13 +4549,18 @@ Disallow: /*`);
   // Serve client-side JavaScript protection tag (/v1/protect.js) - Full WebGL/Canvas Hardware Fingerprinting & In-Place Shield
   app.get("/v1/protect.js", (req, res) => {
     res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-    res.setHeader("Cache-Control", "public, max-age=300");
+    res.setHeader("Cache-Control", "public, max-age=60");
     res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS, HEAD");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, Cache-Control, Accept, Origin, X-Requested-With");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+    res.setHeader("Timing-Allow-Origin", "*");
 
     const protectJs = `/**
  * CleanTraffic Universal Client Shield & Identification Agent
  * Enterprise-grade client-side bot detection, hardware entropy & traffic defense.
- * Compatible with Shopify, Wix, Webflow, Squarespace, WordPress, and Custom Landing Pages.
+ * Compatible with Shopify, Wix, Webflow, Squarespace, WordPress, Framer, and Custom Landing Pages.
  */
 (function(window, document) {
   'use strict';
@@ -4565,12 +4573,51 @@ Disallow: /*`);
     return scripts[scripts.length - 1];
   })();
 
-  if (!currentScript) return;
-  var apiKey = currentScript.getAttribute('data-api-key') || '';
-  var enableLoading = currentScript.getAttribute('data-loading') !== 'false';
-  var heading = currentScript.getAttribute('data-heading') || 'Verifying connection security...';
-  var subnote = currentScript.getAttribute('data-subnote') || 'Please wait while we secure your session.';
+  var scriptSrc = (currentScript && currentScript.src) ? currentScript.src : '';
+  if (!scriptSrc) {
+    var allScripts = document.getElementsByTagName('script');
+    for (var sIdx = allScripts.length - 1; sIdx >= 0; sIdx--) {
+      if (allScripts[sIdx].src && allScripts[sIdx].src.indexOf('/v1/protect.js') !== -1) {
+        scriptSrc = allScripts[sIdx].src;
+        break;
+      }
+    }
+  }
+
+  var apiKey = '';
+  if (currentScript) {
+    apiKey = currentScript.getAttribute('data-api-key') || currentScript.getAttribute('data-key') || '';
+  }
+  if (!apiKey && scriptSrc) {
+    try {
+      var m = scriptSrc.match(/[?&](?:apiKey|api_key|key)=([^&#]+)/);
+      if (m) apiKey = decodeURIComponent(m[1]);
+    } catch(e) {}
+  }
+  if (!apiKey && window.CleanTrafficApiKey) {
+    apiKey = window.CleanTrafficApiKey;
+  }
+
+  var enableLoading = currentScript ? (currentScript.getAttribute('data-loading') !== 'false') : true;
+  var disableCache = currentScript ? (currentScript.getAttribute('data-cache') === 'false' || currentScript.getAttribute('data-continuous') === 'true') : false;
+  var heading = (currentScript && currentScript.getAttribute('data-heading')) || 'Verifying connection security...';
+  var subnote = (currentScript && currentScript.getAttribute('data-subnote')) || 'Please wait while we secure your session.';
   var originUrl = window.location.origin || (window.location.protocol + '//' + window.location.host);
+
+  // Derive apiBase from the script source URL itself so cross-origin calls always reach CleanTraffic backend
+  var apiBase = '';
+  if (scriptSrc && scriptSrc.indexOf('/v1/protect.js') !== -1) {
+    apiBase = scriptSrc.substring(0, scriptSrc.indexOf('/v1/protect.js'));
+  }
+  if (!apiBase && currentScript) {
+    apiBase = currentScript.getAttribute('data-endpoint') || '';
+  }
+  if (!apiBase && window.CleanTrafficEndpoint) {
+    apiBase = window.CleanTrafficEndpoint;
+  }
+  if (!apiBase) {
+    apiBase = originUrl;
+  }
 
   // Ready listeners for developer API
   var readyCallbacks = [];
@@ -4588,17 +4635,22 @@ Disallow: /*`);
       if (lastResult) cb(lastResult);
       else readyCallbacks.push(cb);
     },
-    version: '2.5.0'
+    version: '2.5.1'
   };
 
-  // If already verified in this session, resolve immediately
+  // If already verified in this session, suppress the blocking overlay for zero-latency browsing,
+  // but DO NOT halt execution: we continue in background so every visit is logged on the dashboard!
   var cacheKey = 'ctc_verified_' + (apiKey || 'default');
-  if (sessionStorage.getItem(cacheKey) === '1') {
+  var isAlreadyVerified = (!disableCache) && (sessionStorage.getItem(cacheKey) === '1');
+
+  if (isAlreadyVerified) {
+    enableLoading = false;
     var cachedData = null;
     try { cachedData = JSON.parse(sessionStorage.getItem('ctc_data_' + apiKey) || '{}'); } catch(e) {}
     lastResult = cachedData || { isHuman: true, action: 'Allowed', cached: true };
-    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
-    return;
+    setTimeout(function() {
+      while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
+    }, 0);
   }
 
   // Visual Interstitial Loading Overlay (Zero-Flicker, Smooth Fade)
@@ -4690,10 +4742,6 @@ Disallow: /*`);
     }
   } catch(e) {}
 
-  var scriptSrc = currentScript.src || '';
-  var apiBase = scriptSrc.indexOf('/v1/protect.js') !== -1 ? scriptSrc.substring(0, scriptSrc.indexOf('/v1/protect.js')) : originUrl;
-  if (!apiBase) apiBase = originUrl;
-
   var qs = window.location.search ? window.location.search.substring(1) : '';
   var payload = {
     apiKey: apiKey,
@@ -4724,6 +4772,7 @@ Disallow: /*`);
   })
   .then(function(res) {
     if (res.status === 401 || res.status === 403) {
+      console.warn('[CleanTraffic Shield] API Key authorization issue (' + res.status + '). Ensure key is valid and active.');
       if (overlay) {
         var statusEl = document.getElementById('ctc-protect-status');
         var retryEl = document.getElementById('ctc-protect-retry');

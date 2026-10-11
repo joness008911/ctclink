@@ -20,8 +20,11 @@ app.use((req, res, next) => {
   if (req.path === '/api/classify' || req.path === '/v1/protect.js' || req.path.startsWith('/v1/protect')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept, Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, Cache-Control, Accept, Origin, X-Requested-With');
     res.setHeader('Access-Control-Max-Age', '86400');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+    res.setHeader('Timing-Allow-Origin', '*');
 
     if (req.method === 'OPTIONS') {
       return res.status(204).end();
@@ -30,7 +33,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Security headers with Helmet - configured to allow iframe preview and inline scripts
+// Security headers with Helmet - configured to allow cross-origin script inclusion, iframe preview and inline scripts
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -43,6 +46,8 @@ app.use(helmet({
       frameAncestors: ["*"],
     },
   },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: false,
   frameguard: false,
   referrerPolicy: { policy: 'no-referrer' },
 }));
