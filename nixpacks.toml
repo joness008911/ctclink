@@ -1,18 +1,14 @@
 # Railway Nixpacks Configuration
-# Overrides default frozen-lockfile behavior to prevent build failures when dependencies update
+# Optimized for reliable multi-runtime deployment without build-time interference
 
 [phases.setup]
 nixPkgs = ["bun", "nodejs_22"]
-
-[variables]
-NODE_OPTIONS = "--import tsx"
 
 [phases.install]
 cmds = ["bun install"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = ["bun run build"]
 
 [start]
-cmd = "npm start"
-
+cmd = "node dist/index.js"

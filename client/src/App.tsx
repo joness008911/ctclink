@@ -16,6 +16,7 @@ import UseCasesIndex from "@/pages/use-cases/index";
 import UseCaseDetail from "@/pages/use-cases/[slug]";
 import { userAuthApi } from "@/lib/user-auth";
 import { authApi } from "@/lib/auth";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 // Standalone Client User Portal
 function UserPortal() {
@@ -108,12 +109,14 @@ function MainRouter() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <MainRouter />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Toaster />
+          <MainRouter />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }
 
