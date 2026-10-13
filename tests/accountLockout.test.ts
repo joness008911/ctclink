@@ -13,7 +13,7 @@ describe("Account Lockout and Brute-Force Protection", () => {
   const testIp = "192.0.2.100";
 
   after(() => {
-    // Terminate process cleanly to release any background Firestore channels
+    // Terminate process cleanly
     setTimeout(() => process.exit(0), 100).unref();
   });
 

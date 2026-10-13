@@ -24,7 +24,8 @@ import {
   ExternalLink,
   Sparkles,
   Bot,
-  Search
+  Search,
+  Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { computeEffectiveAccountStatus } from "@shared/subscription";
@@ -61,6 +62,7 @@ export function UserSidebar({
     { id: "logs", label: "Visitor Logs", icon: FileText, testId: "tab-logs" },
     { id: "live", label: "Real-time", icon: Radio, testId: "tab-live", badge: "Live" },
     { id: "routing", label: "Rules & Policies", icon: SlidersHorizontal, testId: "tab-routing" },
+    { id: "domain-whitelisting", label: "Domain Whitelisting", icon: Globe, testId: "tab-domain-whitelisting" },
     { 
       id: "aicrawl", 
       label: "AI Crawl Control", 

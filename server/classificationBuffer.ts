@@ -33,7 +33,7 @@ class ClassificationWriteBuffer {
   private flushTimer: NodeJS.Timeout | null = null;
   private readonly FLUSH_INTERVAL_MS = 1000; // 1 second micro-batching
   private readonly BATCH_SIZE_THRESHOLD = 50;  // Flush immediately if 50 items accumulate
-  private readonly MAX_BATCH_SIZE = 450;       // Firestore max batch limit is 500
+  private readonly MAX_BATCH_SIZE = 450;       // Optimal batch commit size
   private isFlushing = false;
 
   constructor() {

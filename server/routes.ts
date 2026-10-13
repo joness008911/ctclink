@@ -25,6 +25,7 @@ import { cleanTrafficGuard } from "./cleanTrafficGuard";
 import { synthesizeDeviceId } from "./deviceId";
 import { deviceTracker } from "./deviceTracker";
 import { evaluateVisitorRules } from "@shared/rulesEngine";
+import { isOriginAllowed } from "./originMatcher";
 
 // Session & idle timeout configuration
 export const IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours idle timeout
@@ -853,7 +854,7 @@ Disallow: /*`);
   // to the caller, so an audit-log write error cannot break a sensitive action.
   async function auditLog(entry: {
     actorId?: string | null;
-    actorType: "admin" | "system";
+    actorType: "admin" | "system" | "user";
     action: string;
     targetId?: string | null;
     targetType?: string | null;
@@ -3170,6 +3171,146 @@ Disallow: /*`);
     }
   });
 
+  // Get client user's origin / domain whitelisting rules
+  app.get("/api/user/origin-rules", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const user = await storage.getClientUser(userId);
+      if (!user || !user.apiKeyId) {
+        return res.json({
+          configured: false,
+          domainFilterMode: "forbid_all_except",
+          allowedDomains: [],
+          apiKeyId: null,
+          keyName: null,
+        });
+      }
+
+      const apiKey = (await storage.getApiKeyById(user.apiKeyId)) || (await storage.getApiKey(user.apiKeyId));
+
+      // 1. Check resilient setting store first
+      const settingRaw = await storage.getSetting(`origin_rules_${user.apiKeyId}`);
+      if (settingRaw) {
+        try {
+          const parsed = JSON.parse(settingRaw);
+          const allowedDomains = Array.isArray(parsed.allowedDomains) ? parsed.allowedDomains : [];
+          return res.json({
+            configured: allowedDomains.length > 0,
+            domainFilterMode: parsed.domainFilterMode || "forbid_all_except",
+            allowedDomains,
+            apiKeyId: user.apiKeyId,
+            keyName: apiKey?.keyName || null,
+          });
+        } catch {}
+      }
+
+      if (!apiKey) {
+        return res.json({
+          configured: false,
+          domainFilterMode: "forbid_all_except",
+          allowedDomains: [],
+          apiKeyId: user.apiKeyId,
+          keyName: null,
+        });
+      }
+
+      const allowedDomains = Array.isArray(apiKey.allowedDomains)
+        ? apiKey.allowedDomains
+        : [];
+
+      res.json({
+        configured: allowedDomains.length > 0,
+        domainFilterMode: apiKey.domainFilterMode || "forbid_all_except",
+        allowedDomains,
+        apiKeyId: apiKey.id,
+        keyName: apiKey.keyName,
+      });
+    } catch (error) {
+      console.error("Get origin rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  // Update client user's origin / domain whitelisting rules
+  app.put("/api/user/origin-rules", requireClientAuth, async (req: any, res) => {
+    try {
+      const auth = getSessionOrToken(req);
+      const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
+      if (!userId) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      const user = await storage.getClientUser(userId);
+      if (!user || !user.apiKeyId) {
+        return res.status(400).json({ message: "No active API key found for this account" });
+      }
+
+      const { domainFilterMode, allowedDomains } = req.body;
+
+      const validModes = ["forbid_all_except", "allow_all_except"];
+      const mode = validModes.includes(domainFilterMode) ? domainFilterMode : "forbid_all_except";
+
+      // Sanitize domain list
+      let domains: string[] = [];
+      if (Array.isArray(allowedDomains)) {
+        domains = allowedDomains
+          .map((d: any) => typeof d === "string" ? d.trim() : "")
+          .filter(Boolean);
+      } else if (typeof allowedDomains === "string") {
+        domains = allowedDomains
+          .split("\n")
+          .map((d: string) => d.trim())
+          .filter(Boolean);
+      }
+
+      // Deduplicate domains
+      domains = Array.from(new Set(domains));
+
+      // 1. Guaranteed storage in settings store
+      await storage.setSetting(
+        `origin_rules_${user.apiKeyId}`,
+        JSON.stringify({ domainFilterMode: mode, allowedDomains: domains })
+      );
+
+      // 2. Also try updating apiKey record (for providers that have the column)
+      try {
+        await storage.updateApiKey(user.apiKeyId, {
+          domainFilterMode: mode,
+          allowedDomains: domains,
+        });
+      } catch {}
+
+      void auditLog({
+        actorType: "user",
+        actorId: user.id,
+        action: "api_key.domain_rules_updated",
+        targetId: user.apiKeyId,
+        targetType: "api_key",
+        metadata: {
+          domainFilterMode: mode,
+          domainsCount: domains.length,
+          domains,
+        },
+      });
+
+      res.json({
+        success: true,
+        configured: domains.length > 0,
+        domainFilterMode: mode,
+        allowedDomains: domains,
+        apiKeyId: user.apiKeyId,
+      });
+    } catch (error) {
+      console.error("Update origin rules error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
   // ========== END CLIENT USER ROUTES ==========
 
   // ========== ADMIN CLIENT USER MANAGEMENT ROUTES ==========
@@ -4562,8 +4703,17 @@ Disallow: /*`);
  * Enterprise-grade client-side bot detection, hardware entropy & traffic defense.
  * Compatible with Shopify, Wix, Webflow, Squarespace, WordPress, Framer, and Custom Landing Pages.
  */
-(function(window, document) {
+(function() {
   'use strict';
+
+  // Defensive SSR Guard: Ensure script only executes in browser DOM runtime
+  // Prevents ReferenceError in Next.js Server Components, Remix, Shopify Hydrogen, and Framer SSR
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return;
+  }
+  if (!window.location || !document.getElementsByTagName) {
+    return;
+  }
 
   var currentScript = document.currentScript || (function() {
     var scripts = document.getElementsByTagName('script');
@@ -4602,6 +4752,8 @@ Disallow: /*`);
   var disableCache = currentScript ? (currentScript.getAttribute('data-cache') === 'false' || currentScript.getAttribute('data-continuous') === 'true') : false;
   var heading = (currentScript && currentScript.getAttribute('data-heading')) || 'Verifying connection security...';
   var subnote = (currentScript && currentScript.getAttribute('data-subnote')) || 'Please wait while we secure your session.';
+  var failMode = (currentScript && currentScript.getAttribute('data-fail-mode')) || 'open';
+  var failStatus = (currentScript && (currentScript.getAttribute('data-fail-status') || currentScript.getAttribute('data-status'))) || '403';
   var originUrl = window.location.origin || (window.location.protocol + '//' + window.location.host);
 
   // Derive apiBase from the script source URL itself so cross-origin calls always reach CleanTraffic backend
@@ -4682,80 +4834,6 @@ Disallow: /*`);
     }
   }
 
-  // 1. Full Entropy Collection (Identical to Fingerprint Pro & PHP Script)
-  var hwTokens = {
-    webdriver: Boolean(navigator.webdriver),
-    outerWidth: window.outerWidth || 0,
-    outerHeight: window.outerHeight || 0,
-    screenWidth: window.screen ? window.screen.width : 0,
-    screenHeight: window.screen ? window.screen.height : 0,
-    colorDepth: window.screen ? window.screen.colorDepth : 0,
-    pixelRatio: window.devicePixelRatio || 1,
-    missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
-    gpuRenderer: '',
-    canvasHash: '',
-    untrustedEvent: false,
-    timezoneOffset: new Date().getTimezoneOffset(),
-    hardwareConcurrency: navigator.hardwareConcurrency || 0,
-    touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0),
-    isBrave: Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function') || Boolean(window.chrome && window.chrome.brave),
-    brands: navigator.userAgentData && navigator.userAgentData.brands ? navigator.userAgentData.brands : null
-  };
-
-  try {
-    if (navigator.brave && typeof navigator.brave.isBrave === 'function') {
-      navigator.brave.isBrave().then(function(val) {
-        if (val) {
-          hwTokens.isBrave = true;
-          if (payload && payload.clientTokens) payload.clientTokens.isBrave = true;
-        }
-      });
-    }
-  } catch(e) {}
-
-  // Passive WebGL unmasked GPU renderer probe
-  try {
-    var canvas = document.createElement('canvas');
-    var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (gl) {
-      var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
-      if (debugInfo) {
-        hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
-      }
-    }
-  } catch(e) {}
-
-  // Passive 2D Canvas anti-aliasing curve probe
-  try {
-    var c2 = document.createElement('canvas');
-    c2.width = 160;
-    c2.height = 30;
-    var ctx2 = c2.getContext('2d');
-    if (ctx2) {
-      ctx2.textBaseline = 'top';
-      ctx2.font = '12px Arial';
-      ctx2.fillStyle = '#f60';
-      ctx2.fillRect(10, 1, 40, 15);
-      ctx2.fillStyle = '#069';
-      ctx2.fillText('ctc_render', 2, 5);
-      hwTokens.canvasHash = c2.toDataURL().slice(-32);
-    }
-  } catch(e) {}
-
-  var qs = window.location.search ? window.location.search.substring(1) : '';
-  var payload = {
-    apiKey: apiKey,
-    userAgent: navigator.userAgent || '',
-    queryString: qs,
-    referer: document.referrer || '',
-    url: window.location.href,
-    clientTokens: hwTokens,
-    screenW: hwTokens.screenWidth,
-    screenH: hwTokens.screenHeight,
-    hasTouch: hwTokens.touchPoints > 0,
-    webdriver: hwTokens.webdriver
-  };
-
   function dismissOverlay() {
     if (overlay && overlay.parentNode) {
       overlay.style.opacity = '0';
@@ -4765,81 +4843,195 @@ Disallow: /*`);
     }
   }
 
-  fetch(apiBase + '/api/classify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
-    body: JSON.stringify(payload)
-  })
-  .then(function(res) {
-    if (res.status === 401 || res.status === 403) {
-      console.warn('[CleanTraffic Shield] API Key authorization issue (' + res.status + '). Ensure key is valid and active.');
-      if (overlay) {
-        var statusEl = document.getElementById('ctc-protect-status');
-        var retryEl = document.getElementById('ctc-protect-retry');
-        if (statusEl) statusEl.textContent = 'Security configuration error (API Key Expired/Revoked).';
-        if (retryEl) retryEl.style.display = 'block';
-      }
-      return null;
-    }
-    return res.json();
-  })
-  .then(function(verdict) {
-    if (!verdict) return;
-
-    lastResult = {
-      visitorId: verdict.visitorId || verdict.visitor_id || '',
-      deviceId: verdict.deviceId || verdict.device_id || '',
-      isHuman: Boolean(verdict.isHuman || verdict.is_human),
-      action: verdict.action || (verdict.isHuman ? 'Allowed' : 'Blocked'),
-      country: verdict.country || '',
-      riskScore: verdict.risk_score || 0
+  // Phase 5 & 6: Non-Blocking High-Entropy Hardware Probing & Traffic Verification
+  function runProbingAndClassify() {
+    // 1. Full High-Entropy Silicon & Display Telemetry Probing (Phase 6)
+    var hwTokens = {
+      webdriver: Boolean(navigator.webdriver),
+      outerWidth: window.outerWidth || 0,
+      outerHeight: window.outerHeight || 0,
+      screenWidth: window.screen ? window.screen.width : 0,
+      screenHeight: window.screen ? window.screen.height : 0,
+      colorDepth: window.screen ? (window.screen.colorDepth || 24) : 24,
+      pixelDepth: window.screen ? (window.screen.pixelDepth || 24) : 24,
+      pixelRatio: window.devicePixelRatio || 1,
+      missingPluginsArray: !navigator.plugins || navigator.plugins.length === 0,
+      hardwareConcurrency: navigator.hardwareConcurrency || 0,
+      deviceMemory: navigator.deviceMemory || 0,
+      touchPoints: navigator.maxTouchPoints || ('ontouchstart' in window ? 1 : 0),
+      timezoneOffset: new Date().getTimezoneOffset(),
+      timeZone: (function() {
+        try {
+          return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch(e) { return ''; }
+      })(),
+      mathPrecision: (function() {
+        try {
+          var f64 = new Float64Array(1);
+          f64[0] = Math.tan(1.5707963267948966);
+          return f64[0].toString().slice(-6);
+        } catch(e) { return ''; }
+      })(),
+      gpuVendor: '',
+      gpuRenderer: '',
+      canvasHash: '',
+      audioHash: '',
+      untrustedEvent: false,
+      isBrave: Boolean(navigator.brave && typeof navigator.brave.isBrave === 'function') || Boolean(window.chrome && window.chrome.brave),
+      brands: navigator.userAgentData && navigator.userAgentData.brands ? navigator.userAgentData.brands : null
     };
 
-    // Store in session cache
+    // Passive WebGL unmasked GPU vendor & renderer probe
     try {
-      sessionStorage.setItem(cacheKey, '1');
-      sessionStorage.setItem('ctc_data_' + apiKey, JSON.stringify(lastResult));
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (gl) {
+        var debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+          hwTokens.gpuVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || '';
+          hwTokens.gpuRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+        } else {
+          hwTokens.gpuVendor = gl.getParameter(gl.VENDOR) || '';
+          hwTokens.gpuRenderer = gl.getParameter(gl.RENDERER) || '';
+        }
+      }
     } catch(e) {}
 
-    // Dispatch custom event & notify listeners
+    // Passive 2D Canvas anti-aliasing curve probe
     try {
-      window.dispatchEvent(new CustomEvent('ctc:verified', { detail: lastResult }));
+      var c2 = document.createElement('canvas');
+      c2.width = 160;
+      c2.height = 30;
+      var ctx2 = c2.getContext('2d');
+      if (ctx2) {
+        ctx2.textBaseline = 'top';
+        ctx2.font = '12px Arial';
+        ctx2.fillStyle = '#f60';
+        ctx2.fillRect(10, 1, 40, 15);
+        ctx2.fillStyle = '#069';
+        ctx2.fillText('ctc_render', 2, 5);
+        hwTokens.canvasHash = c2.toDataURL().slice(-32);
+      }
     } catch(e) {}
-    while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
 
-    // Rule Step Custom Response (HTML or JSON)
-    if (verdict.customBody) {
-      if (typeof verdict.customBody === 'string' && /<[a-z][\s\S]*>/i.test(verdict.customBody)) {
-        document.open();
-        document.write(verdict.customBody);
-        document.close();
+    // Passive Audio Hardware latency & sample-rate probe
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        var aCtx = new AudioCtx();
+        hwTokens.audioHash = (aCtx.sampleRate || 44100) + '_' + (aCtx.baseLatency ? Math.round(aCtx.baseLatency * 1000) : '0');
+        if (typeof aCtx.close === 'function') aCtx.close();
+      }
+    } catch(e) {}
+
+    var qs = window.location.search ? window.location.search.substring(1) : '';
+    var payload = {
+      apiKey: apiKey,
+      userAgent: navigator.userAgent || '',
+      queryString: qs,
+      referer: document.referrer || '',
+      url: window.location.href,
+      clientTokens: hwTokens,
+      screenW: hwTokens.screenWidth,
+      screenH: hwTokens.screenHeight,
+      hasTouch: hwTokens.touchPoints > 0,
+      webdriver: hwTokens.webdriver
+    };
+
+    fetch(apiBase + '/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify(payload)
+    })
+    .then(function(res) {
+      if (res.status === 401 || res.status === 403 || !res.ok) {
+        if (failMode === 'closed') {
+          if (failStatus === '404') {
+            document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
+          } else {
+            document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
+          }
+        } else {
+          // Fail-open: genuine visitors browse without interruption
+          dismissOverlay();
+        }
+        return null;
+      }
+      return res.json();
+    })
+    .then(function(verdict) {
+      if (!verdict) return;
+
+      lastResult = {
+        visitorId: verdict.visitorId || verdict.visitor_id || '',
+        deviceId: verdict.deviceId || verdict.device_id || '',
+        isHuman: Boolean(verdict.isHuman || verdict.is_human),
+        action: verdict.action || (verdict.isHuman ? 'Allowed' : 'Blocked'),
+        country: verdict.country || '',
+        riskScore: verdict.risk_score || 0
+      };
+
+      // Store in session cache
+      try {
+        sessionStorage.setItem(cacheKey, '1');
+        sessionStorage.setItem('ctc_data_' + apiKey, JSON.stringify(lastResult));
+      } catch(e) {}
+
+      // Dispatch custom event & notify listeners
+      try {
+        window.dispatchEvent(new CustomEvent('ctc:verified', { detail: lastResult }));
+      } catch(e) {}
+      while (readyCallbacks.length) readyCallbacks.shift()(lastResult);
+
+      // Rule Step Custom Response (HTML or JSON)
+      if (verdict.customBody) {
+        if (typeof verdict.customBody === 'string' && /<[a-z][\s\S]*>/i.test(verdict.customBody)) {
+          document.open();
+          document.write(verdict.customBody);
+          document.close();
+          return;
+        }
+        document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><div style="display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (typeof verdict.customBody === 'string' ? verdict.customBody : JSON.stringify(verdict.customBody, null, 2)) + '</div></div>';
         return;
       }
-      document.body.innerHTML = '<div style="font-family:sans-serif;padding:60px 20px;text-align:center;color:#334155;"><div style="display:inline-block;text-align:left;max-width:600px;background:#f8fafc;border:1px solid #e2e8f0;padding:20px;border-radius:10px;font-family:monospace;white-space:pre-wrap;word-break:break-all;">' + (typeof verdict.customBody === 'string' ? verdict.customBody : JSON.stringify(verdict.customBody, null, 2)) + '</div></div>';
-      return;
-    }
 
-    // Strict 404 enforcement (Stealth drop)
-    if (verdict.action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || verdict.destination === '404') {
-      document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
-      return;
-    }
+      // Strict 404 enforcement (Stealth drop)
+      if (verdict.action === '404' || verdict.statusCode === 404 || verdict.statusAction === '404' || verdict.destination === '404') {
+        document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
+        return;
+      }
 
-    // Strict 403 enforcement (Access denied in-place, no external redirect)
-    if (!verdict.isHuman || verdict.action === 'Blocked' || verdict.action === 'Restricted' || verdict.action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || verdict.destination === '403') {
-      document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
-      return;
-    }
+      // Strict 403 enforcement (Access denied in-place, no external redirect)
+      if (!verdict.isHuman || verdict.action === 'Blocked' || verdict.action === 'Restricted' || verdict.action === '403' || verdict.statusCode === 403 || verdict.statusAction === '403' || verdict.destination === '403') {
+        document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
+        return;
+      }
 
-    // In-Place Landing Page Protection: Smoothly dismiss overlay, visitor continues browsing
-    dismissOverlay();
-  })
-  .catch(function(err) {
-    console.warn('[CleanTraffic Shield] Classification error:', err);
-    // Fail-safe pass-through on transient network error
-    dismissOverlay();
-  });
-})(window, document);`;
+      // In-Place Landing Page Protection: Smoothly dismiss overlay, visitor continues browsing
+      dismissOverlay();
+    })
+    .catch(function(err) {
+      if (failMode === 'closed') {
+        if (failStatus === '404') {
+          document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">404 Not Found</h1><p style="color:#64748b;font-size:16px;">The requested resource was not found on this server.</p></div>';
+        } else {
+          document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:80px 20px;color:#334155;"><h1 style="font-size:32px;font-weight:700;margin-bottom:8px;">403 Forbidden</h1><p style="color:#64748b;font-size:16px;">Access to this resource is denied.</p></div>';
+        }
+      } else {
+        // Fail-open: pass-through on transient network error
+        dismissOverlay();
+      }
+    });
+  }
+
+  // Phase 5 Non-Blocking Scheduler:
+  // Runs heavy entropy probes on idle or non-blocking tick so Core Web Vitals (FCP, LCP) are never degraded
+  if (typeof window.requestIdleCallback === 'function' && !enableLoading) {
+    window.requestIdleCallback(runProbingAndClassify, { timeout: 800 });
+  } else {
+    setTimeout(runProbingAndClassify, 0);
+  }
+})();`;
 
     res.send(protectJs);
   });
@@ -5049,8 +5241,8 @@ Disallow: /*`);
     return '';
   }
 
-  // Centralized API key validator for /api/classify traffic routing
-  async function validateApiKeyForClassification(apiKey: string | null): Promise<{
+  // Centralized API key validator for /api/classify traffic routing with origin whitelisting enforcement
+  async function validateApiKeyForClassification(apiKey: string | null, req?: any): Promise<{
     valid: boolean;
     statusCode: number;
     code: string;
@@ -5060,6 +5252,62 @@ Disallow: /*`);
     entitlementType?: string;
   }> {
     const authRes = await authorizeApiKey(apiKey);
+    if (!authRes.authorized) {
+      return {
+        valid: false,
+        statusCode: authRes.statusCode,
+        code: authRes.code,
+        message: authRes.message,
+        apiKeyId: authRes.apiKeyId,
+        limitReached: authRes.limitReached,
+        entitlementType: authRes.entitlementType,
+      };
+    }
+
+    // Origin & Domain Whitelisting Enforcement
+    if (authRes.apiKey && req) {
+      let allowedDomains: string[] = [];
+      let domainFilterMode = "forbid_all_except";
+
+      if (authRes.apiKeyId) {
+        const settingRaw = await storage.getSetting(`origin_rules_${authRes.apiKeyId}`);
+        if (settingRaw) {
+          try {
+            const parsed = JSON.parse(settingRaw);
+            if (Array.isArray(parsed.allowedDomains)) allowedDomains = parsed.allowedDomains;
+            if (parsed.domainFilterMode) domainFilterMode = parsed.domainFilterMode;
+          } catch {}
+        }
+      }
+
+      if (allowedDomains.length === 0 && Array.isArray((authRes.apiKey as any).allowedDomains)) {
+        allowedDomains = (authRes.apiKey as any).allowedDomains;
+        domainFilterMode = (authRes.apiKey as any).domainFilterMode || "forbid_all_except";
+      }
+
+      if (allowedDomains.length > 0) {
+        const candidateOrigin =
+          (req.headers && (req.headers["origin"] || req.headers["referer"])) ||
+          req.body?.url ||
+          req.body?.referer ||
+          req.query?.url ||
+          "";
+
+        const originCheck = isOriginAllowed(candidateOrigin, allowedDomains, domainFilterMode);
+        if (!originCheck.allowed) {
+          return {
+            valid: false,
+            statusCode: 403,
+            code: "DOMAIN_UNAUTHORIZED",
+            message: originCheck.reason || "Domain unauthorized: Requests from this origin are not permitted for this API key.",
+            apiKeyId: authRes.apiKeyId,
+            limitReached: false,
+            entitlementType: authRes.entitlementType,
+          };
+        }
+      }
+    }
+
     return {
       valid: authRes.authorized,
       statusCode: authRes.statusCode,
@@ -5074,7 +5322,7 @@ Disallow: /*`);
   // Classification endpoint (GET with API key support)
   app.get("/api/classify", classifyLimiter, async (req, res) => {
     const apiKey = extractApiKeyFromRequest(req);
-    const authResult = await validateApiKeyForClassification(apiKey);
+    const authResult = await validateApiKeyForClassification(apiKey, req);
 
     if (!authResult.valid) {
       void auditLog({
@@ -5125,7 +5373,7 @@ Disallow: /*`);
     }
 
     const apiKey = extractApiKeyFromRequest(req);
-    const authResult = await validateApiKeyForClassification(apiKey);
+    const authResult = await validateApiKeyForClassification(apiKey, req);
 
     if (!authResult.valid) {
       void auditLog({
@@ -5581,19 +5829,24 @@ Disallow: /*`);
       });
       const resolvedDeviceId = deviceSynthesis.deviceId;
 
-      // Extract or synthesize persistent, stable visitor ID scoped to tenant
-      const incomingVisitorId = req.body?.visitorId || req.body?.visitor_id || (req.headers as any)?.['x-visitor-id'] || req.query?.visitor_id || req.query?.vid;
-      let resolvedVisitorId = incomingVisitorId && typeof incomingVisitorId === 'string' && incomingVisitorId.trim()
-        ? incomingVisitorId.trim()
-        : `vis_${createHash("sha256").update(`${apiKeyId || 'global'}:${resolvedDeviceId}`).digest("hex").slice(0, 16)}`;
+      // Server-authoritative persistent Visitor ID scoped strictly to tenant and hardware silicon profile
+      const authoritativeVisitorId = `vis_${createHash("sha256")
+        .update(`${apiKeyId || 'global'}:${resolvedDeviceId}`)
+        .digest("hex")
+        .slice(0, 16)}`;
+
+      // Intercept and flag any client-supplied visitor IDs (prevent bot tampering / spoofing)
+      const rawIncomingVisitorId = String(req.body?.visitorId || req.body?.visitor_id || (req.headers as any)?.['x-visitor-id'] || req.query?.visitor_id || req.query?.vid || '').trim();
+      const isVisitorIdSpoofed = Boolean(
+        rawIncomingVisitorId &&
+        rawIncomingVisitorId !== authoritativeVisitorId
+      );
 
       // Query genuine stored visit history from persistent database (tenant-isolated by apiKeyId)
-      const dbHistory = await storage.getVisitorHistory(apiKeyId, resolvedDeviceId, clientIp, resolvedVisitorId);
+      const dbHistory = await storage.getVisitorHistory(apiKeyId, resolvedDeviceId, clientIp, authoritativeVisitorId);
 
-      // If returning visitor has a prior stored visitorId on this tenant, preserve it unconditionally
-      if (dbHistory.existingVisitorId && !incomingVisitorId) {
-        resolvedVisitorId = dbHistory.existingVisitorId;
-      }
+      // Server-authoritative resolution: prioritize persistent tenant history, otherwise canonical synthesized ID
+      const resolvedVisitorId = dbHistory.existingVisitorId || authoritativeVisitorId;
       const deviceActivity = deviceTracker.recordVisit(
         resolvedDeviceId,
         clientIp,
@@ -6447,12 +6700,23 @@ Disallow: /*`);
         touchPoints,
         tlsJa3Hash,
         screenResolution,
+        deviceMemory: rawClientTokens?.deviceMemory ? `${rawClientTokens.deviceMemory} GB RAM` : (deviceType === 'mobile' ? "4-6 GB RAM (Mobile)" : "8-16 GB RAM"),
+        colorDepth: rawClientTokens?.colorDepth ? `${rawClientTokens.colorDepth}-bit Color` : "24-bit Color",
         hardwareConcurrency: rawClientTokens?.hardwareConcurrency ? `${rawClientTokens.hardwareConcurrency} Logical Cores` : (osInfo.name?.includes("Mobile") ? "4-8 Cores (Mobile SoC)" : "8 Logical Cores"),
         timezoneOffset: rawClientTokens?.timezoneOffset !== undefined ? `UTC${rawClientTokens.timezoneOffset > 0 ? '-' : '+'}${Math.abs(rawClientTokens.timezoneOffset / 60)}` : (classificationData.timezone || "Not Reported"),
+        timeZoneName: rawClientTokens?.timeZone || classificationData.timezone || "Not Reported",
+        mathPrecision: rawClientTokens?.mathPrecision || "Standard IEEE-754 FPU",
         webdriver: rawClientTokens?.webdriver === true ? "True (Automation Active - Alert)" : (rawClientTokens?.webdriver === false ? "False (Authentic Navigator)" : (visitorType === 'Bot' ? "True (Headless Bot Trait)" : "False (Authentic Navigator)")),
         missingPlugins: rawClientTokens?.missingPluginsArray === true ? "True (Headless Environment Indicator)" : "False (Valid Plugins Array)",
         untrustedEvent: rawClientTokens?.untrustedEvent === true ? "True (Programmatic Event Spoofing)" : "False (Trusted User Input)",
         platformArchitecture: osInfo.name ? `${osInfo.name} ${osInfo.version || ''}`.trim() : (deviceType === 'mobile' ? "iOS / Android Mobile" : "Windows / macOS"),
+        hardwareAnchor: deviceSynthesis.hardwareAnchor,
+        entropyModel: deviceSynthesis.entropyModel,
+        isFarblingDetected: Boolean(deviceSynthesis.isFarblingDetected),
+        isVisitorIdSpoofed,
+        clientSuppliedVisitorId: isVisitorIdSpoofed ? rawIncomingVisitorId : null,
+        canvasSignature: deviceSynthesis.canvasSignature || null,
+        audioSignature: deviceSynthesis.audioSignature || null,
         browser,
         browserVersion: browserVersion || null,
         browserEngine,
@@ -6500,6 +6764,12 @@ Disallow: /*`);
           status: "success",
           timestamp: new Date().toISOString()
         },
+        ...(isVisitorIdSpoofed ? [{
+          title: "Identity Spoofing Intercepted",
+          description: `Client attempted to inject forged Visitor ID '${rawIncomingVisitorId}'. Overridden with server-authoritative ID '${resolvedVisitorId}'.`,
+          status: "blocked",
+          timestamp: new Date().toISOString()
+        }] : []),
         {
           title: "Threat & Policy Intelligence Evaluated",
           description: `Carrier ASN: ${classificationData.isp || 'Carrier'} • Detection Result: ${detectionMethod || classificationData.detection_method || 'Clean Traffic Passed'}`,
@@ -6963,7 +7233,7 @@ Disallow: /*`);
       // Test the API key using comprehensive health diagnostics
       const testResult = await ip2LocationHealth.testKey(trimmedKey);
 
-      // Save to storage layer (works with both Firestore and DatabaseStorage)
+      // Save to storage layer (Supabase / PostgreSQL)
       await storage.setSetting('cleantraffic_api_key', trimmedKey);
       
       // Update runtime environment variables for immediate effect

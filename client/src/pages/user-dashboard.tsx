@@ -28,6 +28,7 @@ import { UserSidebar } from "@/components/user-dashboard/UserSidebar";
 import { UserOverviewTab } from "@/components/user-dashboard/UserOverviewTab";
 import { UserLiveEventsTab } from "@/components/user-dashboard/UserLiveEventsTab";
 import { UserRoutingTab } from "@/components/user-dashboard/UserRoutingTab";
+import { UserDomainWhitelistingTab } from "@/components/user-dashboard/UserDomainWhitelistingTab";
 import { UserAiCrawlTab } from "@/components/user-dashboard/UserAiCrawlTab";
 import { UserSearchIndexersTab } from "@/components/user-dashboard/UserSearchIndexersTab";
 import { UserIntegrationTab } from "@/components/user-dashboard/UserIntegrationTab";
@@ -564,6 +565,8 @@ export default function UserDashboard() {
               onNavigateToSeoIndexers={() => setActiveTab("seo-indexers")}
             />
           )}
+
+          {activeTab === "domain-whitelisting" && <UserDomainWhitelistingTab />}
 
           {(activeTab === "aicrawl" || activeTab === "aicrawl-overview" || activeTab === "aicrawl-security") && (
             <UserAiCrawlTab

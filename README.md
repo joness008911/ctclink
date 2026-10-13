@@ -12,7 +12,7 @@ CleanTraffic is a full-stack real-time bot filtering and conditional traffic rou
 
 * **Frontend:** React SPA built with Vite, TypeScript, Tailwind CSS, TanStack Query, and Radix UI primitives (`shadcn/ui`).
 * **Backend:** Node.js Express server (`server/index.ts`, `server/routes.ts`) providing real-time evaluation endpoints, rate limiting, and administrative interfaces.
-* **Storage Abstraction:** Pluggable storage architecture supporting Google Cloud Firestore and relational PostgreSQL / Supabase databases.
+* **Storage Architecture:** High-performance storage powered by Supabase (REST HTTPS and PostgreSQL) with in-memory caching and write buffering.
 * **Integrations:** PHP tracking package generator for client sites, IP intelligence lookup with circuit breakers, and webhook lifecycles.
 
 ---
@@ -23,7 +23,7 @@ CleanTraffic is a full-stack real-time bot filtering and conditional traffic rou
 
 * Node.js 20.x or higher
 * npm or bun package manager
-* Access to a provisioned PostgreSQL/Supabase database or Firestore instance
+* Access to a provisioned Supabase / PostgreSQL database
 
 ### Installation
 

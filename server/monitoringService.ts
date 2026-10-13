@@ -5,7 +5,7 @@ export interface SystemIncident {
   id: string;
   timestamp: string;
   severity: "critical" | "high" | "warning" | "info";
-  subsystem: "API Gateway" | "Firestore Database" | "Edge Worker Bypass" | "Cache Service" | "External Lookup";
+  subsystem: "API Gateway" | "Supabase Database" | "Edge Worker Bypass" | "Cache Service" | "External Lookup";
   title: string;
   exactCause: string;
   fileLocation?: string;

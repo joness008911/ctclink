@@ -368,6 +368,8 @@ export class SupabaseStorage implements IStorage {
       callLimit: Number(row.call_limit ?? row.callLimit ?? 5000),
       callCount: Number(row.call_count ?? row.callCount ?? 0),
       lastUsed: row.last_used ? new Date(row.last_used) : (row.lastUsed ? new Date(row.lastUsed) : null),
+      domainFilterMode: row.domain_filter_mode ?? row.domainFilterMode ?? "forbid_all_except",
+      allowedDomains: Array.isArray(row.allowed_domains) ? row.allowed_domains : (Array.isArray(row.allowedDomains) ? row.allowedDomains : []),
       createdAt: row.created_at ? new Date(row.created_at) : (row.createdAt ? new Date(row.createdAt) : new Date()),
       updatedAt: row.updated_at ? new Date(row.updated_at) : (row.updatedAt ? new Date(row.updatedAt) : new Date()),
     };
@@ -385,6 +387,8 @@ export class SupabaseStorage implements IStorage {
     if (k.callLimit !== undefined) out.call_limit = k.callLimit;
     if (k.callCount !== undefined) out.call_count = k.callCount;
     if (k.lastUsed !== undefined) out.last_used = k.lastUsed instanceof Date ? k.lastUsed.toISOString() : k.lastUsed;
+    if (k.domainFilterMode !== undefined) out.domain_filter_mode = k.domainFilterMode;
+    if (k.allowedDomains !== undefined) out.allowed_domains = k.allowedDomains;
     if (k.createdAt !== undefined) out.created_at = k.createdAt instanceof Date ? k.createdAt.toISOString() : k.createdAt;
     if (k.updatedAt !== undefined) out.updated_at = k.updatedAt instanceof Date ? k.updatedAt.toISOString() : k.updatedAt;
     return out;
@@ -404,6 +408,8 @@ export class SupabaseStorage implements IStorage {
       callLimit: apiKey.callLimit || 5000,
       callCount: 0,
       lastUsed: null,
+      domainFilterMode: (apiKey as any).domainFilterMode || "forbid_all_except",
+      allowedDomains: (apiKey as any).allowedDomains || [],
       createdAt: now,
       updatedAt: now,
     };

@@ -26,7 +26,7 @@ export interface EmailLogEntry {
   metadata?: Record<string, any>;
 }
 
-// In-memory buffer of recent email logs (also persisted to Firestore/settings where available)
+// In-memory buffer of recent email logs (also persisted to Supabase/settings where available)
 const emailLogs: EmailLogEntry[] = [];
 const MAX_LOGS = 200;
 
@@ -113,7 +113,7 @@ export function sanitizeSmtpConfig(config: SmtpConfig): SmtpConfig {
 
 // ── Retrieve Active SMTP Configuration ──────────────────────────────────────
 export async function getSmtpConfig(): Promise<SmtpConfig> {
-  // Check persisted settings first (from Firestore or DB)
+  // Check persisted settings first (from Supabase or DB)
   const host = (await storage.getSetting("smtp_host")) || process.env.SMTP_HOST || "";
   const portStr = (await storage.getSetting("smtp_port")) || process.env.SMTP_PORT || "587";
   const secureStr = (await storage.getSetting("smtp_secure")) || process.env.SMTP_SECURE || "false";

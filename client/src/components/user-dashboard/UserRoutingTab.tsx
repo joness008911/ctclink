@@ -236,31 +236,20 @@ export function UserRoutingTab({
         step.conditions.some((c) => c.field === "vpn" && c.value === "True")
       );
 
-      // Auto-sync legacy botUrl from active ruleset so downstream integrations and legacy checks stay 100% in sync
-      let syncedBotTarget = botUrl.trim();
+      // Auto-sync active status code from active ruleset so downstream integrations stay 100% in sync
+      let syncedBotTarget = "403";
       if (activeBotRule) {
         if (activeBotRule.responseMode === "single" && activeBotRule.singleResponse) {
           const single = activeBotRule.singleResponse;
-          if (single.action === "redirect" && single.redirectUrl) {
-            syncedBotTarget = single.redirectUrl.trim();
-          } else if (single.statusCode) {
+          if (single.statusCode) {
             syncedBotTarget = String(single.statusCode);
           }
         } else if (activeBotRule.rules && activeBotRule.rules.length > 0) {
-          // If multi-status, pick the first active rule step's action as the default fallback
           const firstActiveStep = activeBotRule.rules.find((s) => s.enabled);
-          if (firstActiveStep) {
-            if (firstActiveStep.action === "redirect" && firstActiveStep.redirectUrl) {
-              syncedBotTarget = firstActiveStep.redirectUrl.trim();
-            } else if (firstActiveStep.statusCode) {
-              syncedBotTarget = String(firstActiveStep.statusCode);
-            }
+          if (firstActiveStep && firstActiveStep.statusCode) {
+            syncedBotTarget = String(firstActiveStep.statusCode);
           }
         }
-      }
-
-      if (!syncedBotTarget) {
-        syncedBotTarget = "403";
       }
 
       const payload = {
@@ -2029,40 +2018,6 @@ export function UserRoutingTab({
             </div>
           </div>
 
-          {/* Destinations */}
-          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900">Traffic Routing Targets</h3>
-            
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Legitimate Buyer Destination (Human URL)</Label>
-              <Input
-                type="text"
-                value={humanUrl}
-                onChange={(e) => {
-                  setHumanUrl(e.target.value);
-                  setHasUnsavedChanges(true);
-                }}
-                placeholder="https://yourstore.com/target-offer"
-                className="text-xs h-9 font-mono"
-              />
-              <p className="text-[11px] text-slate-500">Where allowed legitimate traffic is forwarded.</p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Fallback Bot Deflection (URL or HTTP Status)</Label>
-              <Input
-                type="text"
-                value={botUrl}
-                onChange={(e) => {
-                  setBotUrl(e.target.value);
-                  setHasUnsavedChanges(true);
-                }}
-                placeholder="403 or https://yourstore.com/safe-page"
-                className="text-xs h-9 font-mono"
-              />
-              <p className="text-[11px] text-slate-500">Fallback destination for deflected automated traffic when not blocked directly.</p>
-            </div>
-          </div>
         </div>
       )}
 
@@ -2339,20 +2294,20 @@ export function UserRoutingTab({
                         <span>Consolidated Edge Response</span>
                       </div>
                       <p className="text-[11px] text-slate-500 leading-relaxed">
-                        In Single Status mode, all triggered rules route through this unified status code and custom body. This response is delivered at the edge across all integrations (Cloudflare, Next.js, WordPress, Express, 1-Line JS).
+                        In Single Status mode, all triggered rules route through this unified status code and custom body. This response is delivered at the edge across all integrations (Cloudflare, Next.js, WordPress, PHP, 1-Line JS).
                       </p>
                     </div>
 
                     {/* Action Selector */}
                     <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-slate-700">Action</Label>
+                      <Label className="text-xs font-semibold text-slate-700">Enforcement Action</Label>
                       <select
                         value={currentRuleset.singleResponse?.action || "block_response"}
                         onChange={(e) => handleUpdateSingleResponse({ action: e.target.value as RuleAction })}
                         className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
                       >
-                        <option value="block_response">Block with response</option>
-                        <option value="redirect">Redirect to URL</option>
+                        <option value="block_response">Block with HTTP Status Code</option>
+                        <option value="challenge">Interactive Security Challenge</option>
                       </select>
                     </div>
 
@@ -2525,18 +2480,7 @@ export function UserRoutingTab({
                       </>
                     )}
 
-                    {currentRuleset.singleResponse?.action === "redirect" && (
-                      <div className="space-y-2">
-                        <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
-                        <Input
-                          type="text"
-                          value={currentRuleset.singleResponse?.redirectUrl || botUrl}
-                          onChange={(e) => handleUpdateSingleResponse({ redirectUrl: e.target.value })}
-                          placeholder="https://yourstore.com/safe-page"
-                          className="text-xs h-9 font-mono"
-                        />
-                      </div>
-                    )}
+
 
                     {/* Mode Toggle Option */}
                     <div className="pt-4 border-t border-slate-100">
@@ -2800,10 +2744,9 @@ export function UserRoutingTab({
                             onChange={(e) => handleUpdateStep({ action: e.target.value as RuleAction })}
                             className="w-full text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-[#0A5C48]"
                           >
-                            <option value="block_response">Block with response</option>
-                            <option value="redirect">Redirect to URL</option>
-                            <option value="challenge">Interactive Challenge</option>
-                            <option value="allow">Allow</option>
+                            <option value="block_response">Block with HTTP Status Code</option>
+                            <option value="challenge">Interactive Security Challenge</option>
+                            <option value="allow">Allow / Pass</option>
                           </select>
 
                           {/* ─── STATUS CODE SELECTOR (Multi-Status Mode) ─── */}
@@ -2911,19 +2854,7 @@ export function UserRoutingTab({
                             </>
                           )}
 
-                          {/* If Redirect */}
-                          {selectedStep.action === "redirect" && (
-                            <div className="space-y-2">
-                              <Label className="text-xs font-semibold text-slate-700">Target Redirect URL</Label>
-                              <Input
-                                type="text"
-                                value={selectedStep.redirectUrl || botUrl}
-                                onChange={(e) => handleUpdateStep({ redirectUrl: e.target.value })}
-                                placeholder="https://yourstore.com/safe-page"
-                                className="text-xs h-9 font-mono"
-                              />
-                            </div>
-                          )}
+
                         </>
                       )}
                     </div>

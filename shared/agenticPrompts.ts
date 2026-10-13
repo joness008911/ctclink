@@ -16,7 +16,7 @@
 export interface AgentPromptOptions {
   apiKeyValue?: string;
   effectiveEndpoint: string;
-  targetStack?: "nextjs" | "nodejs" | "cloudflare" | "php" | "wordpress" | "shopify" | "universal";
+  targetStack?: "nextjs" | "cloudflare" | "php" | "wordpress" | "shopify" | "universal";
   deflectionAction?: "403" | "404" | "redirect";
   botFallbackUrl?: string;
   failMode?: string;
@@ -157,117 +157,6 @@ export const config = {
 `;
 }
 
-export function generateExpressAgentPrompt(options: AgentPromptOptions): string {
-  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
-  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
-  const deflectionAction = options.deflectionAction || "403";
-  const botFallbackUrl = options.botFallbackUrl?.trim() || "";
-  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
-
-  const deflectionSnippet = `// Dynamic deflection verdict from live CleanTraffic rules
-        if (data.customBody) {
-          res.setHeader('Content-Type', data.bodyType || 'application/json');
-          return res.status(data.statusCode || 403).send(typeof data.customBody === 'string' ? data.customBody : JSON.stringify(data.customBody));
-        }
-        if (data.redirectUrl || data.destination) {
-          return res.redirect(data.redirectUrl || data.destination);
-        }
-        const statusCode = data.statusCode || (data.action === '404' || data.statusAction === '404' ? 404 : ${deflectionAction === '404' ? 404 : 403});
-        return res.status(statusCode).send(statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied');`;
-
-  return `# Add CleanTraffic Middleware to Express.js / Node.js
-
-Set up CleanTraffic in this Express.js application to screen traffic against automated scrapers and cloud security policies (Device filtering, Geo-fencing, Click Fraud) with zero external npm dependencies.
-
-Configuration:
-- CleanTraffic API Key: ${apiKey}
-- Classification Endpoint: ${endpoint}/api/classify
-- Deflection Action: ${getDeflectionDescription(deflectionAction, botFallbackUrl)}
-- Timeout: ${timeoutMs}ms (Fail-Open)
-
-## Step 1: Create the Middleware File
-Create \`middleware/cleantraffic.js\` (or \`src/middleware/cleantraffic.js\`):
-
-\`\`\`javascript
-// middleware/cleantraffic.js (Native Node 18+ Zero-Dependency Shield)
-const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
-const ENDPOINT = '${endpoint}';
-const TIMEOUT_MS = ${timeoutMs};
-
-const STATIC_ASSET_REGEX = /\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i;
-
-function cleanTrafficMiddleware() {
-  return async function(req, res, next) {
-    // 1. Skip static assets, health checks, and favicon
-    if (STATIC_ASSET_REGEX.test(req.path) || req.path === '/health' || req.path === '/favicon.ico') {
-      return next();
-    }
-
-    const ip = req.headers['cf-connecting-ip'] 
-      || req.headers['x-real-ip']
-      || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
-      || req.socket.remoteAddress 
-      || '127.0.0.1';
-
-    try {
-      // 2. Real-time classification against your CleanTraffic Cloud Rules
-      const response = await fetch(\`\${ENDPOINT}/api/classify\`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': API_KEY,
-          'User-Agent': 'CleanTraffic-Express-Middleware/3.0'
-        },
-        body: JSON.stringify({
-          apiKey: API_KEY,
-          ip,
-          userAgent: req.headers['user-agent'] || '',
-          queryString: req.url.includes('?') ? req.url.split('?')[1] : '',
-          url: req.protocol + '://' + (req.get('host') || 'localhost') + req.originalUrl,
-          stack: 'express'
-        }),
-        signal: AbortSignal.timeout(TIMEOUT_MS)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-
-        // 3. Catches BOTH bots ('Blocked') AND Dashboard Policy Rules ('Restricted', e.g. PC blocked, Geo-fencing)
-        const isBlocked = !data.isHuman 
-          || data.action === 'Blocked' 
-          || data.action === 'Restricted';
-
-        if (isBlocked) {
-          ${deflectionSnippet}
-        }
-      }
-    } catch (err) {
-      // Fail-open: guarantee site uptime if network fluctuates
-    }
-
-    // 4. Real humans proceed directly with 0ms delay
-    return next();
-  };
-}
-
-module.exports = cleanTrafficMiddleware;
-\`\`\`
-
-## Step 2: Register in Express App
-In your entry file (\`app.js\`, \`server.js\`, or \`src/index.ts\`):
-\`\`\`javascript
-const cleanTraffic = require('./middleware/cleantraffic');
-app.use(cleanTraffic()); // Zero external npm dependencies
-\`\`\`
-
-## Step 3: Test and Verify
-1. Start server: \`npm start\` or \`npm run dev\`.
-2. Visit in browser -> HTTP 200 (human allowed).
-3. Test bot rejection in terminal:
-   \`curl -i -A "Scrapy/2.5" http://localhost:3000/\`
-   Confirm the response is deflected as configured (${deflectionAction === '404' ? 'HTTP 404' : deflectionAction === 'redirect' ? 'HTTP 302' : 'HTTP 403'}).
-`;
-}
 
 export function generateCloudflareAgentPrompt(options: AgentPromptOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
@@ -613,35 +502,39 @@ export function generateJsAgentPrompt(options: AgentPromptOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
 
-  return `# Add CleanTraffic JavaScript Tag (HTML / Webflow / Wix)
+  return `# Add CleanTraffic JavaScript SDK to Website
 
-Integrate CleanTraffic into any standard HTML page, landing page builder (Webflow, Wix, Squarespace, Unbounce), or static web project.
+Identify visitors on your website and screen traffic with zero external dependencies.
 
 Configuration:
 - CleanTraffic API Key: ${apiKey}
 - Script URL: ${endpoint}/v1/protect.js
 
 ## Step 1: Insert into <head>
-Place this script in your project's \`<head>\` section in \`index.html\` or in your site builder's Custom Code settings (Head Code):
+Place this script in your project's \`<head>\` in \`index.html\` or in your site's header template:
 
 \`\`\`html
 <!-- CleanTraffic Universal Web Agent -->
 <script src="${endpoint}/v1/protect.js" data-api-key="${apiKey}" async></script>
 \`\`\`
 
-## Step 2: (Optional) Access Signals Programmatically
-To inspect the hardware entropy verdict in your frontend code:
+## Step 2: Access Visitor Signals Programmatically
+To inspect verified visitor identity, bot classification, and trust scores in your JavaScript:
 
 \`\`\`javascript
-window.CleanTraffic && window.CleanTraffic.get().then(function(result) {
-  console.log("Visitor ID:", result.visitorId);
-  console.log("Is Verified Human:", result.isHuman);
-  console.log("Device Trust Score:", result.trustScore);
-});
+if (window.CleanTraffic && typeof window.CleanTraffic.get === 'function') {
+  window.CleanTraffic.get().then(function(visitor) {
+    console.log("Visitor ID:", visitor.visitorId);
+    console.log("Is Verified Human:", visitor.isHuman);
+    console.log("Device Trust Score:", visitor.confidenceScore || visitor.trustScore);
+  });
+}
 \`\`\`
 
-## Step 3: Verification
-Visit your page in a browser. The CleanTraffic agent runs in the background and sends hardware entropy signals to your live dashboard in ~12ms.
+## Step 3: Verify
+1. Open your website in a browser.
+2. Open DevTools Console: confirm \`protect.js\` executes in ~12ms.
+3. Watch real-time visitor sessions register in your CleanTraffic Live Feed dashboard.
 `;
 }
 
@@ -649,94 +542,115 @@ export function generateReactAgentPrompt(options: AgentPromptOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
 
-  return `# Add CleanTraffic SDK to React SPA (Vite / CRA)
+  return `# Add CleanTraffic to React (Vite / CRA / Next.js)
 
-Integrate the CleanTraffic visitor verification SDK into a React single-page application.
+Identify visitors on your React website and screen traffic with zero external dependencies.
 
 Configuration:
 - CleanTraffic API Key: ${apiKey}
 - Script URL: ${endpoint}/v1/protect.js
 
-## Step 1: Add Script to index.html or Root Component
-In \`index.html\` inside the \`<head>\`:
-\`\`\`html
-<!-- CleanTraffic React Agent -->
-<script src="${endpoint}/v1/protect.js" data-api-key="${apiKey}" async></script>
-\`\`\`
-
-## Step 2: Create a React Hook for Visitor Signals
+## Step 1: Create the React Hook
 Create \`src/hooks/useCleanTraffic.ts\`:
 
 \`\`\`typescript
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-declare global {
-  interface Window {
-    CleanTraffic?: {
-      get: () => Promise<{
-        visitorId: string;
-        isHuman: boolean;
-        riskScore: number;
-        trustScore: number;
-      }>;
-    };
-  }
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+  country?: string;
 }
 
 export function useCleanTraffic() {
-  const [verdict, setVerdict] = useState<{
-    visitorId?: string;
-    isHuman?: boolean;
-    riskScore?: number;
-  } | null>(null);
+  const [visitor, setVisitor] = useState<CleanTrafficVisitor | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.CleanTraffic) {
-      window.CleanTraffic.get().then(setVerdict).catch(console.error);
+    // 1. SSR check
+    if (typeof window === 'undefined' || !window.document) return;
+
+    // 2. Inject CleanTraffic core client agent if not present
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
     }
+
+    // 3. Resolve visitor signals and hardware entropy asynchronously
+    const checkInterval = setInterval(() => {
+      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === 'function') {
+        clearInterval(checkInterval);
+        (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+          setVisitor(res);
+          setLoading(false);
+        });
+      }
+    }, 50);
+
+    const timeout = setTimeout(() => {
+      clearInterval(checkInterval);
+      setLoading(false);
+    }, 3500);
+
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timeout);
+    };
   }, []);
 
-  return verdict;
+  return { visitor, loading };
+}
+\`\`\`
+
+## Step 2: Use in Your Component
+In your login, signup, or protected checkout component:
+
+\`\`\`tsx
+import React from 'react';
+import { useCleanTraffic } from './hooks/useCleanTraffic';
+
+export function ProtectedComponent() {
+  const { visitor, loading } = useCleanTraffic();
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (visitor && !visitor.isHuman) {
+      alert('Automated bot traffic detected. Access restricted.');
+      return;
+    }
+    console.log('Verified human visitor:', visitor?.visitorId);
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <button type="submit" disabled={loading}>
+        {loading ? 'Verifying security...' : 'Submit Form'}
+      </button>
+      {visitor && (
+        <p className="text-xs text-slate-500 mt-2">
+          Visitor ID: {visitor.visitorId} ({visitor.isHuman ? 'Verified Human' : 'Restricted'})
+        </p>
+      )}
+    </form>
+  );
 }
 \`\`\`
 
 ## Step 3: Verify
-Run \`npm run dev\` and open the application. Confirm no console errors and check the CleanTraffic Live Feed dashboard.
+1. Start your local dev server (\`npm run dev\`).
+2. Open your app in a browser and check DevTools Console.
+3. Confirm visitor identification registers live on your CleanTraffic dashboard.
 `;
 }
 
-export function generateGtmAgentPrompt(options: AgentPromptOptions): string {
-  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
-  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
 
-  return `# Add CleanTraffic via Google Tag Manager (GTM)
-
-Deploy CleanTraffic across all your website pages using Google Tag Manager without touching source code.
-
-Configuration:
-- CleanTraffic API Key: ${apiKey}
-- Script URL: ${endpoint}/v1/protect.js
-
-## Step 1: Create a New Tag in GTM
-1. In your Google Tag Manager Workspace, navigate to **Tags** -> Click **New**.
-2. Name the tag: **CleanTraffic - Bot Shield & Entropy Agent**.
-3. Under **Tag Configuration**, select **Custom HTML**.
-4. Paste the following HTML into the code field:
-
-\`\`\`html
-<script src="${endpoint}/v1/protect.js" data-api-key="${apiKey}" async></script>
-\`\`\`
-
-## Step 2: Configure the Trigger
-1. Under **Triggering**, select **Consent Initialization - All Pages** (or **Initialization - All Pages**).
-   *Running on initialization ensures device entropy signals are measured early in page lifecycle.*
-
-## Step 3: Publish the GTM Container
-1. Click **Submit** in the upper right corner of GTM.
-2. Enter version name (e.g., "Added CleanTraffic Protection Tag") and click **Publish**.
-3. Test your site in GTM Preview mode to confirm the tag fires.
-`;
-}
 
 export function generatePythonAgentPrompt(options: AgentPromptOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
@@ -953,5 +867,371 @@ window.CleanTraffic.get().then(function(verdict) {
 
 ## Step 3: Verify
 Open the page in the browser with dev tools console open. Confirm no errors, and verify the visitor session registers on the CleanTraffic Live Feed dashboard (${endpoint}/dashboard?tab=traffic).
+`;
+}
+
+export function generateVueAgentPrompt(options: AgentPromptOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `# Add CleanTraffic to Vue.js / Nuxt 3
+
+Integrate CleanTraffic visitor identification and bot protection into this Vue 3 or Nuxt 3 project using a clean Composition API composable.
+
+Configuration:
+- CleanTraffic API Key: ${apiKey}
+- Classification Agent URL: ${endpoint}/v1/protect.js
+
+## Step 1: Create the Composable
+Create \`composables/useCleanTraffic.ts\` (in Nuxt 3 this is auto-imported, or import it in Vue 3/Vite):
+
+\`\`\`typescript
+// composables/useCleanTraffic.ts (Vue 3 / Nuxt 3)
+import { ref, onMounted } from 'vue';
+
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+}
+
+export function useCleanTraffic() {
+  const visitor = ref<CleanTrafficVisitor | null>(null);
+  const loading = ref<boolean>(true);
+
+  onMounted(() => {
+    // 1. SSR check (essential for Nuxt / Vite SSR)
+    if (typeof window === 'undefined') return;
+
+    // 2. Inject CleanTraffic agent if not present
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    // 3. Resolve visitor data asynchronously
+    const timer = setInterval(() => {
+      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === 'function') {
+        clearInterval(timer);
+        (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+          visitor.value = res;
+          loading.value = false;
+        });
+      }
+    }, 50);
+
+    setTimeout(() => {
+      clearInterval(timer);
+      loading.value = false;
+    }, 3500);
+  });
+
+  return { visitor, loading };
+}
+\`\`\`
+
+## Step 2: Use in Component
+In your login, signup, or protected checkout component:
+
+\`\`\`vue
+<script setup>
+import { useCleanTraffic } from '@/composables/useCleanTraffic';
+
+const { visitor, loading } = useCleanTraffic();
+
+function handleFormSubmit() {
+  if (visitor.value && !visitor.value.isHuman) {
+    alert('Automated bot traffic detected. Access restricted.');
+    return;
+  }
+  // Proceed with legitimate human submission
+  console.log('Verified human:', visitor.value?.visitorId);
+}
+</script>
+
+<template>
+  <form @submit.prevent="handleFormSubmit">
+    <button type="submit" :disabled="loading">
+      {{ loading ? 'Verifying connection...' : 'Submit' }}
+    </button>
+  </form>
+</template>
+\`\`\`
+
+## Step 3: Verify
+Run \`npm run dev\` and open the application. Inspect the console to verify visitor identification resolves and traffic logs show up in your CleanTraffic dashboard.
+`;
+}
+
+export function generateAngularAgentPrompt(options: AgentPromptOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `# Add CleanTraffic to Angular (15 / 16 / 17 / 18)
+
+Integrate CleanTraffic visitor verification and fraud protection into this Angular enterprise application using an Injectable service with Angular Universal SSR guards.
+
+Configuration:
+- CleanTraffic API Key: ${apiKey}
+- Classification Agent URL: ${endpoint}/v1/protect.js
+
+## Step 1: Create the Injectable Service
+Create \`src/app/services/cleantraffic.service.ts\`:
+
+\`\`\`typescript
+import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class CleanTrafficService {
+  private visitor: CleanTrafficVisitor | null = null;
+
+  constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
+
+  public async getVisitor(): Promise<CleanTrafficVisitor | null> {
+    // SSR guard: do not execute DOM manipulation on server
+    if (!isPlatformBrowser(this.platformId)) {
+      return null;
+    }
+
+    if (this.visitor) return this.visitor;
+
+    // Inject agent script if not present
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    return new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === 'function') {
+          clearInterval(checkInterval);
+          (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+            this.visitor = res;
+            resolve(res);
+          });
+        }
+      }, 50);
+
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve(this.visitor);
+      }, 3500);
+    });
+  }
+}
+\`\`\`
+
+## Step 2: Inject into Components
+In your target component (e.g. \`src/app/app.component.ts\`):
+
+\`\`\`typescript
+import { Component, OnInit } from '@angular/core';
+import { CleanTrafficService, CleanTrafficVisitor } from './services/cleantraffic.service';
+
+@Component({
+  selector: 'app-root',
+  template: \`
+    <div *ngIf="visitor">
+      <p>Visitor ID: {{ visitor.visitorId }}</p>
+      <p>Security Status: {{ visitor.isHuman ? 'Human Verified' : 'Bot Blocked' }}</p>
+    </div>
+  \`
+})
+export class AppComponent implements OnInit {
+  visitor: CleanTrafficVisitor | null = null;
+
+  constructor(private ctc: CleanTrafficService) {}
+
+  async ngOnInit() {
+    this.visitor = await this.ctc.getVisitor();
+  }
+}
+\`\`\`
+
+## Step 3: Verify
+Run \`ng serve\` and open your browser. Confirm zero TypeScript errors and verify visitor identification appears in the CleanTraffic dashboard.
+`;
+}
+
+export function generatePreactAgentPrompt(options: AgentPromptOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `# Add CleanTraffic to Preact
+
+Integrate CleanTraffic visitor verification into this Preact or Deno Fresh application using an ultra-lightweight hook with zero external dependencies.
+
+Configuration:
+- CleanTraffic API Key: ${apiKey}
+- Classification Agent URL: ${endpoint}/v1/protect.js
+
+## Step 1: Create the Preact Hook
+Create \`src/hooks/useCleanTraffic.js\`:
+
+\`\`\`javascript
+import { useState, useEffect } from 'preact/hooks';
+
+export function useCleanTraffic() {
+  const [visitor, setVisitor] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    const checkInterval = setInterval(() => {
+      if (window.CleanTraffic && typeof window.CleanTraffic.get === 'function') {
+        clearInterval(checkInterval);
+        window.CleanTraffic.get().then((res) => {
+          setVisitor(res);
+          setLoading(false);
+        });
+      }
+    }, 50);
+
+    const timer = setTimeout(() => {
+      clearInterval(checkInterval);
+      setLoading(false);
+    }, 3500);
+
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timer);
+    };
+  }, []);
+
+  return { visitor, loading };
+}
+\`\`\`
+
+## Step 2: Use in Component
+\`\`\`javascript
+import { useCleanTraffic } from './hooks/useCleanTraffic';
+
+export function App() {
+  const { visitor, loading } = useCleanTraffic();
+
+  return (
+    <div>
+      {loading ? (
+        <span>Checking connection security...</span>
+      ) : (
+        <span>Security: {visitor?.isHuman ? 'Human Verified' : 'Bot Blocked'}</span>
+      )}
+    </div>
+  );
+}
+\`\`\`
+
+## Step 3: Verify
+Start the Preact dev server, inspect the console, and verify the verification session in your CleanTraffic dashboard.
+`;
+}
+
+export function generateSvelteAgentPrompt(options: AgentPromptOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `# Add CleanTraffic to Svelte / SvelteKit
+
+Integrate CleanTraffic visitor verification into this Svelte 4 / 5 or SvelteKit application using a dedicated reactive component and writable store.
+
+Configuration:
+- CleanTraffic API Key: ${apiKey}
+- Classification Agent URL: ${endpoint}/v1/protect.js
+
+## Step 1: Create the Component & Store
+Create \`src/lib/CleanTraffic.svelte\`:
+
+\`\`\`svelte
+<!-- src/lib/CleanTraffic.svelte (Svelte / SvelteKit) -->
+<script context="module">
+  import { writable } from 'svelte/store';
+  export const visitor = writable(null);
+  export const isReady = writable(false);
+</script>
+
+<script>
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    if (typeof window === 'undefined') return;
+
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    const interval = setInterval(() => {
+      if (window.CleanTraffic && typeof window.CleanTraffic.get === 'function') {
+        clearInterval(interval);
+        window.CleanTraffic.get().then((data) => {
+          visitor.set(data);
+          isReady.set(true);
+        });
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
+  });
+</script>
+\`\`\`
+
+## Step 2: Mount in Root Layout or Target Page
+In \`src/routes/+layout.svelte\` or your target component:
+
+\`\`\`svelte
+<script>
+  import CleanTraffic, { visitor, isReady } from '$lib/CleanTraffic.svelte';
+</script>
+
+<!-- Mount CleanTraffic Agent -->
+<CleanTraffic />
+
+{#if $isReady}
+  <p>Visitor ID: {$visitor?.visitorId}</p>
+  <p>Status: {$visitor?.isHuman ? 'Human Verified' : 'Restricted'}</p>
+{:else}
+  <p>Verifying security...</p>
+{/if}
+
+<slot />
+\`\`\`
+
+## Step 3: Verify
+Run \`npm run dev\` and open the site. Inspect that visitor entropy is collected and verification arrives in your live CleanTraffic dashboard.
 `;
 }

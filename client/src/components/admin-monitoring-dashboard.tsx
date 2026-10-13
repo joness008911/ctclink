@@ -262,7 +262,7 @@ export default function AdminMonitoringDashboard() {
                 RAM Cached
               </Badge>
             </div>
-            <p className="text-[11px] text-[#64748B]">Zero Firestore reads on repeat hits</p>
+            <p className="text-[11px] text-[#64748B]">Zero database reads on repeat hits</p>
           </CardContent>
         </Card>
 

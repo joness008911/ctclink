@@ -65,6 +65,8 @@ export const apiKeys = pgTable("api_keys", {
   callLimit: integer("call_limit").default(5000).notNull(),
   callCount: integer("call_count").default(0).notNull(),
   lastUsed: timestamp("last_used"),
+  domainFilterMode: text("domain_filter_mode").default("forbid_all_except"), // "forbid_all_except" | "allow_all_except"
+  allowedDomains: jsonb("allowed_domains").$type<string[]>(), // e.g. ["*.mysite.com", "mysite.com"]
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

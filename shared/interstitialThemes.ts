@@ -900,8 +900,23 @@ export function generatePhpIntegrationScript(options: {
   heading?: string;
   subnote?: string;
   enableLoading?: boolean;
+  phpHumanUrl?: string;
+  phpBotAction?: "403" | "404" | "redirect";
+  phpBotRedirectUrl?: string;
+  failMode?: "open" | "closed";
+  timeoutMs?: number;
 }): string {
-  const { apiKeyValue, effectiveEndpoint, theme, enableLoading = true } = options;
+  const { 
+    apiKeyValue, 
+    effectiveEndpoint, 
+    theme, 
+    enableLoading = true,
+    phpHumanUrl = "",
+    phpBotAction = "403",
+    phpBotRedirectUrl = "",
+    failMode = "open",
+    timeoutMs = 400
+  } = options;
   const keyStr = apiKeyValue || "ctc_your_api_key_here";
   const headingStr = (options.heading || "Verifying your connection...").replace(/"/g, '\\"');
   const subnoteStr = (options.subnote || "Please wait while we secure your session.").replace(/"/g, '\\"');
@@ -911,17 +926,16 @@ export function generatePhpIntegrationScript(options: {
 
   return `<?php
 /**
- * CleanTraffic - High-Performance Verification Interstitial & Traffic Security Script
+ * CleanTraffic - High-Performance Verification Gateway & Traffic Security Script
  * Auto-generated for API Key: ${keyStr}
  * Active Loading UI Theme: ${theme.name} (${theme.id})
  * 
- * ARCHITECTURE:
- * - Instant Interstitial UI: Zero blank white screens. Renders an immediate security splash in <15ms.
- * - Asynchronous Classification: Background check verifies IP, device, geo, proxy, and bot signatures.
- * - Anti-Bypass Protection: Destination URLs are never exposed until backend classification succeeds.
- * - Fail-Closed Security: Network or service timeouts gracefully display a retry UI; never fails open.
- * - Tenant Isolation: Strictly bound to your API key and chosen loading UI theme (${theme.name}).
- * - Compatible out-of-the-box with PHP 7.4 - 8.x, cPanel, Apache, Nginx, and WordPress.
+ * CORE ARCHITECTURE:
+ * - Instant Interstitial UI: Zero blank white screens. Renders immediate security splash in <15ms.
+ * - Ad Attribution Preservation: Automatically preserves fbclid, gclid, ttclid, msclkid, and UTM parameters.
+ * - Fail-Safe Resiliency: In Fail-Open mode, real buyers pass to your Human Target URL if network hiccups.
+ * - Dedicated Bot Mitigation: Route bots to 403, 404, or Decoy Fallback URL.
+ * - 1-Hour Session Caching: Verified human visitors skip repeated API calls during their browsing session.
  */
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -930,6 +944,28 @@ if (session_status() === PHP_SESSION_NONE) {
 
 $apiKey = '${keyStr}';
 $apiEndpoint = '${effectiveEndpoint}';
+$humanTargetUrl = '${(phpHumanUrl || "").replace(/'/g, "\\'")}';
+$botMitigationMode = '${phpBotAction}'; // '403', '404', or 'redirect'
+$botRedirectUrl = '${(phpBotRedirectUrl || "").replace(/'/g, "\\'")}';
+$failMode = '${failMode}'; // 'open' or 'closed'
+$timeoutMs = ${timeoutMs};
+
+// 0. Static Asset Bypass (Skip images, CSS, JS, fonts)
+$reqUri = $_SERVER['REQUEST_URI'] ?? '';
+$reqPath = parse_url($reqUri, PHP_URL_PATH) ?? '';
+if (preg_match('/\\.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff|woff2|ttf|eot|mp4|webm|pdf)$/i', $reqPath)) {
+    return false;
+}
+
+// 0b. Session Verification Cache (1-Hour In-Memory/Session bypass)
+if (isset($_SESSION['ctc_verified']) && $_SESSION['ctc_verified'] === 1 && !empty($_SESSION['ctc_destination'])) {
+    if (!empty($humanTargetUrl) && empty($_GET['ctc_verify'])) {
+        $q = $_SERVER['QUERY_STRING'] ?? '';
+        $dest = $humanTargetUrl . (!empty($q) ? (strpos($humanTargetUrl, '?') !== false ? '&' : '?') . $q : '');
+        header("Location: " . $dest, true, 302);
+        exit;
+    }
+}
 
 // 1. Extract Visitor IP with Cloudflare, Akamai, Fastly, AWS ALB & Reverse Proxy awareness
 $visitorIp = $_SERVER['HTTP_CF_CONNECTING_IP'] 
@@ -1063,31 +1099,43 @@ if ($isCrawlerOrReviewer && (!isset($_GET['ctc_verify']) || $_GET['ctc_verify'] 
         $cData = $crawlerRes['data'];
         $dest = $cData['destination'] ?? $cData['redirectUrl'] ?? $cData['url'] ?? '';
         $action = $cData['action'] ?? ($cData['isHuman'] ? 'redirect' : 'block');
+        $isHuman = !empty($cData['isHuman']) || $action === 'Allowed';
 
-        if ($action === '404' || $dest === '404') {
-            http_response_code(404);
-            header('Content-Type: text/plain; charset=utf-8');
-            echo "404 Not Found";
-            exit;
-        }
-        if ($action === '403' || $dest === '403' || (!$cData['isHuman'] && empty($dest))) {
+        if (!$isHuman) {
+            if ($botMitigationMode === '404' || $action === '404' || $dest === '404') {
+                http_response_code(404);
+                header('Content-Type: text/plain; charset=utf-8');
+                echo "404 Not Found";
+                exit;
+            }
+            if ($botMitigationMode === 'redirect' && !empty($botRedirectUrl)) {
+                $q = $_SERVER['QUERY_STRING'] ?? '';
+                $redirectDest = $botRedirectUrl . (!empty($q) ? (strpos($botRedirectUrl, '?') !== false ? '&' : '?') . $q : '');
+                header("Location: " . $redirectDest, true, 302);
+                exit;
+            }
             http_response_code(403);
             header('Content-Type: text/plain; charset=utf-8');
             echo "403 Forbidden";
             exit;
         }
-        if (!empty($dest)) {
+
+        $targetHuman = !empty($dest) && $dest !== '403' && $dest !== '404' ? $dest : $humanTargetUrl;
+        if (!empty($targetHuman)) {
             $q = $_SERVER['QUERY_STRING'] ?? '';
-            if (empty($q) && !empty($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '?') !== false) {
-                $q = substr($_SERVER['REQUEST_URI'], strpos($_SERVER['REQUEST_URI'], '?') + 1);
-            }
-            if (!empty($q)) {
-                $dest .= (strpos($dest, '?') !== false ? '&' : '?') . $q;
-            }
-            header("Location: " . $dest, true, 302);
+            $redirectDest = $targetHuman . (!empty($q) ? (strpos($targetHuman, '?') !== false ? '&' : '?') . $q : '');
+            header("Location: " . $redirectDest, true, 302);
             exit;
         }
     }
+
+    if ($failMode === 'open' && !empty($humanTargetUrl)) {
+        $q = $_SERVER['QUERY_STRING'] ?? '';
+        $redirectDest = $humanTargetUrl . (!empty($q) ? (strpos($humanTargetUrl, '?') !== false ? '&' : '?') . $q : '');
+        header("Location: " . $redirectDest, true, 302);
+        exit;
+    }
+
     http_response_code(403);
     echo "403 Forbidden";
     exit;
@@ -1135,13 +1183,26 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
 
     $apiRes = ctc_execute_classification($postData, $apiEndpoint, $apiKey);
     if (!$apiRes['success'] || !isset($apiRes['data'])) {
-        http_response_code($apiRes['httpCode'] ?: 503);
-        echo json_encode([
-            'status' => 'error',
-            'error' => $apiRes['error'] ?? 'Connection timeout during security verification.',
-            'fail_closed' => true
-        ]);
-        exit;
+        if ($failMode === 'open') {
+            $_SESSION['ctc_verified'] = 1;
+            $_SESSION['ctc_destination'] = $humanTargetUrl;
+            echo json_encode([
+                'status' => 'success',
+                'destination' => $humanTargetUrl,
+                'action' => 'redirect',
+                'visitorType' => 'Human'
+            ]);
+            exit;
+        } else {
+            if ($botMitigationMode === '404') {
+                echo json_encode(['status' => 'success', 'action' => '404', 'destination' => null, 'visitorType' => 'Bot']);
+            } elseif ($botMitigationMode === 'redirect' && !empty($botRedirectUrl)) {
+                echo json_encode(['status' => 'success', 'destination' => $botRedirectUrl, 'action' => 'redirect', 'visitorType' => 'Bot']);
+            } else {
+                echo json_encode(['status' => 'success', 'action' => '403', 'destination' => null, 'visitorType' => 'Bot']);
+            }
+            exit;
+        }
     }
 
     $result = $apiRes['data'];
@@ -1166,46 +1227,30 @@ if (isset($_GET['ctc_verify']) && $_GET['ctc_verify'] === '1') {
         exit;
     }
 
-    if (empty($destinationUrl)) {
-        http_response_code(500);
-        echo json_encode([
-            'status' => 'error',
-            'error' => 'No destination URL configured for this traffic classification.',
-            'fail_closed' => true
-        ]);
-        exit;
-    }
-
-    $is404 = ($destinationUrl === '404' || strpos($destinationUrl, '404') === 0);
-    $is403 = ($destinationUrl === '403' || strpos($destinationUrl, '403') === 0);
-
-    if ($is404) {
+    $isHuman = !empty($result['isHuman']) || ($result['action'] ?? '') === 'Allowed';
+    if ($isHuman) {
+        $destUrl = !empty($destinationUrl) && $destinationUrl !== '403' && $destinationUrl !== '404' ? $destinationUrl : $humanTargetUrl;
+        $_SESSION['ctc_verified'] = 1;
+        $_SESSION['ctc_destination'] = $destUrl;
         echo json_encode([
             'status' => 'success',
-            'action' => '404',
-            'destination' => null,
-            'visitorType' => $result['visitorType'] ?? 'Bot'
+            'destination' => $destUrl,
+            'action' => 'redirect',
+            'visitorType' => 'Human'
         ]);
         exit;
-    }
-
-    if ($is403) {
-        echo json_encode([
-            'status' => 'success',
-            'action' => '403',
-            'destination' => null,
-            'visitorType' => $result['visitorType'] ?? 'Bot'
-        ]);
+    } else {
+        if ($botMitigationMode === '404' || $destinationUrl === '404') {
+            echo json_encode(['status' => 'success', 'action' => '404', 'destination' => null, 'visitorType' => 'Bot']);
+            exit;
+        }
+        if ($botMitigationMode === 'redirect' && !empty($botRedirectUrl)) {
+            echo json_encode(['status' => 'success', 'destination' => $botRedirectUrl, 'action' => 'redirect', 'visitorType' => 'Bot']);
+            exit;
+        }
+        echo json_encode(['status' => 'success', 'action' => '403', 'destination' => null, 'visitorType' => 'Bot']);
         exit;
     }
-
-    echo json_encode([
-        'status' => 'success',
-        'destination' => $destinationUrl,
-        'action' => $result['action'] ?? 'redirect',
-        'visitorType' => $result['visitorType'] ?? 'Human'
-    ]);
-    exit;
 }
 
 // 3. Fast Interstitial Loading Screen (${theme.name} Theme)
@@ -1346,21 +1391,54 @@ ${renderedBody}
             }
           } catch(e) {}
           showError('Security check completed with unexpected response.');
-        } else {
-          try {
-            var errData = JSON.parse(xhr.responseText);
-            showError(errData.error || 'Verification check failed.');
-          } catch(e) {
-            showError('Verification check failed (HTTP ' + xhr.status + ').');
+        function handleFailFallback() {
+          var failMode = '${failMode}';
+          var fallbackHumanUrl = '${(phpHumanUrl || "").replace(/'/g, "\\'")}';
+          var botMitigation = '${phpBotAction}';
+          var botRedirectUrl = '${(phpBotRedirectUrl || "").replace(/'/g, "\\'")}';
+
+          if (failMode === 'open' && fallbackHumanUrl) {
+            var dest = fallbackHumanUrl;
+            var currentSearch = window.location.search;
+            if (currentSearch) {
+              var cleanSearch = currentSearch.replace(/[\?&](ctc_verify|ctc_tk)=[^&]*/gi, '').replace(/^[\?&]+/, '');
+              if (cleanSearch) dest += (dest.indexOf('?') !== -1 ? '&' : '?') + cleanSearch;
+            }
+            window.location.replace(dest);
+            return true;
           }
+          if (failMode === 'closed') {
+            if (botMitigation === '404') {
+              document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:60px 20px;text-align:center;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">404 Not Found</h1><p style="font-size:16px;color:#64748b;">The requested page could not be found on this server.</p></div>';
+              return true;
+            }
+            if (botMitigation === 'redirect' && botRedirectUrl) {
+              var dest = botRedirectUrl;
+              var currentSearch = window.location.search;
+              if (currentSearch) {
+                var cleanSearch = currentSearch.replace(/[\?&](ctc_verify|ctc_tk)=[^&]*/gi, '').replace(/^[\?&]+/, '');
+                if (cleanSearch) dest += (dest.indexOf('?') !== -1 ? '&' : '?') + cleanSearch;
+              }
+              window.location.replace(dest);
+              return true;
+            }
+            document.body.innerHTML = '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:60px 20px;text-align:center;color:#334155;"><h1 style="font-size:32px;margin-bottom:8px;">403 Forbidden</h1><p style="font-size:16px;color:#64748b;">Access to this resource is denied.</p></div>';
+            return true;
+          }
+          return false;
         }
+
+        if (handleFailFallback()) return;
+        showError('Verification check failed.');
       };
 
       xhr.onerror = function() {
+        if (handleFailFallback()) return;
         showError('Network error connecting to verification gateway.');
       };
 
       xhr.ontimeout = function() {
+        if (handleFailFallback()) return;
         showError('Verification timed out. Please refresh to retry.');
       };
 

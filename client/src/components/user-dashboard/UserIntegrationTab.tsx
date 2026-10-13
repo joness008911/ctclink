@@ -60,6 +60,12 @@ import {
   generateJsSnippet,
   generateWordPressPluginPhp,
   generateNextJsMiddleware,
+  generateReactHook,
+  generateNextJsScriptSnippet,
+  generateVueSnippet,
+  generateAngularSnippet,
+  generatePreactSnippet,
+  generateSvelteSnippet,
 } from "@shared/integrationGenerators";
 import {
   CloudflareLogo,
@@ -69,28 +75,36 @@ import {
   PhpLogo,
   ReactLogo,
   JavaScriptLogo,
-  GoogleTagManagerLogo,
   WebflowLogo,
   FramerLogo,
   WixLogo,
+  VueLogo,
+  AngularLogo,
+  SvelteLogo,
+  PreactLogo,
+  SquarespaceLogo,
 } from "./IntegrationLogos";
 import { AgentSetupView } from "./AgentSetupView";
 import { SyncedPolicyBanner } from "./SyncedPolicyBanner";
 import type { Ruleset } from "@shared/rulesEngine";
 
 export type IntegrationStack =
-  | "cloudflare"
+  | "javascript"
+  | "react"
   | "nextjs"
-  | "webflow"
-  | "framer"
-  | "shopify"
-  | "wordpress"
-  | "wix"
+  | "vue"
+  | "angular"
+  | "preact"
+  | "svelte"
+  | "cloudflare"
   | "php"
-  | "gtm"
-  | "react";
+  | "wordpress"
+  | "shopify"
+  | "wix"
+  | "webflow"
+  | "framer";
 
-export type IntegrationCategory = "all" | "nocode" | "builders" | "web" | "cms" | "integrations";
+export type IntegrationCategory = "all" | "frameworks" | "builders" | "server" | "cms";
 
 interface IntegrationItem {
   id: string;
@@ -151,7 +165,13 @@ export function UserIntegrationTab({
   const [wpSubTab, setWpSubTab] = useState<"zip" | "code">("zip");
   const [cfSubTab, setCfSubTab] = useState<"quickedit" | "wrangler">("quickedit");
   const [phpSubTab, setPhpSubTab] = useState<"code" | "themes">("code");
-  const [reactSubTab, setReactSubTab] = useState<"html" | "react">("html");
+  const [reactSubTab, setReactSubTab] = useState<"hook" | "usage">("hook");
+  const [nextSubTab, setNextSubTab] = useState<"script" | "middleware">("script");
+  const [vueSubTab, setVueSubTab] = useState<"composable" | "usage">("composable");
+  const [angularSubTab, setAngularSubTab] = useState<"service" | "usage">("service");
+  const [preactSubTab, setPreactSubTab] = useState<"hook" | "usage">("hook");
+  const [svelteSubTab, setSvelteSubTab] = useState<"component" | "usage">("component");
+  const [jsSubTab, setJsSubTab] = useState<"tag" | "api">("tag");
 
   // Segmented Setup Mode (Agent setup vs Manual setup - Fingerprint.com style)
   const [setupMode, setSetupMode] = useState<"agent" | "manual">("agent");
@@ -170,8 +190,11 @@ export function UserIntegrationTab({
   const [protectionFailMode, setProtectionFailMode] = useState<"open" | "closed">("open");
   const [protectionTimeoutMs, setProtectionTimeoutMs] = useState<number>(2000);
 
-  // PHP Interstitial & Theme customizer state (Interstitial Loading is the dedicated mode)
+  // Interstitial Loading state (applicable across client scripts and PHP)
   const [enableLoading, setEnableLoading] = useState<boolean>(true);
+  const [phpTargetUrl, setPhpTargetUrl] = useState<string>("https://yourdomain.com/landing-page");
+  const [phpBotAction, setPhpBotAction] = useState<"403" | "404" | "redirect">("403");
+  const [phpBotRedirectUrl, setPhpBotRedirectUrl] = useState<string>("https://google.com");
   const [selectedThemeCategory, setSelectedThemeCategory] = useState<string>("All");
   const [selectedThemeId, setSelectedThemeId] = useState<string>("clean_light");
   const [customHeading, setCustomHeading] = useState<string>("Verifying your connection...");
@@ -179,6 +202,7 @@ export function UserIntegrationTab({
   const [previewTheme, setPreviewTheme] = useState<InterstitialTheme | null>(null);
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [hasUnsavedThemeChanges, setHasUnsavedThemeChanges] = useState<boolean>(false);
+  const [isThemePickerOpen, setIsThemePickerOpen] = useState<boolean>(false);
 
   // Fetch available themes (admin pushed or default)
   const { data: themes = DEFAULT_INTERSTITIAL_THEMES } = useQuery<InterstitialTheme[]>({
@@ -193,7 +217,9 @@ export function UserIntegrationTab({
   // Sync state once user settings are loaded
   useEffect(() => {
     if (userSettings) {
-      setEnableLoading(true);
+      if (userSettings.humanUrl) {
+        setPhpTargetUrl(userSettings.humanUrl);
+      }
       if (userSettings.interstitialThemeId) {
         setSelectedThemeId(userSettings.interstitialThemeId);
       }
@@ -258,13 +284,18 @@ export function UserIntegrationTab({
     heading: customHeading,
     subnote: customSubnote,
     enableLoading,
+    phpHumanUrl: phpTargetUrl,
+    phpBotAction,
+    phpBotRedirectUrl,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
   });
 
-  // 2. Generate Cloudflare Edge Worker script (pure edge worker, transparent inline)
+  // 2. Generate Cloudflare Edge Worker script (pure edge worker)
   const cloudflareWorkerCode = generateCloudflareWorkerScript({
     apiKeyValue,
     effectiveEndpoint,
-    enableLoading: false,
+    enableLoading,
     humanTargetUrl: userSettings?.humanUrl || "",
     botTargetUrl: effectiveManualBotTarget,
     failMode: protectionFailMode,
@@ -275,32 +306,42 @@ export function UserIntegrationTab({
   const jsSnippet = generateJsSnippet({
     apiKeyValue,
     effectiveEndpoint,
-    enableLoading: false,
+    enableLoading,
     themeId: selectedThemeId,
-    heading: customHeading,
-    subnote: customSubnote,
-  });
-
-  // 4. Generate WordPress Plugin PHP (WordPress lifecycle transparent inline guard)
-  const wordPressPluginCode = generateWordPressPluginPhp({
-    apiKeyValue,
-    effectiveEndpoint,
-    enableLoading: false,
     heading: customHeading,
     subnote: customSubnote,
     failMode: protectionFailMode,
     timeoutMs: protectionTimeoutMs,
   });
 
-  // 5. Generate Next.js & Express Middleware (pure HTTP edge middleware, transparent inline)
+  // 4. Generate WordPress Plugin PHP (WordPress lifecycle guard)
+  const wordPressPluginCode = generateWordPressPluginPhp({
+    apiKeyValue,
+    effectiveEndpoint,
+    enableLoading,
+    heading: customHeading,
+    subnote: customSubnote,
+    failMode: protectionFailMode,
+    timeoutMs: protectionTimeoutMs,
+  });
+
+  // 5. Generate Next.js Edge Middleware (pure HTTP edge middleware)
   const nextJsMiddlewareCode = generateNextJsMiddleware({
     apiKeyValue,
     effectiveEndpoint,
-    enableLoading: false,
+    enableLoading,
     botTargetUrl: effectiveManualBotTarget,
     failMode: protectionFailMode,
     timeoutMs: protectionTimeoutMs,
   });
+
+  // 6. Framework Snippets
+  const reactHookCode = generateReactHook({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
+  const nextJsScriptCode = generateNextJsScriptSnippet({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
+  const vueComposableCode = generateVueSnippet({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
+  const angularServiceCode = generateAngularSnippet({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
+  const preactHookCode = generatePreactSnippet({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
+  const svelteComponentCode = generateSvelteSnippet({ apiKeyValue, effectiveEndpoint, enableLoading, failMode: protectionFailMode });
 
   // 6. Developer SDK Code (Fingerprint-Style Promise)
   const jsSdkCode = `<!-- CleanTraffic JavaScript Agent (Fingerprint-Style SDK) -->
@@ -581,60 +622,136 @@ export function UserIntegrationTab({
   };
 
   // Directory integration items definition (100% Websites, Landing Pages & Modern Hosts)
+  // Directory integration items definition (Organized by Frameworks, Builders, Server, CMS)
   const integrationDirectory: IntegrationItem[] = useMemo(() => [
+    // Web Frameworks & SDKs
     {
-      id: "cloudflare",
-      targetStack: "cloudflare",
-      name: "Cloudflare",
-      subtitle: "Universal Edge Worker",
-      category: "nocode",
-      badge: "Any Host",
-      badgeStyle: "bg-orange-50 text-orange-800 border-orange-200",
-      LogoComponent: CloudflareLogo,
-      summary: "Deploy in front of ANY host (Render, Railway, VPS, Vercel) to stop bots at 300+ Edge POPs before they reach your origin.",
-      tags: ["Cloudflare", "Edge", "Render", "Railway", "VPS", "No-Code", "Worker"],
+      id: "javascript",
+      targetStack: "javascript",
+      name: "JavaScript",
+      subtitle: "Identify visitors on your website",
+      category: "frameworks",
+      badge: "Universal",
+      badgeStyle: "bg-amber-50 text-amber-800 border-amber-200",
+      LogoComponent: JavaScriptLogo,
+      summary: "Drop-in universal JavaScript agent tag or async Promise SDK for any static website, landing page, or custom HTML app.",
+      tags: ["JavaScript", "HTML", "Vanilla", "Static", "Web", "SDK", "Script"],
+    },
+    {
+      id: "react",
+      targetStack: "react",
+      name: "React",
+      subtitle: "Identify visitors on your React website",
+      category: "frameworks",
+      badge: "Hook",
+      badgeStyle: "bg-cyan-50 text-cyan-800 border-cyan-200",
+      LogoComponent: ReactLogo,
+      summary: "Custom React hook (useCleanTraffic) for React 18 & 19 SPAs, Vite, Create React App, and component trees.",
+      tags: ["React", "Vite", "Hook", "SPA", "TypeScript", "Frontend"],
     },
     {
       id: "nextjs",
       targetStack: "nextjs",
       name: "Next.js",
-      subtitle: "Edge Middleware",
-      category: "web",
-      badge: "Edge",
+      subtitle: "Identify visitors on your Next.js website",
+      category: "frameworks",
+      badge: "Edge & Script",
       badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
       LogoComponent: NextJsLogo,
-      summary: "Edge and HTTP middleware for Next.js App & Pages Router on Vercel, Render, or Netlify.",
-      tags: ["Next.js", "Vercel", "Render", "Edge", "React", "Server"],
+      summary: "Full Next.js App & Pages Router integration with next/script client agent or zero-latency Edge Middleware.",
+      tags: ["Next.js", "Vercel", "Edge", "App Router", "SSR", "Server"],
     },
     {
-      id: "webflow",
-      targetStack: "webflow",
-      name: "Webflow",
-      subtitle: "Marketing Landing Pages",
-      category: "builders",
-      badge: "No-Code",
-      badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
-      LogoComponent: WebflowLogo,
-      summary: "1-Click Custom Code integration for high-converting Webflow landing pages and marketing sites.",
-      tags: ["Webflow", "Landing Page", "Custom Code", "No-Code", "Builders"],
+      id: "vue",
+      targetStack: "vue",
+      name: "Vue.js",
+      subtitle: "Identify visitors on your Vue.js website",
+      category: "frameworks",
+      badge: "Composable",
+      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
+      LogoComponent: VueLogo,
+      summary: "Vue 3 Composition API composable (useCleanTraffic) and Nuxt 3 plugin for visitor identification and bot filtering.",
+      tags: ["Vue", "Nuxt", "Vite", "Composable", "Frontend"],
     },
     {
-      id: "framer",
-      targetStack: "framer",
-      name: "Framer",
-      subtitle: "Modern Startup Websites",
-      category: "builders",
-      badge: "1-Click",
+      id: "angular",
+      targetStack: "angular",
+      name: "Angular",
+      subtitle: "Identify visitors on your Angular website",
+      category: "frameworks",
+      badge: "Service",
+      badgeStyle: "bg-red-50 text-red-800 border-red-200",
+      LogoComponent: AngularLogo,
+      summary: "Injectable CleanTrafficService with SSR guards for Angular 15, 16, 17, and 18 enterprise applications.",
+      tags: ["Angular", "TypeScript", "Service", "Enterprise", "SPA"],
+    },
+    {
+      id: "preact",
+      targetStack: "preact",
+      name: "Preact",
+      subtitle: "Identify visitors on your Preact website",
+      category: "frameworks",
+      badge: "Ultralight",
+      badgeStyle: "bg-purple-50 text-purple-800 border-purple-200",
+      LogoComponent: PreactLogo,
+      summary: "Ultra-lightweight Preact hook for 3KB bundle apps, Deno Fresh, or performant mobile web applications.",
+      tags: ["Preact", "Hook", "Mobile", "Fresh", "Lightweight"],
+    },
+    {
+      id: "svelte",
+      targetStack: "svelte",
+      name: "Svelte",
+      subtitle: "Identify visitors on your Svelte website",
+      category: "frameworks",
+      badge: "Component",
+      badgeStyle: "bg-orange-50 text-orange-800 border-orange-200",
+      LogoComponent: SvelteLogo,
+      summary: "Svelte 4 & Svelte 5 / SvelteKit component with writable store for reactive visitor tracking.",
+      tags: ["Svelte", "SvelteKit", "Store", "Reactive", "Vite"],
+    },
+    // Server & Edge Infrastructure
+    {
+      id: "cloudflare",
+      targetStack: "cloudflare",
+      name: "Cloudflare",
+      subtitle: "Universal Edge Worker",
+      category: "server",
+      badge: "Any Host",
+      badgeStyle: "bg-orange-50 text-orange-800 border-orange-200",
+      LogoComponent: CloudflareLogo,
+      summary: "Deploy in front of ANY host (Render, Railway, VPS, Vercel) to stop bots at 300+ Edge POPs before they reach origin.",
+      tags: ["Cloudflare", "Edge", "Render", "Railway", "VPS", "Worker"],
+    },
+    {
+      id: "php",
+      targetStack: "php",
+      name: "PHP",
+      subtitle: "index.php Shield & Gateway",
+      category: "server",
+      badge: "Redirect Safe",
+      badgeStyle: "bg-indigo-50 text-indigo-800 border-indigo-200",
+      LogoComponent: PhpLogo,
+      summary: "Standalone PHP shield for direct landing page funnels, cPanel, or CyberPanel with custom Redirect URL Deflection.",
+      tags: ["PHP", "cPanel", "CyberPanel", "Landing Page", "Funnels"],
+    },
+    // CMS & Platforms
+    {
+      id: "wordpress",
+      targetStack: "wordpress",
+      name: "WordPress",
+      subtitle: "WordPress & WooCommerce Plugin",
+      category: "cms",
+      badge: "1-Click Zip",
       badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
-      LogoComponent: FramerLogo,
-      summary: "Protect your Framer startup website or design portfolio from bot clicks and scrapers in <head>.",
-      tags: ["Framer", "Startup", "Landing Page", "Design", "Builders"],
+      LogoComponent: WordPressLogo,
+      summary: "Dedicated Must-Use plugin (.zip) for blogs, landing pages, and WooCommerce fraud prevention.",
+      tags: ["WordPress", "WooCommerce", "Plugin", "PHP", "CMS"],
     },
     {
       id: "shopify",
       targetStack: "shopify",
       name: "Shopify",
-      subtitle: "Storefront Web Agent",
+      subtitle: "Storefront Web Pixel & Liquid",
       category: "cms",
       badge: "Active",
       badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
@@ -642,65 +759,30 @@ export function UserIntegrationTab({
       summary: "Add CleanTraffic protection tag to your Shopify store in theme.liquid to protect checkout & ad spend.",
       tags: ["Shopify", "Store", "Liquid", "E-Commerce", "Web"],
     },
-    {
-      id: "wordpress",
-      targetStack: "wordpress",
-      name: "WordPress",
-      subtitle: "WordPress & WooCommerce",
-      category: "cms",
-      badge: "1-Click",
-      badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
-      LogoComponent: WordPressLogo,
-      summary: "Dedicated Must-Use plugin (.zip) for blogs, landing pages, and WooCommerce fraud prevention.",
-      tags: ["WordPress", "WooCommerce", "Plugin", "PHP", "CMS"],
-    },
+    // Site Builders & No-Code CMS
     {
       id: "wix",
       targetStack: "wix",
       name: "Wix & Squarespace",
-      subtitle: "Website Builders",
+      subtitle: "Website Builders Custom Code",
       category: "builders",
       badge: "No-Code",
       badgeStyle: "bg-slate-100 text-slate-800 border-slate-200",
       LogoComponent: WixLogo,
-      summary: "Add bot screening and hardware entropy visitor identification to Wix or Squarespace sites.",
+      summary: "Add bot screening and hardware entropy visitor identification to Wix or Squarespace sites via Custom Code.",
       tags: ["Wix", "Squarespace", "Website Builder", "Custom Code", "Builders"],
     },
     {
-      id: "php",
-      targetStack: "php",
-      name: "PHP",
-      subtitle: "index.php Shield",
-      category: "web",
-      badge: "Redirect Safe",
-      badgeStyle: "bg-purple-50 text-purple-800 border-purple-200",
-      LogoComponent: PhpLogo,
-      summary: "Standalone PHP shield for direct landing page funnels, cPanel, or CyberPanel with custom Redirect URL Deflection.",
-      tags: ["PHP", "cPanel", "CyberPanel", "Landing Page", "Funnels"],
-    },
-    {
-      id: "gtm",
-      targetStack: "gtm",
-      name: "Google Tag Manager",
-      subtitle: "Universal Web Tag",
-      category: "integrations",
-      badge: "Tag",
+      id: "webflow",
+      targetStack: "webflow",
+      name: "Webflow & Framer",
+      subtitle: "Landing Pages & Startup Sites",
+      category: "builders",
+      badge: "1-Click",
       badgeStyle: "bg-blue-50 text-blue-800 border-blue-200",
-      LogoComponent: GoogleTagManagerLogo,
-      summary: "Add CleanTraffic to any website using Google Tag Manager custom HTML tags with zero code changes.",
-      tags: ["GTM", "Google", "Tag", "Analytics", "Integrations"],
-    },
-    {
-      id: "react",
-      targetStack: "react",
-      name: "HTML / React",
-      subtitle: "Static Web Tag & SDK",
-      category: "web",
-      badge: "Universal",
-      badgeStyle: "bg-emerald-50 text-emerald-800 border-emerald-200",
-      LogoComponent: ReactLogo,
-      summary: "Universal client-side protection snippet and React SDK for static sites, SPAs, and custom landing pages on Render/Railway/S3.",
-      tags: ["React", "HTML", "SPA", "Static", "Render", "Railway", "SDK"],
+      LogoComponent: WebflowLogo,
+      summary: "1-Click Custom Code integration for high-converting Webflow and Framer landing pages and marketing sites.",
+      tags: ["Webflow", "Framer", "Landing Page", "Custom Code", "No-Code", "Builders"],
     },
   ], []);
 
@@ -708,11 +790,10 @@ export function UserIntegrationTab({
   const filteredIntegrations = useMemo(() => {
     return integrationDirectory.filter((item) => {
       let matchesCategory = true;
-      if (activeCategory === "nocode") matchesCategory = item.category === "nocode";
-      else if (activeCategory === "builders") matchesCategory = item.category === "builders" || item.category === "nocode";
-      else if (activeCategory === "web") matchesCategory = item.category === "web";
+      if (activeCategory === "frameworks") matchesCategory = item.category === "frameworks";
+      else if (activeCategory === "builders") matchesCategory = item.category === "builders";
+      else if (activeCategory === "server") matchesCategory = item.category === "server";
       else if (activeCategory === "cms") matchesCategory = item.category === "cms";
-      else if (activeCategory === "integrations") matchesCategory = item.category === "integrations";
 
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch = !q || 
@@ -735,6 +816,257 @@ export function UserIntegrationTab({
     if (!selectedIntegration) return null;
     return integrationDirectory.find(i => i.targetStack === selectedIntegration) || null;
   }, [selectedIntegration, integrationDirectory]);
+
+  // Reusable Interstitial Theme Customizer Content (shared between PHP sub-tab and universal Dialog)
+  const renderThemeCustomizerContent = () => (
+    <div className="space-y-5">
+      {/* Active Interstitial Loading Banner & Actions */}
+      <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <ShieldCheck className="h-4 w-4 text-[#0A5C48]" />
+              <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+                Interstitial Loading Verification Shield
+              </span>
+              <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                &lt;15ms Visual Splash
+              </Badge>
+            </div>
+            <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+              Choose your preferred loading style and custom headline/subnote below. Real human visitors see the high-speed security splash while background tokens and client entropy are verified.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPreviewTheme(activeTheme)}
+              className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold shadow-2xs"
+            >
+              <Eye className="h-3.5 w-3.5 text-[#0A5C48]" />
+              <span>Preview Current Theme</span>
+            </Button>
+
+            <Button
+              onClick={() => saveThemeMutation.mutate()}
+              disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
+              className={`h-8 px-4 text-xs font-bold rounded-lg transition-all shadow-2xs ${
+                hasUnsavedThemeChanges
+                  ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
+                  : "bg-slate-100 text-slate-400 cursor-not-allowed"
+              }`}
+            >
+              <Check className="h-3.5 w-3.5 mr-1" />
+              <span>{saveThemeMutation.isPending ? "Saving..." : "Save Preference"}</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Text Customization Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-[#E0E9E4]">
+          <div>
+            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
+              <span>Headline Text</span>
+              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{HEADING}}"}</span>
+            </Label>
+            <Input
+              value={customHeading}
+              onChange={(e) => handleHeadingChange(e.target.value)}
+              placeholder="Verifying your connection..."
+              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
+              <span>Subnote Text</span>
+              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{SUBNOTE}}"}</span>
+            </Label>
+            <Input
+              value={customSubnote}
+              onChange={(e) => handleSubnoteChange(e.target.value)}
+              placeholder="Please wait while we secure your session."
+              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Theme Selector Section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Palette className="h-4 w-4 text-[#0A5C48]" />
+            <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
+              Choose Loading Style ({filteredThemes.length})
+            </span>
+          </div>
+          <span className="text-xs text-[#64748B]">
+            Current: <strong className="text-[#0F172A]">{activeTheme.name}</strong>
+          </span>
+        </div>
+
+        {/* Category Filter Pills */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {["All", "Light", "Minimal", "Corporate", "Security", "Dark"].map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              onClick={() => setSelectedThemeCategory(cat)}
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                selectedThemeCategory.toLowerCase() === cat.toLowerCase()
+                  ? "bg-[#0A5C48] text-white shadow-xs"
+                  : "bg-white border border-slate-200 text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50"
+              }`}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        {/* Theme Cards Grid with Preview Mode */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
+          {filteredThemes.map((t) => {
+            const isSelected = selectedThemeId === t.id;
+            return (
+              <div
+                key={t.id}
+                className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+                  isSelected
+                    ? "border-[#0A5C48] bg-emerald-50/40 ring-1 ring-[#0A5C48] shadow-xs"
+                    : "bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-5 h-5 rounded-full border border-slate-300 shadow-2xs shrink-0 flex items-center justify-center"
+                        style={{ backgroundColor: t.previewBg }}
+                        title={`Accent: ${t.previewAccent}`}
+                      >
+                        <div
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: t.previewAccent }}
+                        />
+                      </div>
+                      <span className="text-xs font-bold text-[#0F172A] line-clamp-1">{t.name}</span>
+                    </div>
+                    {isSelected ? (
+                      <Badge className="bg-[#0A5C48] text-white text-[10px] font-bold px-1.5 py-0">
+                        Active
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200 font-medium px-1.5 py-0">
+                        {t.category}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-[#64748B] leading-relaxed line-clamp-2 min-h-[32px]">
+                    {t.description || "Fast security verification interstitial."}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 mt-3.5 pt-2.5 border-t border-slate-100">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewTheme(t);
+                    }}
+                    className="h-7 text-xs border-slate-200 hover:bg-slate-100 text-slate-700 flex-1 gap-1 font-semibold rounded-md"
+                  >
+                    <Eye className="h-3 w-3 text-slate-500" />
+                    <span>Preview</span>
+                  </Button>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => handleSelectTheme(t.id)}
+                    className={`h-7 text-xs flex-1 gap-1 font-bold rounded-md ${
+                      isSelected
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-default"
+                        : "bg-white border border-[#0A5C48] text-[#0A5C48] hover:bg-emerald-50"
+                    }`}
+                  >
+                    {isSelected ? <Check className="h-3 w-3" /> : null}
+                    <span>{isSelected ? "Selected" : "Choose Style"}</span>
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Reusable Interstitial Banner for every integration page
+  const renderInterstitialControlBanner = (platformName: string) => (
+    <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="flex items-center gap-3">
+        <div
+          className="w-8 h-8 rounded-lg border border-slate-300 shadow-2xs shrink-0 flex items-center justify-center cursor-pointer hover:scale-105 transition-transform"
+          style={{ backgroundColor: activeTheme.previewBg }}
+          title={`Active Style: ${activeTheme.name} (Accent: ${activeTheme.previewAccent})`}
+          onClick={() => setPreviewTheme(activeTheme)}
+        >
+          <div
+            className="w-3.5 h-3.5 rounded-full"
+            style={{ backgroundColor: activeTheme.previewAccent }}
+          />
+        </div>
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-bold text-[#0F172A]">
+              Interstitial Loading Verification
+            </span>
+            <Badge
+              className={
+                enableLoading
+                  ? "bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold"
+                  : "bg-slate-100 text-slate-600 border-slate-200 text-[10px] font-medium"
+              }
+            >
+              {enableLoading ? `Enabled • ${activeTheme.name}` : "Disabled (Passive / Transparent)"}
+            </Badge>
+          </div>
+          <p className="text-[11px] text-[#64748B] mt-0.5">
+            {enableLoading
+              ? `Visitors to your ${platformName} site see the "${activeTheme.name}" visual verification splash while tokens are verified in <15ms.`
+              : `Passive background verification on ${platformName}. Real humans experience zero loading delay.`}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setPreviewTheme(activeTheme)}
+          className="h-7 text-xs border-slate-200 bg-white hover:bg-slate-100 text-slate-700 gap-1.5 rounded-md font-semibold shadow-2xs"
+        >
+          <Eye className="h-3 w-3 text-slate-500" />
+          <span>Preview Screen</span>
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setIsThemePickerOpen(true)}
+          className="h-7 text-xs border-emerald-300 bg-emerald-50/70 text-[#0A5C48] hover:bg-emerald-100/70 gap-1.5 rounded-md font-bold shadow-2xs"
+        >
+          <Palette className="h-3 w-3 text-[#0A5C48]" />
+          <span>Choose Style & Texts</span>
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -828,7 +1160,7 @@ export function UserIntegrationTab({
                         ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
                         : "text-slate-600 hover:text-slate-900"
                     }`}
-                    title="Fail-Open: High availability"
+                    title="Fail-Open: High availability (allow genuine visitors on API error/timeout)"
                   >
                     Fail-Open
                   </button>
@@ -840,10 +1172,65 @@ export function UserIntegrationTab({
                         ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
                         : "text-slate-600 hover:text-slate-900"
                     }`}
-                    title="Fail-Closed: Maximum security"
+                    title="Fail-Closed: Maximum security (deflects with HTTP status on error)"
                   >
                     Fail-Closed
                   </button>
+                </div>
+
+                {/* Loading Screen Toggle */}
+                <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-lg p-1">
+                  <span className="text-[10px] font-bold text-[#64748B] uppercase px-1">Loading Screen:</span>
+                  <button
+                    type="button"
+                    onClick={() => setEnableLoading(true)}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${
+                      enableLoading
+                        ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    title="Display verifying security progress bar overlay"
+                  >
+                    Enabled
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEnableLoading(false)}
+                    className={`px-2 py-1 rounded text-xs transition-colors ${
+                      !enableLoading
+                        ? "bg-white text-[#0A5C48] shadow-2xs border border-emerald-200 font-bold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                    title="Passive background verification (Zero visual delay)"
+                  >
+                    Disabled
+                  </button>
+                </div>
+
+                {/* Choose Style & Preview Action Buttons */}
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsThemePickerOpen(true)}
+                    className="h-8 text-xs border-emerald-300 bg-emerald-50/70 hover:bg-emerald-100/70 text-[#0A5C48] gap-1 font-bold rounded-lg shadow-2xs"
+                    title="Choose Interstitial Loading Style & Texts"
+                  >
+                    <Palette className="h-3.5 w-3.5 text-[#0A5C48]" />
+                    <span>Style: {activeTheme.name}</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPreviewTheme(activeTheme)}
+                    className="h-8 px-2 text-xs text-slate-600 hover:text-slate-900 font-semibold gap-1"
+                    title="Instant Live Preview of Active Interstitial Theme"
+                  >
+                    <Eye className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Preview</span>
+                  </Button>
                 </div>
 
                 {/* Timeout */}
@@ -930,6 +1317,7 @@ export function UserIntegrationTab({
                     serverBotUrl={userSettings?.botUrl}
                     onNavigateToLiveFeed={handleNavigateToLiveFeed}
                     onNavigateToRules={handleNavigateToRules}
+                    onSelectStack={(stack) => setSelectedIntegration(stack as IntegrationStack)}
                   />
                 </div>
               ) : (
@@ -977,6 +1365,8 @@ export function UserIntegrationTab({
                       Cloudflare worker runs directly at Cloudflare&apos;s edge locations closest to your visitors. Legitimate human visitors pass directly through to your website with zero visual delay, while bots and unauthorized traffic receive authentic 403 or 404 responses.
                     </p>
                   </div>
+
+                  {renderInterstitialControlBanner("Cloudflare Edge")}
 
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
@@ -1135,6 +1525,8 @@ export function UserIntegrationTab({
                       Add our snippet to each page you want to protect. The script runs full WebGL GPU and 2D Canvas entropy to protect your landing page in place, deflecting bots with authentic 404 or 403 errors.
                     </p>
                   </div>
+
+                  {renderInterstitialControlBanner("Shopify")}
 
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto">
@@ -1367,6 +1759,8 @@ export function UserIntegrationTab({
                     </p>
                   </div>
 
+                  {renderInterstitialControlBanner("WordPress")}
+
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                     <button
@@ -1520,7 +1914,78 @@ export function UserIntegrationTab({
                   </div>
 
                   {phpSubTab === "code" && (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
+                      {renderInterstitialControlBanner("PHP Gateway")}
+                      {/* PHP Gateway Funnel Configuration */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3.5">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <SlidersHorizontal className="h-3.5 w-3.5 text-[#0A5C48]" />
+                            <span>PHP Gateway Funnel Configuration</span>
+                          </h4>
+                          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded border border-emerald-200">
+                            Preserves fbclid, gclid, utm_*
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {/* Legitimate Buyer Destination */}
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-semibold text-slate-700">
+                              Allowed Buyer Destination (Human Target URL)
+                            </label>
+                            <Input
+                              value={phpTargetUrl}
+                              onChange={(e) => setPhpTargetUrl(e.target.value)}
+                              placeholder="https://yourdomain.com/landing-page"
+                              className="bg-white border-slate-200 text-xs font-mono h-8"
+                            />
+                            <p className="text-[10px] text-slate-500">
+                              Genuine human buyers will be forwarded here with all query parameters intact.
+                            </p>
+                          </div>
+
+                          {/* Bot Mitigation Action */}
+                          <div className="space-y-1">
+                            <label className="text-[11px] font-semibold text-slate-700">
+                              Bot Mitigation Action
+                            </label>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              {[
+                                { id: "403", label: "403 Forbidden" },
+                                { id: "404", label: "404 Not Found" },
+                                { id: "redirect", label: "Decoy URL" },
+                              ].map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => setPhpBotAction(opt.id as any)}
+                                  className={`px-2 py-1.5 rounded-lg text-xs font-medium border text-center transition-all ${
+                                    phpBotAction === opt.id
+                                      ? "bg-white border-[#0A5C48] text-[#0A5C48] font-bold shadow-2xs"
+                                      : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                            {phpBotAction === "redirect" ? (
+                              <Input
+                                value={phpBotRedirectUrl}
+                                onChange={(e) => setPhpBotRedirectUrl(e.target.value)}
+                                placeholder="https://google.com or decoy page"
+                                className="bg-white border-slate-200 text-xs font-mono h-8 mt-1.5"
+                              />
+                            ) : (
+                              <p className="text-[10px] text-slate-500">
+                                Bots and scrapers receive this HTTP response directly in-place.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold text-[#0F172A]">index.php Source</span>
                         <Button
@@ -1541,192 +2006,7 @@ export function UserIntegrationTab({
                     </div>
                   )}
 
-                  {phpSubTab === "themes" && (
-                    <div className="space-y-5">
-                      {/* Active Interstitial Loading Banner & Actions */}
-                      <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                          <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <ShieldCheck className="h-4 w-4 text-[#0A5C48]" />
-                              <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
-                                Interstitial Loading Verification Shield
-                              </span>
-                              <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
-                                &lt;15ms Visual Splash
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                              Preview and choose your preferred loading style below. Real human visitors see the high-speed security splash while background tokens are verified.
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setPreviewTheme(activeTheme)}
-                              className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold shadow-2xs"
-                            >
-                              <Eye className="h-3.5 w-3.5 text-[#0A5C48]" />
-                              <span>Preview Current Theme</span>
-                            </Button>
-
-                            <Button
-                              onClick={() => saveThemeMutation.mutate()}
-                              disabled={saveThemeMutation.isPending || !hasUnsavedThemeChanges}
-                              className={`h-8 px-4 text-xs font-bold rounded-lg transition-all shadow-2xs ${
-                                hasUnsavedThemeChanges
-                                  ? "bg-[#0A5C48] hover:bg-[#07382D] text-white"
-                                  : "bg-slate-100 text-slate-400 cursor-not-allowed"
-                              }`}
-                            >
-                              <Check className="h-3.5 w-3.5 mr-1" />
-                              <span>{saveThemeMutation.isPending ? "Saving..." : "Save Preference"}</span>
-                            </Button>
-                          </div>
-                        </div>
-
-                        {/* Text Customization Row */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-3 border-t border-[#E0E9E4]">
-                          <div>
-                            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
-                              <span>Headline Text</span>
-                              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{HEADING}}"}</span>
-                            </Label>
-                            <Input
-                              value={customHeading}
-                              onChange={(e) => handleHeadingChange(e.target.value)}
-                              placeholder="Verifying your connection..."
-                              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs font-bold text-[#0F172A] flex items-center justify-between">
-                              <span>Subnote Text</span>
-                              <span className="text-[10px] text-[#64748B] font-normal">Replaces {"{{SUBNOTE}}"}</span>
-                            </Label>
-                            <Input
-                              value={customSubnote}
-                              onChange={(e) => handleSubnoteChange(e.target.value)}
-                              placeholder="Please wait while we secure your session."
-                              className="bg-white text-xs h-9 mt-1 border-slate-200 focus-visible:ring-[#0A5C48]"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Theme Selector Section */}
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between flex-wrap gap-2">
-                          <div className="flex items-center gap-2">
-                            <Palette className="h-4 w-4 text-[#0A5C48]" />
-                            <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider">
-                              Choose Loading Style ({filteredThemes.length})
-                            </span>
-                          </div>
-                          <span className="text-xs text-[#64748B]">
-                            Current: <strong className="text-[#0F172A]">{activeTheme.name}</strong>
-                          </span>
-                        </div>
-
-                        {/* Category Filter Pills */}
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {["All", "Light", "Minimal", "Corporate", "Security", "Dark"].map((cat) => (
-                            <button
-                              key={cat}
-                              type="button"
-                              onClick={() => setSelectedThemeCategory(cat)}
-                              className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                                selectedThemeCategory.toLowerCase() === cat.toLowerCase()
-                                  ? "bg-[#0A5C48] text-white shadow-xs"
-                                  : "bg-white border border-slate-200 text-[#64748B] hover:text-[#0F172A] hover:bg-slate-50"
-                              }`}
-                            >
-                              {cat}
-                            </button>
-                          ))}
-                        </div>
-
-                        {/* Theme Cards Grid with Preview Mode */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
-                          {filteredThemes.map((t) => {
-                            const isSelected = selectedThemeId === t.id;
-                            return (
-                              <div
-                                key={t.id}
-                                className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
-                                  isSelected
-                                    ? "border-[#0A5C48] bg-emerald-50/40 ring-1 ring-[#0A5C48] shadow-xs"
-                                    : "bg-white border-slate-200/90 hover:border-slate-300 hover:shadow-xs"
-                                }`}
-                              >
-                                <div>
-                                  <div className="flex items-center justify-between gap-2 mb-2">
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className="w-5 h-5 rounded-full border border-slate-300 shadow-2xs shrink-0 flex items-center justify-center"
-                                        style={{ backgroundColor: t.previewBg }}
-                                        title={`Accent: ${t.previewAccent}`}
-                                      >
-                                        <div
-                                          className="w-2.5 h-2.5 rounded-full"
-                                          style={{ backgroundColor: t.previewAccent }}
-                                        />
-                                      </div>
-                                      <span className="text-xs font-bold text-[#0F172A] line-clamp-1">{t.name}</span>
-                                    </div>
-                                    {isSelected ? (
-                                      <Badge className="bg-[#0A5C48] text-white text-[10px] font-bold px-1.5 py-0">
-                                        Active
-                                      </Badge>
-                                    ) : (
-                                      <Badge variant="outline" className="text-[10px] text-slate-500 border-slate-200 font-medium px-1.5 py-0">
-                                        {t.category}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <p className="text-[11px] text-[#64748B] leading-relaxed line-clamp-2 min-h-[32px]">
-                                    {t.description || "Fast security verification interstitial."}
-                                  </p>
-                                </div>
-
-                                <div className="flex items-center gap-2 mt-3.5 pt-2.5 border-t border-slate-100">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setPreviewTheme(t);
-                                    }}
-                                    className="h-7 text-xs border-slate-200 hover:bg-slate-100 text-slate-700 flex-1 gap-1 font-semibold rounded-md"
-                                  >
-                                    <Eye className="h-3 w-3 text-slate-500" />
-                                    <span>Preview</span>
-                                  </Button>
-
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => handleSelectTheme(t.id)}
-                                    className={`h-7 text-xs flex-1 gap-1 font-bold rounded-md ${
-                                      isSelected
-                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-default"
-                                        : "bg-white border border-[#0A5C48] text-[#0A5C48] hover:bg-emerald-50"
-                                    }`}
-                                  >
-                                    {isSelected ? <Check className="h-3 w-3" /> : null}
-                                    <span>{isSelected ? "Selected" : "Choose Style"}</span>
-                                  </Button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  {phpSubTab === "themes" && renderThemeCustomizerContent()}
 
                   {/* Deployment Guide */}
                   <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2 text-xs">
@@ -1740,7 +2020,7 @@ export function UserIntegrationTab({
                 </div>
               )}
 
-              {/* 5. NEXT.JS EDGE MIDDLEWARE DETAIL PAGE */}
+              {/* 5. NEXT.JS INTEGRATION DETAIL PAGE */}
               {selectedIntegration === "nextjs" && (
                 <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
                   {/* Header Title */}
@@ -1751,27 +2031,45 @@ export function UserIntegrationTab({
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h2 className="text-xl font-bold text-[#0F172A]">Next.js Edge Middleware</h2>
+                          <h2 className="text-xl font-bold text-[#0F172A]">Next.js Integration</h2>
                           <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
-                            Edge Native
+                            App &amp; Pages Router
                           </Badge>
                           <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
                             Next.js 13/14/15
                           </Badge>
                         </div>
                         <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                          Zero-latency Edge Middleware for Next.js App &amp; Pages Router on Vercel, Render, Netlify, or custom VPS. Intercepts bots at the edge before pages or signup/login routes render.
+                          Identify visitors on your Next.js website via client-side <code className="font-mono text-[#0A5C48]">next/script</code> or protect full routes with zero-latency Edge Middleware.
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Overview Text */}
-                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
-                    <p className="text-xs text-[#64748B] leading-relaxed">
-                      Next.js Edge Middleware executes on every incoming visitor request before pages, static bundles, or server actions run. Legitimate visitors pass through without any redirect or visual delay, while bots and scrapers are cut off at the edge with HTTP 403 Forbidden or 404 Stealth Drop.
-                    </p>
+                  {renderInterstitialControlBanner("Next.js")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setNextSubTab("script")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        nextSubTab === "script"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Client Script (app/layout.tsx)
+                    </button>
+                    <button
+                      onClick={() => setNextSubTab("middleware")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        nextSubTab === "middleware"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Edge Middleware (middleware.ts)
+                    </button>
                   </div>
 
                   {/* Code Box */}
@@ -1780,52 +2078,58 @@ export function UserIntegrationTab({
                       <div className="flex items-center gap-2">
                         <FileCode className="h-4 w-4 text-[#0F172A]" />
                         <span className="text-xs font-bold text-[#0F172A]">
-                          middleware.ts (Root of Next.js Project)
+                          {nextSubTab === "script" ? "app/layout.tsx (or pages/_app.tsx)" : "middleware.ts (Root of Next.js Project)"}
                         </span>
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleCopyCurrentCode(nextJsMiddlewareCode, "Next.js Middleware")}
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            nextSubTab === "script" ? nextJsScriptCode : nextJsMiddlewareCode,
+                            nextSubTab === "script" ? "Next.js Script" : "Next.js Middleware"
+                          )
+                        }
                         className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
                       >
                         {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                        <span>{copiedCode ? "Copied" : "Copy Middleware Code"}</span>
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
                       </Button>
                     </div>
                     <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
                       <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
-                        {nextJsMiddlewareCode}
+                        {nextSubTab === "script" ? nextJsScriptCode : nextJsMiddlewareCode}
                       </pre>
                     </div>
                   </div>
 
-                  {/* Drop-in Setup Instructions */}
+                  {/* Setup Instructions */}
                   <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
                     <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
-                      Quick Drop-in Setup (Zero External Dependencies):
+                      {nextSubTab === "script" ? "Client Script Setup:" : "Edge Middleware Setup:"}
                     </span>
-                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
-                      <li>
-                        Create or open <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code> in the root folder of your Next.js project (next to <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">package.json</code> or inside <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/</code>).
-                      </li>
-                      <li>
-                        Paste the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code>.
-                      </li>
-                      <li>
-                        Deploy to Vercel, Render, Netlify, or your host. Next.js runs this middleware automatically on every incoming request at the edge.
-                      </li>
-                    </ol>
+                    {nextSubTab === "script" ? (
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>Open your root layout file <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">app/layout.tsx</code> (App Router) or <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">pages/_app.tsx</code> (Pages Router).</li>
+                        <li>Import <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">Script from &apos;next/script&apos;</code> and place the tag inside your layout body.</li>
+                        <li>The script loads asynchronously after interactive state and begins collecting visitor signals.</li>
+                      </ol>
+                    ) : (
+                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                        <li>Create or open <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code> in the root folder of your Next.js project.</li>
+                        <li>Paste the middleware code into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">middleware.ts</code>.</li>
+                        <li>Deploy to Vercel, Render, Netlify, or custom VPS. Every incoming request is screened at the edge before route handlers execute.</li>
+                      </ol>
+                    )}
                   </div>
 
                   {/* Benefits */}
                   <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Edge Protection Benefits</h3>
+                    <h3 className="text-sm font-bold text-[#0F172A]">Next.js Benefits</h3>
                     <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
-                      <li><strong>Zero Backend Complexity:</strong> No npm packages or database hooks required. Uses native Next.js Edge Runtime <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">NextResponse</code>.</li>
-                      <li><strong>Protects Before Page Render:</strong> Bots are intercepted before they touch sign up forms, login pages, or expensive SSR routes.</li>
-                      <li><strong>No Redirects for Real Users:</strong> Legitimate visitors stay on the exact URL with 0ms visual delay.</li>
-                      <li><strong>Instant Deflection:</strong> Configurable 403 Forbidden or 404 Stealth Drop cuts off automated web scrapers.</li>
+                      <li><strong>Dual Layer Architecture:</strong> Run client-side visitor identification or edge route interception seamlessly.</li>
+                      <li><strong>Zero Cold-Start Lag:</strong> Edge Middleware executes in sub-millisecond edge workers before SSR renders.</li>
+                      <li><strong>Next.js 13, 14 &amp; 15 Ready:</strong> Fully compliant with Turbopack, App Router Server Components, and traditional Pages Router.</li>
                     </ul>
                   </div>
                 </div>
@@ -1864,6 +2168,8 @@ export function UserIntegrationTab({
                       CleanTraffic screens visitors on your Webflow landing pages using client-side hardware entropy and browser integrity verification. It stops automated bot clicks from draining your Google &amp; Meta ad spend and blocks spam submissions on Webflow forms without any code changes or visual changes to your layout.
                     </p>
                   </div>
+
+                  {renderInterstitialControlBanner("Webflow")}
 
                   {/* Code Box */}
                   <div className="space-y-3">
@@ -1964,6 +2270,8 @@ export function UserIntegrationTab({
                     </p>
                   </div>
 
+                  {renderInterstitialControlBanner("Framer")}
+
                   {/* Code Box */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -2063,6 +2371,8 @@ export function UserIntegrationTab({
                     </p>
                   </div>
 
+                  {renderInterstitialControlBanner("Wix")}
+
                   {/* Code Box */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -2133,160 +2443,56 @@ export function UserIntegrationTab({
                 </div>
               )}
 
-              {/* 9. GOOGLE TAG MANAGER (GTM) DETAIL PAGE */}
-              {selectedIntegration === "gtm" && (
+
+              {/* 10. JAVASCRIPT VANILLA / HTML DETAIL PAGE */}
+              {selectedIntegration === "javascript" && (
                 <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
                   {/* Header Title */}
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3.5">
                       <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
-                        <GoogleTagManagerLogo className="h-7 w-7" />
+                        <JavaScriptLogo className="h-7 w-7" />
                       </div>
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h2 className="text-xl font-bold text-[#0F172A]">Google Tag Manager (GTM)</h2>
-                          <Badge className="bg-blue-50 text-blue-800 border-blue-200 text-[10px] font-bold">
-                            Tag Manager
-                          </Badge>
-                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
-                            Zero Code Deploy
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                          Deploy CleanTraffic protection across any website, landing page, or multi-domain marketing campaign via GTM with zero code deployments.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Overview Text */}
-                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
-                    <p className="text-xs text-[#64748B] leading-relaxed">
-                      If your website or landing pages already use Google Tag Manager, you can roll out CleanTraffic in under 60 seconds without redeploying your site codebase or waiting for developers.
-                    </p>
-                  </div>
-
-                  {/* Code Box */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <FileCode className="h-4 w-4 text-[#246FDB]" />
-                        <span className="text-xs font-bold text-[#0F172A]">
-                          Custom HTML Tag (GTM Container)
-                        </span>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          handleCopyCurrentCode(
-                            `<!-- CleanTraffic Universal Protection Tag for GTM -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`,
-                            "GTM Tag"
-                          )
-                        }
-                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
-                      >
-                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                        <span>{copiedCode ? "Copied" : "Copy GTM Tag"}</span>
-                      </Button>
-                    </div>
-                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
-                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre">
-{`<!-- CleanTraffic Universal Protection Tag for GTM -->
-<script src="${effectiveEndpoint}/v1/protect.js" 
-  data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
-  async>
-</script>`}
-                      </pre>
-                    </div>
-                  </div>
-
-                  {/* 3-Step Setup Instructions */}
-                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
-                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
-                      3-Step GTM Deployment:
-                    </span>
-                    <ol className="list-decimal pl-4 space-y-2 text-[#64748B]">
-                      <li>
-                        In your <strong>Google Tag Manager Workspace</strong>, click <strong>Tags</strong> &gt; <strong>New</strong>.
-                      </li>
-                      <li>
-                        Click <strong>Tag Configuration</strong>, choose <strong>Custom HTML</strong>, and paste the code above.
-                      </li>
-                      <li>
-                        Click <strong>Triggering</strong>, choose <strong>Initialization - All Pages</strong> (or <strong>All Pages</strong>), save the tag, and click <strong>Submit</strong> to publish your container.
-                      </li>
-                    </ol>
-                  </div>
-
-                  {/* Benefits */}
-                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">GTM Benefits</h3>
-                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
-                      <li><strong>Instant Multi-Domain Rollout:</strong> One tag protects all subdomains and marketing properties connected to your container.</li>
-                      <li><strong>No Engineering Deployments:</strong> Marketing teams can deploy and configure protection immediately.</li>
-                      <li><strong>Early Triggering:</strong> Initializing on &apos;Initialization - All Pages&apos; captures visitor entropy at the earliest possible stage.</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-
-              {/* 10. HTML / REACT STATIC SITES & SDK DETAIL PAGE */}
-              {selectedIntegration === "react" && (
-                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
-                  {/* Header Title */}
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3.5">
-                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
-                        <ReactLogo className="h-7 w-7" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h2 className="text-xl font-bold text-[#0F172A]">HTML &amp; React Static Sites &amp; SDK</h2>
-                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
-                            Universal Web
+                          <h2 className="text-xl font-bold text-[#0F172A]">JavaScript Universal Web Agent</h2>
+                          <Badge className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] font-bold">
+                            Universal Script
                           </Badge>
                           <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
-                            Render / Railway / S3 / Vite
+                            Any HTML / Website
                           </Badge>
                         </div>
                         <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
-                          Universal client-side protection snippet and React hook for static websites, single page applications (SPAs), and custom landing pages hosted on Render, Railway, Vercel, Netlify, or AWS S3.
+                          Identify visitors on your website with a single asynchronous JavaScript tag. Works with any static website, custom landing page, or frontend application.
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Overview Text */}
-                  <div className="space-y-2 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Overview</h3>
-                    <p className="text-xs text-[#64748B] leading-relaxed">
-                      Whether you deploy static HTML landing pages or a modern React / Vite SPA on Render or Railway, CleanTraffic provides a drop-in client tag or a React hook. It performs 100+ hardware entropy signals in the browser, identifying bots before they interact with signup buttons, login forms, or purchase flows.
-                    </p>
-                  </div>
+                  {renderInterstitialControlBanner("JavaScript")}
 
                   {/* Subtabs Switcher */}
                   <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
                     <button
-                      onClick={() => setReactSubTab("html")}
+                      onClick={() => setJsSubTab("tag")}
                       className={`text-xs font-bold pb-1.5 transition-colors relative ${
-                        reactSubTab === "html"
+                        jsSubTab === "tag"
                           ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
                           : "text-[#64748B] hover:text-[#0F172A]"
                       }`}
                     >
-                      Static HTML Tag (&lt;head&gt;)
+                      Script Tag (&lt;head&gt;)
                     </button>
                     <button
-                      onClick={() => setReactSubTab("react")}
+                      onClick={() => setJsSubTab("api")}
                       className={`text-xs font-bold pb-1.5 transition-colors relative ${
-                        reactSubTab === "react"
+                        jsSubTab === "api"
                           ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
                           : "text-[#64748B] hover:text-[#0F172A]"
                       }`}
                     >
-                      React Hook (useCleanTraffic)
+                      Async API (CleanTraffic.get)
                     </button>
                   </div>
 
@@ -2294,9 +2500,9 @@ export function UserIntegrationTab({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <FileCode className="h-4 w-4 text-[#00D8FF]" />
+                        <FileCode className="h-4 w-4 text-[#F7DF1E]" />
                         <span className="text-xs font-bold text-[#0F172A]">
-                          {reactSubTab === "html" ? "index.html (<head> tag)" : "hooks/useCleanTraffic.ts"}
+                          {jsSubTab === "tag" ? "index.html (<head> tag)" : "Custom Script Usage"}
                         </span>
                       </div>
                       <Button
@@ -2304,10 +2510,10 @@ export function UserIntegrationTab({
                         size="sm"
                         onClick={() =>
                           handleCopyCurrentCode(
-                            reactSubTab === "html"
+                            jsSubTab === "tag"
                               ? `<!-- CleanTraffic Universal Web Protection Tag -->\n<script src="${effectiveEndpoint}/v1/protect.js" data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" async></script>`
-                              : `import { useEffect, useState } from "react";\n\nexport function useCleanTraffic() {\n  const [visitor, setVisitor] = useState(null);\n\n  useEffect(() => {\n    if (!document.getElementById("cleantraffic-agent")) {\n      const script = document.createElement("script");\n      script.id = "cleantraffic-agent";\n      script.src = "${effectiveEndpoint}/v1/protect.js";\n      script.setAttribute("data-api-key", "${apiKeyValue || "ctc_live_your_api_key_here"}");\n      script.async = true;\n      document.head.appendChild(script);\n    }\n\n    const check = setInterval(() => {\n      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {\n        clearInterval(check);\n        (window as any).CleanTraffic.get().then((res: any) => setVisitor(res));\n      }\n    }, 50);\n\n    return () => clearInterval(check);\n  }, []);\n\n  return visitor;\n}`,
-                            reactSubTab === "html" ? "HTML Tag" : "React Hook"
+                              : jsSdkCode,
+                            jsSubTab === "tag" ? "JavaScript Tag" : "Async API Script"
                           )
                         }
                         className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
@@ -2318,83 +2524,660 @@ export function UserIntegrationTab({
                     </div>
                     <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
                       <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
-                        {reactSubTab === "html" ? (
+                        {jsSubTab === "tag" ? (
 `<!-- CleanTraffic Universal Web Protection Tag (Place inside <head>) -->
 <script src="${effectiveEndpoint}/v1/protect.js" 
   data-api-key="${apiKeyValue || "ctc_live_your_api_key_here"}" 
   async>
 </script>`
                         ) : (
-`import { useEffect, useState } from "react";
+                          jsSdkCode
+                        )}
+                      </pre>
+                    </div>
+                  </div>
 
-// React hook for CleanTraffic visitor & device identification
-export function useCleanTraffic() {
-  const [visitor, setVisitor] = useState<{
-    visitorId?: string;
-    deviceId?: string;
-    isHuman?: boolean;
-    confidenceScore?: number;
-  } | null>(null);
+                  {/* Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      3-Step Setup Instructions:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Open your website&apos;s HTML template (e.g., <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">index.html</code>).</li>
+                      <li>Paste the <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">&lt;script&gt;</code> tag right before <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">&lt;/head&gt;</code>.</li>
+                      <li>Deploy your website. CleanTraffic runs passively in the background without slowing down page load.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
 
-  useEffect(() => {
-    // 1. Inject CleanTraffic agent if not already in document
-    if (!document.getElementById("cleantraffic-agent")) {
-      const script = document.createElement("script");
-      script.id = "cleantraffic-agent";
-      script.src = "${effectiveEndpoint}/v1/protect.js";
-      script.setAttribute("data-api-key", "${apiKeyValue || "ctc_live_your_api_key_here"}");
-      script.async = true;
-      document.head.appendChild(script);
+              {/* 11. REACT HOOK DETAIL PAGE */}
+              {selectedIntegration === "react" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <ReactLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">React Integration</h2>
+                          <Badge className="bg-cyan-50 text-cyan-800 border-cyan-200 text-[10px] font-bold">
+                            React Hook
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            React 18 &amp; 19
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Identify visitors on your React website. Drop the hook into your component layer to detect bots and query device identification.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {renderInterstitialControlBanner("React")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setReactSubTab("hook")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        reactSubTab === "hook"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Hook (src/hooks/useCleanTraffic.ts)
+                    </button>
+                    <button
+                      onClick={() => setReactSubTab("usage")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        reactSubTab === "usage"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Component Usage (SignupForm.tsx)
+                    </button>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#00D8FF]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {reactSubTab === "hook" ? "src/hooks/useCleanTraffic.ts" : "src/components/SignupForm.tsx"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            reactSubTab === "hook"
+                              ? reactHookCode
+                              : `import React, { useState } from "react";\nimport { useCleanTraffic } from "../hooks/useCleanTraffic";\n\nexport function SignupForm() {\n  const { visitor, loading } = useCleanTraffic();\n  const [email, setEmail] = useState("");\n  const [errorMsg, setErrorMsg] = useState("");\n\n  const handleSubmit = (e: React.FormEvent) => {\n    e.preventDefault();\n\n    // Screen bots or fraudulent traffic before submitting\n    if (visitor && !visitor.isHuman) {\n      setErrorMsg("Automated or fraudulent traffic detected.");\n      return;\n    }\n\n    setErrorMsg("");\n    console.log("Submitting account for human visitor:", visitor?.visitorId);\n  };\n\n  return (\n    <form onSubmit={handleSubmit} className="space-y-4">\n      {errorMsg && (\n        <div className="p-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded">\n          {errorMsg}\n        </div>\n      )}\n      <input \n        type="email" \n        value={email} \n        onChange={(e) => setEmail(e.target.value)} \n        placeholder="Enter your email" \n        required \n      />\n      <button type="submit" disabled={loading}>\n        {loading ? "Verifying security..." : "Create Account"}\n      </button>\n    </form>\n  );\n}`,
+                            reactSubTab === "hook" ? "React Hook" : "React Component Usage"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {reactSubTab === "hook" ? (
+                          reactHookCode
+                        ) : (
+`import React, { useState } from "react";
+import { useCleanTraffic } from "../hooks/useCleanTraffic";
+
+export function SignupForm() {
+  const { visitor, loading } = useCleanTraffic();
+  const [email, setEmail] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Screen bots or fraudulent traffic before submitting
+    if (visitor && !visitor.isHuman) {
+      setErrorMsg("Automated or fraudulent traffic detected.");
+      return;
     }
 
-    // 2. Resolve visitor hardware entropy asynchronously (Fingerprint style)
-    const check = setInterval(() => {
-      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {
-        clearInterval(check);
-        (window as any).CleanTraffic.get().then((res: any) => {
-          setVisitor(res);
-        });
-      }
-    }, 50);
+    setErrorMsg("");
+    console.log("Submitting account for human visitor:", visitor?.visitorId);
+  };
 
-    return () => clearInterval(check);
-  }, []);
-
-  return visitor;
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {errorMsg && (
+        <div className="p-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded">
+          {errorMsg}
+        </div>
+      )}
+      <input 
+        type="email" 
+        value={email} 
+        onChange={(e) => setEmail(e.target.value)} 
+        placeholder="Enter your email" 
+        required 
+      />
+      <button type="submit" disabled={loading}>
+        {loading ? "Verifying security..." : "Create Account"}
+      </button>
+    </form>
+  );
 }`
                         )}
                       </pre>
                     </div>
                   </div>
 
-                  {/* Drop-in Setup Instructions */}
+                  {/* Setup Instructions */}
                   <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
                     <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
-                      {reactSubTab === "html" ? "Static HTML Setup:" : "React App Setup:"}
+                      React Drop-in Setup:
                     </span>
-                    {reactSubTab === "html" ? (
-                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
-                        <li>Open your <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">index.html</code> file.</li>
-                        <li>Paste the tag above inside the <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">&lt;head&gt;</code> element.</li>
-                        <li>Deploy to Render, Railway, Vercel, S3, or your web host. Protection starts immediately.</li>
-                      </ol>
-                    ) : (
-                      <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
-                        <li>Save the code above into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/hooks/useCleanTraffic.ts</code>.</li>
-                        <li>Call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">const visitor = useCleanTraffic()</code> inside your signup page or protected component.</li>
-                        <li>Check <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">visitor?.isHuman</code> before allowing form submission.</li>
-                      </ol>
-                    )}
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Save the hook code into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/hooks/useCleanTraffic.ts</code>.</li>
+                      <li>Call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">const &#123; visitor, loading &#125; = useCleanTraffic()</code> in your login, signup, or checkout view.</li>
+                      <li>Check <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">visitor?.isHuman</code> before triggering state changes or backend calls.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* 12. VUE.JS COMPOSABLE DETAIL PAGE */}
+              {selectedIntegration === "vue" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <VueLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Vue.js &amp; Nuxt Integration</h2>
+                          <Badge className="bg-emerald-50 text-emerald-800 border-emerald-200 text-[10px] font-bold">
+                            Composition API
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            Vue 3 &amp; Nuxt 3
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Identify visitors on your Vue.js website using a Vue 3 composable with reactive refs and Nuxt SSR safeguards.
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Benefits */}
-                  <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
-                    <h3 className="text-sm font-bold text-[#0F172A]">Universal Benefits</h3>
-                    <ul className="text-xs text-[#64748B] space-y-2 list-disc pl-5 leading-relaxed">
-                      <li><strong>Works Anywhere:</strong> Deploy on Render, Railway, GitHub Pages, Netlify, Vercel, S3, or custom hosting.</li>
-                      <li><strong>Zero Backend Architecture Required:</strong> Intercepts and screens bots on the frontend before any user resources are wasted.</li>
-                      <li><strong>Fingerprint-Style SDK API:</strong> Provides clean Promise-based async API <code className="bg-slate-100 px-1 py-0.5 rounded text-[11px] font-mono text-slate-800">window.CleanTraffic.get()</code> for custom frontend checks.</li>
-                    </ul>
+                  {renderInterstitialControlBanner("Vue.js")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setVueSubTab("composable")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        vueSubTab === "composable"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Composable (composables/useCleanTraffic.ts)
+                    </button>
+                    <button
+                      onClick={() => setVueSubTab("usage")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        vueSubTab === "usage"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Component Usage (&lt;script setup&gt;)
+                    </button>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#41B883]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {vueSubTab === "composable" ? "composables/useCleanTraffic.ts" : "components/SignupForm.vue"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            vueSubTab === "composable"
+                              ? vueComposableCode
+                              : `<script setup>\nimport { ref } from 'vue';\nimport { useCleanTraffic } from '@/composables/useCleanTraffic';\n\nconst { visitor, loading } = useCleanTraffic();\nconst email = ref('');\nconst errorMsg = ref('');\n\nfunction onSubmit() {\n  if (visitor.value && !visitor.value.isHuman) {\n    errorMsg.value = 'Automated or fraudulent traffic detected.';\n    return;\n  }\n  errorMsg.value = '';\n  console.log('Verified human visitor:', visitor.value?.visitorId);\n}\n</script>\n\n<template>\n  <form @submit.prevent="onSubmit" class="space-y-4">\n    <div v-if="errorMsg" class="p-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded">\n      {{ errorMsg }}\n    </div>\n    <input v-model="email" type="email" placeholder="Enter your email" required />\n    <button :disabled="loading">\n      {{ loading ? 'Verifying security...' : 'Submit' }}\n    </button>\n  </form>\n</template>`,
+                            vueSubTab === "composable" ? "Vue Composable" : "Vue Component"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {vueSubTab === "composable" ? (
+                          vueComposableCode
+                        ) : (
+`<script setup>
+import { ref } from 'vue';
+import { useCleanTraffic } from '@/composables/useCleanTraffic';
+
+const { visitor, loading } = useCleanTraffic();
+const email = ref('');
+const errorMsg = ref('');
+
+function onSubmit() {
+  if (visitor.value && !visitor.value.isHuman) {
+    errorMsg.value = 'Automated or fraudulent traffic detected.';
+    return;
+  }
+  errorMsg.value = '';
+  console.log('Verified human visitor:', visitor.value?.visitorId);
+}
+</script>
+
+<template>
+  <form @submit.prevent="onSubmit" class="space-y-4">
+    <div v-if="errorMsg" class="p-2 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded">
+      {{ errorMsg }}
+    </div>
+    <input v-model="email" type="email" placeholder="Enter your email" required />
+    <button :disabled="loading">
+      {{ loading ? 'Verifying security...' : 'Submit' }}
+    </button>
+  </form>
+</template>`
+                        )}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Vue Setup:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Save into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">composables/useCleanTraffic.ts</code>. In Nuxt 3, auto-import detects it automatically.</li>
+                      <li>In your component, call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">const &#123; visitor, loading &#125; = useCleanTraffic()</code>.</li>
+                      <li>Safely bind <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">visitor.value?.isHuman</code> in template or script setup.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* 13. ANGULAR SERVICE DETAIL PAGE */}
+              {selectedIntegration === "angular" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <AngularLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Angular Integration</h2>
+                          <Badge className="bg-red-50 text-red-800 border-red-200 text-[10px] font-bold">
+                            Injectable Service
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            Angular 15-18
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Identify visitors on your Angular website using an injectable TypeScript service with Angular Universal SSR guards.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {renderInterstitialControlBanner("Angular")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setAngularSubTab("service")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        angularSubTab === "service"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Service (cleantraffic.service.ts)
+                    </button>
+                    <button
+                      onClick={() => setAngularSubTab("usage")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        angularSubTab === "usage"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Component Usage (app.component.ts)
+                    </button>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#DD0031]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {angularSubTab === "service" ? "src/app/services/cleantraffic.service.ts" : "src/app/app.component.ts"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            angularSubTab === "service"
+                              ? angularServiceCode
+                              : `import { Component, OnInit } from '@angular/core';\nimport { CleanTrafficService, CleanTrafficVisitor } from './services/cleantraffic.service';\n\n@Component({\n  selector: 'app-root',\n  template: \`\n    <div *ngIf="visitor">\n      <p>Visitor ID: {{ visitor.visitorId }}</p>\n      <p>Is Human: {{ visitor.isHuman }}</p>\n    </div>\n  \`\n})\nexport class AppComponent implements OnInit {\n  visitor: CleanTrafficVisitor | null = null;\n\n  constructor(private ctc: CleanTrafficService) {}\n\n  async ngOnInit() {\n    this.visitor = await this.ctc.getVisitor();\n  }\n}`,
+                            angularSubTab === "service" ? "Angular Service" : "Angular Component"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {angularSubTab === "service" ? (
+                          angularServiceCode
+                        ) : (
+`import { Component, OnInit } from '@angular/core';
+import { CleanTrafficService, CleanTrafficVisitor } from './services/cleantraffic.service';
+
+@Component({
+  selector: 'app-root',
+  template: \`
+    <div *ngIf="visitor">
+      <p>Visitor ID: {{ visitor.visitorId }}</p>
+      <p>Is Human: {{ visitor.isHuman }}</p>
+    </div>
+  \`
+})
+export class AppComponent implements OnInit {
+  visitor: CleanTrafficVisitor | null = null;
+
+  constructor(private ctc: CleanTrafficService) {}
+
+  async ngOnInit() {
+    this.visitor = await this.ctc.getVisitor();
+  }
+}`
+                        )}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Angular Setup:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Save into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/app/services/cleantraffic.service.ts</code>.</li>
+                      <li>Inject <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">CleanTrafficService</code> in your component constructors.</li>
+                      <li>Call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">await this.ctc.getVisitor()</code> on initialization.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* 14. PREACT HOOK DETAIL PAGE */}
+              {selectedIntegration === "preact" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <PreactLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Preact Integration</h2>
+                          <Badge className="bg-purple-50 text-purple-800 border-purple-200 text-[10px] font-bold">
+                            Preact Hook
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            Lightweight 3KB
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Identify visitors on your Preact website using an ultra-lightweight hook compatible with Preact and Deno Fresh.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {renderInterstitialControlBanner("Preact")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setPreactSubTab("hook")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        preactSubTab === "hook"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Hook (hooks/useCleanTraffic.js)
+                    </button>
+                    <button
+                      onClick={() => setPreactSubTab("usage")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        preactSubTab === "usage"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Component Usage
+                    </button>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#673AB8]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {preactSubTab === "hook" ? "src/hooks/useCleanTraffic.js" : "src/components/App.jsx"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            preactSubTab === "hook"
+                              ? preactHookCode
+                              : `import { useCleanTraffic } from "./hooks/useCleanTraffic";\n\nexport function App() {\n  const { visitor, loading } = useCleanTraffic();\n  return (\n    <div>\n      {loading ? "Checking..." : visitor?.isHuman ? "Human Verified" : "Bot Blocked"}\n    </div>\n  );\n}`,
+                            preactSubTab === "hook" ? "Preact Hook" : "Preact Component"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {preactSubTab === "hook" ? (
+                          preactHookCode
+                        ) : (
+`import { useCleanTraffic } from "./hooks/useCleanTraffic";
+
+export function App() {
+  const { visitor, loading } = useCleanTraffic();
+
+  return (
+    <div>
+      {loading ? (
+        <span>Checking security...</span>
+      ) : (
+        <span>Status: {visitor?.isHuman ? "Human Verified" : "Bot Traffic"}</span>
+      )}
+    </div>
+  );
+}`
+                        )}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Preact Setup:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Save the hook into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/hooks/useCleanTraffic.js</code>.</li>
+                      <li>Call <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">useCleanTraffic()</code> in your main component.</li>
+                      <li>Access the reactive visitor verdict with 0KB overhead.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* 15. SVELTE COMPONENT & STORE DETAIL PAGE */}
+              {selectedIntegration === "svelte" && (
+                <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs space-y-6">
+                  {/* Header Title */}
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-11 h-11 rounded-xl bg-white border border-slate-200/90 flex items-center justify-center p-2 shrink-0 shadow-2xs">
+                        <SvelteLogo className="h-7 w-7" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-xl font-bold text-[#0F172A]">Svelte &amp; SvelteKit Integration</h2>
+                          <Badge className="bg-orange-50 text-orange-800 border-orange-200 text-[10px] font-bold">
+                            Svelte Component
+                          </Badge>
+                          <Badge className="bg-slate-100 text-slate-800 border-slate-200 text-[10px] font-bold">
+                            Svelte 4 &amp; 5
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-[#64748B] mt-1 leading-relaxed">
+                          Identify visitors on your Svelte website using a dedicated component with reactive Svelte stores.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {renderInterstitialControlBanner("Svelte")}
+
+                  {/* Subtabs Switcher */}
+                  <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+                    <button
+                      onClick={() => setSvelteSubTab("component")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        svelteSubTab === "component"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Component (CleanTraffic.svelte)
+                    </button>
+                    <button
+                      onClick={() => setSvelteSubTab("usage")}
+                      className={`text-xs font-bold pb-1.5 transition-colors relative ${
+                        svelteSubTab === "usage"
+                          ? "text-[#0A5C48] border-b-2 border-[#0A5C48]"
+                          : "text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      Page Usage (+page.svelte)
+                    </button>
+                  </div>
+
+                  {/* Code Box */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <FileCode className="h-4 w-4 text-[#FF3E00]" />
+                        <span className="text-xs font-bold text-[#0F172A]">
+                          {svelteSubTab === "component" ? "src/lib/CleanTraffic.svelte" : "src/routes/+page.svelte"}
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          handleCopyCurrentCode(
+                            svelteSubTab === "component"
+                              ? svelteComponentCode
+                              : `<script>\n  import CleanTraffic, { visitor, isReady } from '$lib/CleanTraffic.svelte';\n</script>\n\n<CleanTraffic />\n\n{#if $isReady}\n  <p>Visitor ID: {$visitor?.visitorId}</p>\n  <p>Is Human: {$visitor?.isHuman}</p>\n{/if}`,
+                            svelteSubTab === "component" ? "Svelte Component" : "Svelte Page Usage"
+                          )
+                        }
+                        className="h-8 text-xs border-[#D5DFD9] bg-white hover:bg-[#F2F6F4] text-[#0F172A] gap-1.5 rounded-lg font-semibold"
+                      >
+                        {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedCode ? "Copied" : "Copy Code"}</span>
+                      </Button>
+                    </div>
+                    <div className="bg-[#0F172A] border border-slate-800 rounded-xl p-4 overflow-x-auto shadow-inner">
+                      <pre className="font-mono text-xs text-slate-200 leading-relaxed whitespace-pre max-h-96 overflow-y-auto">
+                        {svelteSubTab === "component" ? (
+                          svelteComponentCode
+                        ) : (
+`<script>
+  import CleanTraffic, { visitor, isReady } from '$lib/CleanTraffic.svelte';
+</script>
+
+<!-- CleanTraffic Visitor Agent -->
+<CleanTraffic />
+
+{#if $isReady}
+  <div>
+    <p>Visitor ID: {$visitor?.visitorId}</p>
+    <p>Is Human: {$visitor?.isHuman ? 'Yes' : 'No'}</p>
+  </div>
+{:else}
+  <p>Initializing security check...</p>
+{/if}`
+                        )}
+                      </pre>
+                    </div>
+                  </div>
+
+                  {/* Setup Instructions */}
+                  <div className="bg-[#F8FAF9] border border-[#E0E9E4] rounded-xl p-4 space-y-2.5 text-xs">
+                    <span className="text-xs font-bold text-[#0F172A] uppercase tracking-wider block">
+                      Svelte Setup:
+                    </span>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-[#64748B]">
+                      <li>Save the component into <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">src/lib/CleanTraffic.svelte</code>.</li>
+                      <li>Import and mount <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">&lt;CleanTraffic /&gt;</code> in your root layout or target page.</li>
+                      <li>Subscribe reactively to <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">$visitor</code> and <code className="bg-white px-1.5 py-0.5 rounded border border-slate-200 font-mono text-[11px]">$isReady</code>.</li>
+                    </ol>
                   </div>
                 </div>
               )}
@@ -2486,11 +3269,12 @@ export function useCleanTraffic() {
               <AgentSetupView
                 apiKeyValue={apiKeyValue || ""}
                 effectiveEndpoint={effectiveEndpoint}
-                targetStack="nextjs"
+                targetStack={selectedIntegration || "javascript"}
                 rulesets={parsedRulesets}
                 serverBotUrl={userSettings?.botUrl}
                 onNavigateToLiveFeed={handleNavigateToLiveFeed}
                 onNavigateToRules={handleNavigateToRules}
+                onSelectStack={(stack) => setSelectedIntegration(stack as IntegrationStack)}
               />
             </div>
           ) : (
@@ -2499,12 +3283,11 @@ export function useCleanTraffic() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
               {[
-                { id: "all", label: "All" },
-                { id: "nocode", label: "Edge & No-Code" },
-                { id: "builders", label: "Website Builders" },
-                { id: "web", label: "Web Frameworks" },
-                { id: "cms", label: "E-Commerce & CMS" },
-                { id: "integrations", label: "Tag Managers" },
+                { id: "all", label: "All Stacks" },
+                { id: "frameworks", label: "Web Frameworks & SDKs" },
+                { id: "builders", label: "Site Builders (No-Code)" },
+                { id: "server", label: "Server & Edge" },
+                { id: "cms", label: "CMS & Platforms" },
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -2540,7 +3323,13 @@ export function useCleanTraffic() {
                 <div
                   key={item.id}
                   onClick={() => {
-                    if (item.id === "react") setReactSubTab("html");
+                    if (item.id === "react") setReactSubTab("hook");
+                    if (item.id === "nextjs") setNextSubTab("script");
+                    if (item.id === "vue") setVueSubTab("composable");
+                    if (item.id === "angular") setAngularSubTab("service");
+                    if (item.id === "preact") setPreactSubTab("hook");
+                    if (item.id === "svelte") setSvelteSubTab("component");
+                    if (item.id === "javascript") setJsSubTab("tag");
                     setSelectedIntegration(item.targetStack);
                   }}
                   className="group bg-white rounded-xl border border-[#E5EAE7] p-5 cursor-pointer hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between min-h-[145px]"
@@ -2575,7 +3364,24 @@ export function useCleanTraffic() {
         </div>
       )}
 
-      {/* Theme Live Preview Modal (only accessed via PHP customizer) */}
+      {/* Universal Interstitial Theme Picker Dialog (Available for All Integrations) */}
+      <Dialog open={isThemePickerOpen} onOpenChange={setIsThemePickerOpen}>
+        <DialogContent className="max-w-4xl bg-white border border-[#E5EAE7] p-6 rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="pb-3 border-b border-[#E5EAE7]">
+            <DialogTitle className="text-base font-bold text-[#0F172A] flex items-center gap-2">
+              <Palette className="h-4 w-4 text-[#0A5C48]" />
+              <span>Choose &amp; Customize Interstitial Loading Style</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-[#64748B] mt-0.5">
+              Customize the verification loading splash across all integrations (React, Next.js, Cloudflare, Shopify, PHP, JavaScript, WordPress, Webflow, Wix, Vue).
+            </DialogDescription>
+          </DialogHeader>
+
+          {renderThemeCustomizerContent()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Theme Live Preview Modal (Accessible across all integrations) */}
       {previewTheme && (
         <Dialog open={Boolean(previewTheme)} onOpenChange={(open) => !open && setPreviewTheme(null)}>
           <DialogContent className="max-w-xl bg-white border border-[#E5EAE7] p-6 rounded-2xl">

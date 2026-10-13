@@ -41,15 +41,6 @@ export function NextJsLogo({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-export function NodeJsLogo({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M16 2.5L3.5 9.7V24.1L16 31.3L28.5 24.1V9.7L16 2.5Z" fill="#5FA04E"/>
-      <path d="M16 4.8L26.3 10.7V22.6L16 28.5L5.7 22.6V10.7L16 4.8Z" fill="#333333"/>
-      <path d="M16 7L24 11.6V20.8L16 25.4L8 20.8V11.6L16 7Z" fill="#5FA04E"/>
-    </svg>
-  );
-}
 
 export function PhpLogo({ className = "h-5 w-5" }: { className?: string }) {
   return (
@@ -93,15 +84,7 @@ export function PythonLogo({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-export function GoogleTagManagerLogo({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 192 192" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M96 24L156 84L96 144L36 84L96 24Z" fill="#4285F4"/>
-      <path d="M96 64L128 96L96 128L64 96L96 64Z" fill="#246FDB"/>
-      <circle cx="96" cy="96" r="14" fill="#FFFFFF"/>
-    </svg>
-  );
-}
+
 
 export function WebflowLogo({ className = "h-5 w-5" }: { className?: string }) {
   return (
@@ -125,6 +108,54 @@ export function WixLogo({ className = "h-5 w-5" }: { className?: string }) {
     <svg className={className} viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="64" height="64" rx="12" fill="#0C0C0C"/>
       <path d="M12 44L17 20H23L27.5 35L32 20H38L42.5 35L47 20H53L48 44H41.5L37 29.5L32.5 44H26.5L22 29.5L17.5 44H12Z" fill="white"/>
+    </svg>
+  );
+}
+
+export function VueLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 256 221" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M204.8 0H256L128 220.8L0 0H97.92L128 51.2L157.44 0H204.8Z" fill="#41B883"/>
+      <path d="M0 0L128 220.8L256 0H204.8L128 132.48L50.56 0H0Z" fill="#35495E"/>
+    </svg>
+  );
+}
+
+export function AngularLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 250 250" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="125,30 125,30 125,30 31.9,63.2 46.1,186.3 125,230 125,230 125,230 203.9,186.3 218.1,63.2" fill="#DD0031"/>
+      <polygon points="125,30 125,52.2 125,52.1 125,153.4 125,153.4 125,230 125,230 203.9,186.3 218.1,63.2" fill="#C3002F"/>
+      <path d="M125,52.1L66.8,182.6H89.2L100.8,153.7H148.8L160.4,182.6H182.8L125,52.1ZM141.4,134.8H108.2L124.8,94.6L141.4,134.8Z" fill="#FFFFFF"/>
+    </svg>
+  );
+}
+
+export function SvelteLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 98.1 118" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M89.7 18.2C79.8 4.7 61-1.3 45.4 3.9C39.6 5.8 28.5 13.9 31.5 20.3C34.3 26.2 43.4 25.1 48.6 23.9C54 22.7 59.9 22.9 64.9 25.6C72.6 29.8 74.4 39.5 69.3 46.7C67.6 49.1 63.8 52.8 61 54.3L37.9 66.8C25.6 73.4 16.7 82.3 14.7 96.6C12.4 113.1 27.6 123.6 42.6 117.8C49.9 115 62.7 104.9 58.7 99.2C54.7 93.6 44.5 96.3 39.3 97C34.3 97.6 29.2 96.1 25.8 92.5C20.6 86.8 23.3 78.4 28.9 73.9C31.5 71.8 35.8 69.4 38.6 67.9L61.7 55.4C71.3 50.2 86.9 40.7 89.6 29.4C90.5 25.7 90.9 21.8 89.7 18.2Z" fill="#FF3E00"/>
+    </svg>
+  );
+}
+
+export function PreactLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="-256 -256 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M0,-256 C141.385,-256 256,-141.385 256,0 C256,141.385 141.385,256 0,256 C-141.385,256 -256,141.385 -256,0 C-256,-141.385 -141.385,-256 0,-256 Z" fill="#673AB8"/>
+      <ellipse rx="160" ry="60" fill="none" stroke="#FFFFFF" strokeWidth="18" transform="rotate(30)"/>
+      <ellipse rx="160" ry="60" fill="none" stroke="#FFFFFF" strokeWidth="18" transform="rotate(90)"/>
+      <ellipse rx="160" ry="60" fill="none" stroke="#FFFFFF" strokeWidth="18" transform="rotate(150)"/>
+      <circle r="26" fill="#FFFFFF"/>
+    </svg>
+  );
+}
+
+export function SquarespaceLogo({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="16" fill="#111111"/>
+      <path d="M47.7 34.6L36.3 46C34.4 47.9 34.4 51.1 36.3 53.1L51.9 68.7C53.9 70.6 57 70.6 59 68.7L70.4 57.3C72.3 55.4 72.3 52.2 70.4 50.3L54.8 34.6C52.8 32.7 49.7 32.7 47.7 34.6ZM43.4 26.1L27.7 41.7C23.8 45.6 23.8 52 27.7 55.9L39.1 67.3C41.1 69.3 44.2 69.3 46.2 67.3L57.6 55.9C59.6 53.9 59.6 50.8 57.6 48.8L42 33.2C40.1 31.3 40.1 28.1 42 26.1L43.4 24.7C45.3 22.8 48.5 22.8 50.4 24.7L66 40.4C68 42.3 71.1 42.3 73.1 40.4L74.5 39C76.4 37.1 76.4 33.9 74.5 32L58.9 16.4C55 12.5 48.6 12.5 44.7 16.4L43.4 17.7C41.5 19.6 41.5 22.8 43.4 24.7Z" fill="white"/>
     </svg>
   );
 }

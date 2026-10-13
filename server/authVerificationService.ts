@@ -1,15 +1,4 @@
 import { randomUUID, randomInt, randomBytes, createHash, timingSafeEqual } from "crypto";
-import { firestore } from "./firebase";
-import {
-  collection,
-  doc,
-  getDoc,
-  setDoc,
-  getDocs,
-  query,
-  where,
-  updateDoc,
-} from "firebase/firestore";
 
 export interface AuthTokenRecord {
   id: string;
@@ -35,9 +24,19 @@ export const TOKEN_EXPIRATION_MS = 5 * 60 * 1000;
 export const MAX_VERIFICATION_ATTEMPTS = 5;
 export const EMAIL_COOLDOWN_MS = 60 * 1000; // 60s cooldown between dispatch requests
 
-// In-memory cache for fast lookups and fallback if DB is unreachable
+// In-memory cache for fast lookups
 const tokenCache = new Map<string, AuthTokenRecord>();
 const emailDispatchTimestamps = new Map<string, number>();
+
+// Periodic garbage collection for expired verification tokens
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, record] of tokenCache.entries()) {
+    if (now > record.expiresAt + 60000) {
+      tokenCache.delete(key);
+    }
+  }
+}, 60000).unref();
 
 // Utility: Securely mask email for safe server-side audit logs
 export function maskEmail(email: string): string {
@@ -94,34 +93,10 @@ export async function invalidatePreviousTokens(
 ): Promise<void> {
   const cleanEmail = email.toLowerCase().trim();
 
-  // Invalidate in-memory cache
   for (const [id, record] of tokenCache.entries()) {
     if (record.email === cleanEmail && record.purpose === purpose && record.status === "active") {
       record.status = "invalidated";
       tokenCache.set(id, record);
-    }
-  }
-
-  // Invalidate in Firestore if available
-  const db = firestore;
-  if (db) {
-    try {
-      const q = query(
-        collection(db, "auth_verification_tokens"),
-        where("email", "==", cleanEmail),
-        where("purpose", "==", purpose),
-        where("status", "==", "active")
-      );
-      const snap = await getDocs(q);
-      const updatePromises = snap.docs.map((docSnap) =>
-        updateDoc(doc(db, "auth_verification_tokens", docSnap.id), {
-          status: "invalidated",
-          updatedAt: Date.now(),
-        })
-      );
-      await Promise.all(updatePromises);
-    } catch (err) {
-      console.warn("[AuthToken] Warning invalidating previous tokens in Firestore:", err);
     }
   }
 }
@@ -135,35 +110,6 @@ export async function invalidateAllTokensForUser(
     if (record.userId === userId && (!purpose || record.purpose === purpose)) {
       record.status = "invalidated";
       tokenCache.set(id, record);
-    }
-  }
-
-  const db = firestore;
-  if (db) {
-    try {
-      let q = query(
-        collection(db, "auth_verification_tokens"),
-        where("userId", "==", userId),
-        where("status", "==", "active")
-      );
-      if (purpose) {
-        q = query(
-          collection(db, "auth_verification_tokens"),
-          where("userId", "==", userId),
-          where("purpose", "==", purpose),
-          where("status", "==", "active")
-        );
-      }
-      const snap = await getDocs(q);
-      const updatePromises = snap.docs.map((docSnap) =>
-        updateDoc(doc(db, "auth_verification_tokens", docSnap.id), {
-          status: "invalidated",
-          updatedAt: Date.now(),
-        })
-      );
-      await Promise.all(updatePromises);
-    } catch (err) {
-      console.warn("[AuthToken] Warning invalidating user tokens in Firestore:", err);
     }
   }
 }
@@ -220,15 +166,6 @@ export async function createVerificationToken(params: {
   // Cache in memory
   tokenCache.set(id, record);
   tokenCache.set(token, record);
-
-  // Persist to Firestore
-  if (firestore) {
-    try {
-      await setDoc(doc(firestore, "auth_verification_tokens", id), record);
-    } catch (err) {
-      console.warn("[AuthToken] Warning persisting token to Firestore:", err);
-    }
-  }
 
   console.log(
     `[AUTH_EVENT] Verification code generated (purpose: ${purpose}, email: ${maskEmail(
@@ -303,75 +240,7 @@ export async function validateVerificationCode(params: {
     }
   }
 
-  // 2. Query Firestore if not found in memory
-  if (!activeRecord && firestore) {
-    try {
-      if (token) {
-        const q = query(
-          collection(firestore, "auth_verification_tokens"),
-          where("token", "==", token),
-          where("purpose", "==", purpose)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const docData = snap.docs[0].data() as AuthTokenRecord;
-          const matchesUser = userId ? docData.userId === userId : true;
-          const matchesEmail = cleanEmail ? docData.email === cleanEmail : true;
-          if (matchesUser && matchesEmail) {
-            if (docData.status === "active") {
-              activeRecord = docData;
-            } else {
-              recentRecord = docData;
-            }
-          }
-        }
-      }
-
-      if (!activeRecord && userId) {
-        const q = query(
-          collection(firestore, "auth_verification_tokens"),
-          where("userId", "==", userId),
-          where("purpose", "==", purpose)
-        );
-        const snap = await getDocs(q);
-        for (const d of snap.docs) {
-          const docData = d.data() as AuthTokenRecord;
-          if (!cleanEmail || docData.email === cleanEmail) {
-            if (docData.status === "active") {
-              activeRecord = docData;
-              break;
-            } else if (!recentRecord) {
-              recentRecord = docData;
-            }
-          }
-        }
-      }
-
-      if (!activeRecord && cleanEmail) {
-        const q = query(
-          collection(firestore, "auth_verification_tokens"),
-          where("email", "==", cleanEmail),
-          where("purpose", "==", purpose)
-        );
-        const snap = await getDocs(q);
-        for (const d of snap.docs) {
-          const docData = d.data() as AuthTokenRecord;
-          if (!userId || docData.userId === userId) {
-            if (docData.status === "active") {
-              activeRecord = docData;
-              break;
-            } else if (!recentRecord) {
-              recentRecord = docData;
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[AuthToken] Error querying Firestore:", err);
-    }
-  }
-
-  // 3. Evaluate results
+  // Evaluate results
   if (!activeRecord) {
     if (recentRecord) {
       if (recentRecord.status === "consumed" || recentRecord.used) {
@@ -409,17 +278,6 @@ export async function validateVerificationCode(params: {
     tokenCache.set(activeRecord.id, activeRecord);
     if (activeRecord.token) tokenCache.set(activeRecord.token, activeRecord);
 
-    if (firestore) {
-      try {
-        await updateDoc(doc(firestore, "auth_verification_tokens", activeRecord.id), {
-          status: "expired",
-          updatedAt: now,
-        });
-      } catch (err) {
-        console.warn("[AuthToken] Error updating expired status:", err);
-      }
-    }
-
     console.log(
       `[AUTH_EVENT] Verification code expired (email: ${maskEmail(activeRecord.email)}, purpose: ${purpose})`
     );
@@ -436,17 +294,6 @@ export async function validateVerificationCode(params: {
     activeRecord.status = "invalidated";
     tokenCache.set(activeRecord.id, activeRecord);
     if (activeRecord.token) tokenCache.set(activeRecord.token, activeRecord);
-
-    if (firestore) {
-      try {
-        await updateDoc(doc(firestore, "auth_verification_tokens", activeRecord.id), {
-          status: "invalidated",
-          updatedAt: now,
-        });
-      } catch (err) {
-        console.warn("[AuthToken] Error updating invalidated status:", err);
-      }
-    }
 
     console.warn(
       `[AUTH_EVENT] Excessive verification attempts detected; token invalidated (email: ${maskEmail(
@@ -481,18 +328,6 @@ export async function validateVerificationCode(params: {
     tokenCache.set(activeRecord.id, activeRecord);
     if (activeRecord.token) tokenCache.set(activeRecord.token, activeRecord);
 
-    if (firestore) {
-      try {
-        await updateDoc(doc(firestore, "auth_verification_tokens", activeRecord.id), {
-          attemptCount: activeRecord.attemptCount,
-          status: activeRecord.status,
-          updatedAt: now,
-        });
-      } catch (err) {
-        console.warn("[AuthToken] Error updating attempt count:", err);
-      }
-    }
-
     console.warn(
       `[AUTH_EVENT] Failed verification attempt (email: ${maskEmail(
         activeRecord.email
@@ -522,19 +357,6 @@ export async function validateVerificationCode(params: {
 
   tokenCache.set(activeRecord.id, activeRecord);
   if (activeRecord.token) tokenCache.set(activeRecord.token, activeRecord);
-
-  if (firestore) {
-    try {
-      await updateDoc(doc(firestore, "auth_verification_tokens", activeRecord.id), {
-        used: true,
-        usedAt: now,
-        status: "consumed",
-        updatedAt: now,
-      });
-    } catch (err) {
-      console.warn("[AuthToken] Error updating consumed status:", err);
-    }
-  }
 
   console.log(
     `[AUTH_EVENT] Verification code successfully consumed (purpose: ${purpose}, email: ${maskEmail(

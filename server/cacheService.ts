@@ -9,7 +9,7 @@
  * - Global Settings (e.g. IP2Geo keys)
  * - In-Memory Visitor History Ring Buffer
  * 
- * Prevents Firestore read quota exhaustion under heavy traffic and reduces
+ * Prevents database read roundtrips under heavy traffic and reduces
  * classification latency to < 1ms on the read path.
  */
 

@@ -1,4 +1,4 @@
-import { DatabaseStorage } from "../server/storage";
+import { storage } from "../server/storage";
 import dotenv from "dotenv";
 
 dotenv.config({ override: true });
@@ -7,8 +7,6 @@ async function runSecurityTests() {
   console.log("=================================================");
   console.log("🛡️ RUNNING SUPABASE SECURITY & TENANT ISOLATION TESTS");
   console.log("=================================================\n");
-
-  const storage = new DatabaseStorage();
 
   // Test 1: Admin user retrieval
   console.log("Test 1: Admin User Authentication verification...");

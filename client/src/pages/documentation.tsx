@@ -155,6 +155,7 @@ export default function Documentation() {
             </button>
             <button
               onClick={() => navigate("/user")}
+              style={{ backgroundColor: "#000006" }}
               className="text-xs font-semibold bg-[#0F172A] hover:bg-black text-white px-3.5 py-2 rounded-lg shadow-xs hover:shadow transition-all flex items-center gap-1.5"
             >
               <span>Go to Dashboard</span>
@@ -436,7 +437,10 @@ export default function Documentation() {
             {/* Deployment Models */}
             <div className="space-y-6 pt-2">
               {/* Universal 5-Stack Matrix */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3">
+              <div
+                style={{ backgroundColor: "#060101" }}
+                className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3"
+              >
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <Layers className="w-4 h-4 text-emerald-400" />
@@ -459,9 +463,9 @@ export default function Documentation() {
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
                       <tr>
-                        <td className="py-2.5 px-3 font-bold text-emerald-400">1. Cloudflare Edge Worker</td>
+                        <td className="py-2.5 px-3 font-bold" style={{ color: "#eef5fc" }}>1. Cloudflare Edge Worker</td>
                         <td className="py-2.5 px-3">Shopify, Wix, Vercel, WordPress, VPS (using Cloudflare DNS)</td>
-                        <td className="py-2.5 px-3 text-emerald-300 font-semibold">Yes (DNS proxy)</td>
+                        <td className="py-2.5 px-3 font-semibold" style={{ color: "#eef5fc" }}>Yes (DNS proxy)</td>
                         <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 15 ms</td>
                         <td className="py-2.5 px-3">2 minutes</td>
                       </tr>
@@ -473,22 +477,22 @@ export default function Documentation() {
                         <td className="py-2.5 px-3">1 minute</td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-bold text-blue-400">3. PHP Drop-in (index.php)</td>
+                        <td className="py-2.5 px-3 font-bold" style={{ color: "#eef5fc" }}>3. PHP Drop-in (index.php)</td>
                         <td className="py-2.5 px-3">cPanel, aaPanel, CyberPanel, Plesk, Apache, LiteSpeed, VPS</td>
                         <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
                         <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 20 ms</td>
                         <td className="py-2.5 px-3">2 minutes</td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-bold text-indigo-400">4. WordPress Plugin (.zip)</td>
+                        <td className="py-2.5 px-3 font-bold" style={{ color: "#eef5fc" }}>4. WordPress Plugin (.zip)</td>
                         <td className="py-2.5 px-3">WordPress & WooCommerce (All versions 5.0 - 6.x)</td>
                         <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
                         <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 25 ms</td>
                         <td className="py-2.5 px-3">1 minute</td>
                       </tr>
                       <tr>
-                        <td className="py-2.5 px-3 font-bold text-purple-400">5. Next.js & Express</td>
-                        <td className="py-2.5 px-3">Vercel, Netlify, Railway, Render, Fly.io, Custom Node.js</td>
+                        <td className="py-2.5 px-3 font-bold" style={{ color: "#eef5fc" }}>5. Next.js Edge Middleware</td>
+                        <td className="py-2.5 px-3">Vercel, Netlify, Cloudflare Pages, Edge Runtime</td>
                         <td className="py-2.5 px-3 text-slate-400 font-semibold">No</td>
                         <td className="py-2.5 px-3 font-mono text-[11px]">&lt; 18 ms</td>
                         <td className="py-2.5 px-3">3 minutes</td>
@@ -528,7 +532,10 @@ export default function Documentation() {
                   </ol>
                 </div>
 
-                <div className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto">
+                <div
+                  style={{ backgroundColor: "#000000" }}
+                  className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto"
+                >
                   <button
                     onClick={() =>
                       copyToClipboard(
@@ -652,7 +659,10 @@ export default {
                     <p className="leading-relaxed">
                       To protect an existing script or form, require the CleanTraffic guard at the very top:
                     </p>
-                    <code className="block bg-slate-900 text-emerald-300 p-2 rounded text-[11px] font-mono">
+                    <code
+                      style={{ backgroundColor: "#010101" }}
+                      className="block bg-slate-900 text-emerald-300 p-2 rounded text-[11px] font-mono"
+                    >
                       &lt;?php require_once __DIR__ . '/index.php'; ?&gt;
                     </code>
                   </div>
@@ -685,22 +695,25 @@ export default {
                 </div>
               </div>
 
-              {/* Stack 5: Next.js & Express */}
+              {/* Stack 5: Next.js Edge Middleware */}
               <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-3.5 shadow-2xs">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-purple-700" />
                     <span className="text-xs font-bold text-purple-900 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full">
-                      Stack 5: Next.js Edge Middleware & Express (Vercel, Railway, Render)
+                      Stack 5: Next.js Edge Middleware (Vercel, Netlify)
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400 font-mono">Modern Jamstack & PaaS</span>
+                  <span className="text-[11px] text-slate-400 font-mono">Modern Jamstack & Edge</span>
                 </div>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  Drop our <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">middleware.ts</code> into your Next.js project root (compatible with Next.js 13, 14, and 15 on Vercel) or mount our Express middleware on Railway or Render.
+                  Drop our <code className="bg-slate-100 px-1 py-0.5 rounded font-mono">middleware.ts</code> into your Next.js project root (compatible with Next.js 13, 14, and 15 on Vercel) for high-performance edge traffic screening.
                 </p>
 
-                <div className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto">
+                <div
+                  style={{ backgroundColor: "#000000" }}
+                  className="relative bg-[#0B132B] border border-slate-800 rounded-lg p-3.5 text-xs text-slate-200 font-mono overflow-x-auto"
+                >
                   <button
                     onClick={() =>
                       copyToClipboard(
@@ -751,7 +764,7 @@ export async function middleware(request: NextRequest) {
                 </h3>
               </div>
               <p className="text-xs text-slate-600 leading-relaxed">
-                CleanTraffic enforces consistent security behaviors across all 5 integration stacks (Cloudflare, 1-Line JS, PHP, WordPress, and Next.js/Express):
+                CleanTraffic enforces consistent security behaviors across all 5 integration stacks (Cloudflare, 1-Line JS, PHP, WordPress, and Next.js Edge):
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
@@ -788,7 +801,10 @@ export async function middleware(request: NextRequest) {
             </div>
 
             {/* Ad Attribution & Verification Testing Guide */}
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3">
+            <div
+              style={{ backgroundColor: "#010204" }}
+              className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-2xs space-y-3"
+            >
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -802,7 +818,10 @@ export async function middleware(request: NextRequest) {
                 All 5 CleanTraffic integration connectors automatically parse, log, and forward advertising click tokens to your target offer page. When testing your integration, append these parameters:
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1 text-xs font-mono">
-                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                <div
+                  style={{ backgroundColor: "#000006", borderColor: "#f1e6e6" }}
+                  className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1"
+                >
                   <span className="text-[10px] text-blue-400 font-sans font-bold uppercase tracking-wider block">Meta (Facebook & IG)</span>
                   <div className="text-slate-200 select-all break-all text-[11px]">
                     ?fbclid=test_token_123<br/>
@@ -810,7 +829,10 @@ export async function middleware(request: NextRequest) {
                   </div>
                 </div>
 
-                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                <div
+                  style={{ backgroundColor: "#000006", borderColor: "#f1e6e6" }}
+                  className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1"
+                >
                   <span className="text-[10px] text-emerald-400 font-sans font-bold uppercase tracking-wider block">Google Ads</span>
                   <div className="text-slate-200 select-all break-all text-[11px]">
                     ?gclid=test_gclid_123<br/>
@@ -818,7 +840,10 @@ export async function middleware(request: NextRequest) {
                   </div>
                 </div>
 
-                <div className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1">
+                <div
+                  style={{ backgroundColor: "#000006", borderColor: "#f1e6e6" }}
+                  className="bg-slate-800/90 border border-slate-700 rounded-lg p-3 space-y-1"
+                >
                   <span className="text-[10px] text-purple-400 font-sans font-bold uppercase tracking-wider block">TikTok & Microsoft</span>
                   <div className="text-slate-200 select-all break-all text-[11px]">
                     ?ttclid=test_ttclid_123<br/>
@@ -827,7 +852,10 @@ export async function middleware(request: NextRequest) {
                 </div>
               </div>
 
-              <div className="bg-slate-800/60 border border-slate-700/60 rounded-lg p-3 text-xs space-y-1 text-slate-300">
+              <div
+                style={{ backgroundColor: "#000006", borderColor: "#f1e6e6" }}
+                className="bg-slate-800/60 border border-slate-700/60 rounded-lg p-3 text-xs space-y-1 text-slate-300"
+              >
                 <div className="font-semibold text-slate-200">Verification & Troubleshooting Checklist:</div>
                 <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-slate-400">
                   <li><strong>Organic Traffic:</strong> Visiting without parameters records as <span className="text-emerald-400">Organic • Residential Human</span> in your live event stream.</li>
@@ -1158,16 +1186,22 @@ export async function middleware(request: NextRequest) {
               REST API & Developer Reference
             </h2>
             <p className="text-sm text-slate-600 leading-relaxed">
-              If you are building a custom backend in Node.js, Python, Go, or Ruby, you can interact directly with the CleanTraffic classification endpoint.
+              If you are integrating via a custom backend or edge proxy (Python, Go, or Ruby), you can interact directly with the CleanTraffic classification endpoint.
             </p>
 
             <div className="space-y-4 pt-2">
-              <div className="bg-slate-900 text-white rounded-xl p-4 font-mono text-xs space-y-2">
+              <div
+                style={{ backgroundColor: "#000006" }}
+                className="bg-slate-900 text-white rounded-xl p-4 font-mono text-xs space-y-2"
+              >
                 <div className="flex items-center gap-2 text-emerald-400 font-bold">
                   <span className="bg-emerald-950 px-2 py-0.5 rounded border border-emerald-800 text-[11px]">POST</span>
-                  <span>/api/classify</span>
+                  <span style={{ backgroundColor: "#000006" }}>/api/classify</span>
                 </div>
-                <div className="text-slate-400 text-[11px]">
+                <div
+                  style={{ backgroundColor: "#000006", fontFamily: "Verdana" }}
+                  className="text-slate-400 text-[11px]"
+                >
                   Evaluates a visitor IP and HTTP header payload against your account's active policy rules.
                 </div>
               </div>
@@ -1193,7 +1227,10 @@ export async function middleware(request: NextRequest) {
                     <span>{copiedCodeSnippet === "curl-req" ? "Copied" : "Copy cURL"}</span>
                   </button>
                 </div>
-                <div className="bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto">
+                <div
+                  style={{ backgroundColor: "#000006" }}
+                  className="bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto"
+                >
                   <pre>{`curl -X POST "https://your-domain.com/api/classify" \\
   -H "X-API-Key: ctc_your_api_key_here" \\
   -H "Content-Type: application/json" \\
@@ -1208,8 +1245,11 @@ export async function middleware(request: NextRequest) {
               {/* Response Example */}
               <div className="space-y-1.5">
                 <div className="text-xs font-bold text-slate-700">Example Response (JSON)</div>
-                <div className="bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto">
-                  <pre>{`{
+                <div
+                  style={{ backgroundColor: "#000006" }}
+                  className="bg-[#051C15] border border-[#0F382B] rounded-lg p-3.5 text-xs text-[#C8E0D7] font-mono overflow-x-auto"
+                >
+                  <pre style={{ backgroundColor: "#000006" }}>{`{
   "ip": "203.0.113.195",
   "visitorType": "Human",
   "isHuman": true,
@@ -1401,7 +1441,10 @@ export async function middleware(request: NextRequest) {
           </section>
 
           {/* Bottom Next Steps Bar */}
-          <div className="bg-[#051C15] border border-[#0F382B] rounded-2xl p-6 sm:p-8 text-white space-y-4">
+          <div
+            style={{ backgroundColor: "#000006" }}
+            className="bg-[#051C15] border border-[#0F382B] rounded-2xl p-6 sm:p-8 text-white space-y-4"
+          >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
                 <h3
@@ -1417,6 +1460,7 @@ export async function middleware(request: NextRequest) {
 
               <button
                 onClick={() => navigate("/user")}
+                style={{ backgroundColor: "#fefefe" }}
                 className="w-full sm:w-auto px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
               >
                 <span>Launch Client Dashboard</span>

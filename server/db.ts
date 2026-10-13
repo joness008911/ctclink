@@ -40,9 +40,9 @@ export function normalizeDatabaseUrl(url: string | undefined): string | null {
     if (parsed.protocol === "postgres:" || parsed.protocol === "postgresql:") {
       // Direct Supabase hostnames (db.[ref].supabase.co) resolve strictly to IPv6 AAAA records.
       // Cloud Run and container sandbox environments cannot route outbound TCP on port 5432 over IPv6 (ECONNREFUSED).
-      // Detect this and fall back to Firestore to prevent application-wide 500 errors.
+      // Detect this and route via Supabase REST HTTPS to prevent application-wide 500 errors.
       if (parsed.hostname.startsWith("db.") && parsed.hostname.endsWith(".supabase.co")) {
-        console.warn(`⚠️ [DATABASE] Direct Supabase host '${parsed.hostname}' is IPv6-only and unreachable from this container runtime. Routing storage to resilient Firestore.`);
+        console.warn(`ℹ️ [DATABASE] Direct PostgreSQL TCP port 5432 '${parsed.hostname}' is IPv6-only. Active storage runs via Supabase REST HTTPS.`);
         return null;
       }
       return cleaned;

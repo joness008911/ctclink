@@ -56,8 +56,6 @@ import { randomUUID } from "crypto";
 import * as ipaddr from "ipaddr.js";
 import bcrypt from "bcrypt";
 import { db, isDatabaseConfigured } from "./db";
-import { isFirestoreAvailable } from "./firebase";
-import { FirestoreStorage } from "./firestoreStorage";
 import { SupabaseStorage } from "./supabaseStorage";
 import { eq, desc, sql, count, lt, or, and, inArray } from "drizzle-orm";
 import { getTierCallLimit } from "@shared/subscription";
@@ -355,6 +353,8 @@ export class MemStorage implements IStorage {
       expirationPeriod: "unlimited",
       expiresAt: null,
       lastUsed: null,
+      domainFilterMode: "forbid_all_except",
+      allowedDomains: [],
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -586,6 +586,8 @@ export class MemStorage implements IStorage {
       callLimit: insertApiKey.callLimit ?? 5000,
       callCount: 0,
       lastUsed: null,
+      domainFilterMode: (insertApiKey as any).domainFilterMode ?? 'forbid_all_except',
+      allowedDomains: (insertApiKey as any).allowedDomains ?? [],
       id,
       createdAt: new Date(),
       updatedAt: new Date()
@@ -2510,71 +2512,17 @@ export class DatabaseStorage {
   }
 }
 
-function createResilientStorage(primary: IStorage, fallback: IStorage | null): IStorage {
-  if (!fallback) return primary;
-  let activeBackend = primary;
-  let hasFailedOver = false;
-
-  return new Proxy(primary, {
-    get(target, prop, receiver) {
-      const orig = (activeBackend as any)[prop];
-      if (typeof orig !== "function") {
-        return orig;
-      }
-
-      return async function (...args: any[]) {
-        try {
-          return await (activeBackend as any)[prop](...args);
-        } catch (err: any) {
-          const isConnError = 
-            err?.code === "ECONNREFUSED" || 
-            err?.code === "ENOTFOUND" || 
-            err?.code === "EAI_AGAIN" ||
-            (typeof err?.message === "string" && (
-              err.message.includes("ECONNREFUSED") || 
-              err.message.includes("Connection terminated") ||
-              err.message.includes("connect ECONNREFUSED")
-            ));
-
-          if (isConnError && activeBackend !== fallback) {
-            if (!hasFailedOver) {
-              console.warn(`🚨 [STORAGE_FAILOVER] Database connection error (${err?.message || err}). Failing over seamlessly to Firestore.`);
-              hasFailedOver = true;
-            }
-            activeBackend = fallback;
-            return await (fallback as any)[prop](...args);
-          }
-          throw err;
-        }
-      };
-    },
-  });
-}
-
-// Configurable storage backend: 'supabase' (or 'postgres'), 'firestore', or fallback
-const configuredBackend = (process.env.STORAGE_BACKEND || "").toLowerCase().trim();
-
 export const isSupabaseConfigured = !!(
   process.env.SUPABASE_URL &&
   (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY)
 );
 
 const supabaseInstance = isSupabaseConfigured ? new SupabaseStorage() : null;
-const firestoreInstance = (!isSupabaseConfigured && isFirestoreAvailable) ? new FirestoreStorage() : null;
 const databaseInstance = isDatabaseConfigured && db !== null ? new DatabaseStorage() : null;
 
-// Primary storage selection: Supabase (REST HTTPS) takes priority because it contains all 41 live accounts
-// and avoids container IPv6 TCP restrictions on port 5432 and Firestore daily free read quota exhaustion
-const initialStorage: IStorage = 
-  supabaseInstance
-    ? supabaseInstance
-    : (configuredBackend === "supabase" || configuredBackend === "postgres" || configuredBackend === "database") && databaseInstance
-    ? createResilientStorage(databaseInstance, firestoreInstance)
-    : firestoreInstance
-    ? firestoreInstance
-    : databaseInstance
-    ? createResilientStorage(databaseInstance, firestoreInstance)
-    : new MemStorage();
-
-export const storage: IStorage = initialStorage;
+// Authoritative primary storage: Supabase (REST HTTPS) holds all live accounts, policies and keys
+export const storage: IStorage = 
+  supabaseInstance || 
+  databaseInstance || 
+  new MemStorage();
 

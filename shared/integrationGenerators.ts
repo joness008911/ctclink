@@ -5,7 +5,8 @@
  * 2. 1-Line JavaScript Snippet (Shopify, Wix, Webflow, Squarespace)
  * 3. WordPress Plugin (.zip / single-file PHP)
  * 4. Next.js Edge Middleware (Vercel, Netlify)
- * 5. Node.js / Express Middleware (Railway, Render, VPS)
+ * 5. PHP Web Shield & Gateway (index.php)
+ * 6. Frontend Frameworks & Client Hooks (React, Vue, Angular, Preact, Svelte)
  * 
  * CORE GUARANTEES ACROSS ALL INTEGRATIONS:
  * - Optional Loading State: Seamless toggle between Interstitial Loading Screen and Transparent Inline Mode.
@@ -555,6 +556,7 @@ export function generateJsSnippet(options: GeneratorOptions): {
 <script src="${endpoint}/v1/protect.js" 
   data-api-key="${apiKey}" 
   data-loading="${enableLoading ? "true" : "false"}" 
+  data-fail-mode="${options.failMode || "open"}" 
   data-theme="${themeId}" 
   data-heading="${heading.replace(/"/g, '&quot;')}" 
   data-subnote="${subnote.replace(/"/g, '&quot;')}" 
@@ -1156,306 +1158,337 @@ export const config = {
 }
 
 /**
- * 5. Node.js & Express Middleware (for Railway, Render, Fly.io, Custom VPS)
- * Zero external dependencies (uses native Node 18+ fetch).
- * In-memory verdict caching prevents external API delays on repeat requests.
- * Humans stay on https://domain.com (next()), bots receive 403/404.
+ * Client-side visitor identification and fraud screening for React applications.
  */
-export function generateNodeExpressMiddleware(options: GeneratorOptions): string {
+export function generateReactHook(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
-  const failMode = options.failMode || "open";
-  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
-  return `// cleantraffic.js (Express / Node.js 18+)
-// Zero external dependencies (native fetch & built-in Map cache)
+  return `// src/hooks/useCleanTraffic.ts
+import { useEffect, useState } from "react";
 
-const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
-const ENDPOINT = (process.env.CLEANTRAFFIC_ENDPOINT || '${endpoint}').replace(/\\/+$/, '');
-const FAIL_MODE = process.env.CLEANTRAFFIC_FAIL_MODE || '${failMode}'; // 'open' or 'closed'
-const TIMEOUT_MS = ${timeoutMs}; // Sub-second protection timeout
-const CACHE_TTL_MS = 3600 * 1000; // 1-hour in-memory cache (0ms latency for repeat visits)
-
-// Server-authoritative in-memory verdict cache (tamper-proof, immune to cookie forgery)
-const verdictCache = new Map();
-
-// Periodic garbage collection of expired entries every 15 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of verdictCache.entries()) {
-    if (entry.expires <= now) verdictCache.delete(ip);
-  }
-}, 15 * 60 * 1000).unref?.();
-
-// Static asset and health check bypass regex
-const STATIC_ASSET_REGEX = /\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i;
-
-function cleanTrafficMiddleware(options = {}) {
-  const apiKey = options.apiKey || API_KEY;
-  const endpoint = (options.endpoint || ENDPOINT).replace(/\\/+$/, '');
-  const timeoutMs = options.timeout || TIMEOUT_MS;
-  const failMode = options.failMode || FAIL_MODE;
-
-  return async function(req, res, next) {
-    // 1. Skip static assets & health checks
-    if (
-      STATIC_ASSET_REGEX.test(req.path) ||
-      req.path === '/health' ||
-      req.path === '/healthz' ||
-      req.path === '/favicon.ico' ||
-      req.path === '/robots.txt'
-    ) {
-      return next();
-    }
-
-    // 2. Extract visitor IP
-    const ip = req.headers['cf-connecting-ip'] 
-      || req.headers['x-real-ip']
-      || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
-      || req.socket.remoteAddress 
-      || '127.0.0.1';
-
-    // 3. Fast-path: Check server in-memory verdict cache (0ms latency)
-    const cached = verdictCache.get(ip);
-    if (cached && cached.expires > Date.now()) {
-      if (cached.isHuman) {
-        return next(); // Verified human: allow seamlessly on https://domain.com
-      } else {
-        if (cached.customBody) {
-          if (Array.isArray(cached.customHeaders)) {
-            for (const h of cached.customHeaders) {
-              if (h?.key && h?.value) res.setHeader(h.key, h.value);
-            }
-          }
-          if (!res.getHeader('Content-Type')) {
-            const isHtml = typeof cached.customBody === 'string' && /<[a-z][\s\S]*>/i.test(cached.customBody);
-            res.setHeader('Content-Type', isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
-          }
-          return res.status(cached.statusCode || 403).send(cached.customBody);
-        }
-        const code = cached.statusCode || 403;
-        const expressStatusMap: Record<number, string> = {
-          403: '403 Forbidden - Access Denied',
-          404: '404 Not Found',
-          429: '429 Too Many Requests - Rate Limit Exceeded',
-          410: '410 Gone',
-          423: '423 Locked',
-          451: '451 Unavailable For Legal Reasons',
-          500: '500 Internal Server Error'
-        };
-        if (code === 429) res.setHeader('Retry-After', '60');
-        return res.status(code).send(expressStatusMap[code] || String(code) + ' Access Restricted');
-      }
-    }
-
-    // 4. Query CleanTraffic API via native Node 18+ fetch
-    const userAgent = req.headers['user-agent'] || '';
-    const referer = req.headers['referer'] || '';
-    const queryString = req.url.includes('?') ? req.url.split('?')[1] : '';
-    const fullUrl = req.protocol + '://' + (req.get('host') || 'localhost') + req.originalUrl;
-
-    try {
-      const response = await fetch(\`\${endpoint}/api/classify\`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-          'User-Agent': 'CleanTraffic-Express-Middleware/3.0'
-        },
-        body: JSON.stringify({
-          apiKey,
-          ip,
-          userAgent,
-          queryString,
-          referer,
-          url: fullUrl
-        }),
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const isHuman = Boolean(data.isHuman || data.is_human || data.visitorType === 'Human');
-        const action = String(data.action || '');
-        const statusCode = data.statusCode || (action === '404' ? 404 : 403);
-        const isBlocked = !isHuman || action === 'Blocked' || action === 'Restricted' || action === '403' || action === '404';
-
-        // Cache the verdict in memory
-        verdictCache.set(ip, {
-          isHuman: !isBlocked,
-          statusCode,
-          customBody: data.customBody,
-          customHeaders: data.customHeaders,
-          expires: Date.now() + CACHE_TTL_MS
-        });
-
-        // If human: allow straight into the application without redirects
-        if (!isBlocked) {
-          return next();
-        }
-
-        // If a custom bot redirect URL is configured, deflect only the bot
-        if (data.destination && data.destination !== '404' && data.destination !== '403' && data.destination.startsWith('http')) {
-          return res.redirect(302, data.destination);
-        }
-
-        // Rule Step Custom Response (HTML, JSON, or Plaintext)
-        if (data.customBody) {
-          if (Array.isArray(data.customHeaders)) {
-            for (const h of data.customHeaders) {
-              if (h?.key && h?.value) res.setHeader(h.key, h.value);
-            }
-          }
-          if (!res.getHeader('Content-Type')) {
-            const isHtml = typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody);
-            res.setHeader('Content-Type', isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8');
-          }
-          return res.status(statusCode || 403).send(data.customBody);
-        }
-
-        // Dynamic status code enforcement
-        const targetExpressCode = typeof statusCode === 'number' ? statusCode : (action === '404' ? 404 : (action === '429' ? 429 : 403));
-        const expressStatusMap: Record<number, string> = {
-          403: '403 Forbidden - Access Denied',
-          404: '404 Not Found',
-          429: '429 Too Many Requests - Rate Limit Exceeded',
-          410: '410 Gone',
-          423: '423 Locked',
-          451: '451 Unavailable For Legal Reasons',
-          500: '500 Internal Server Error'
-        };
-        if (targetExpressCode === 429) res.setHeader('Retry-After', '60');
-        return res.status(targetExpressCode).send(expressStatusMap[targetExpressCode] || String(targetExpressCode) + ' Access Restricted');
-      }
-    } catch (err) {
-      if (failMode === 'closed') {
-        return res.status(403).send('403 Forbidden - Security Check Required');
-      }
-      // Fail-open: continue request smoothly without breaking user site
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('[CleanTraffic] API check timeout, failing open:', err.message);
-      }
-    }
-
-    return next();
-  };
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+  country?: string;
+  cached?: boolean;
 }
 
-module.exports = cleanTrafficMiddleware;
+export function useCleanTraffic() {
+  const [visitor, setVisitor] = useState<CleanTrafficVisitor | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    // 1. SSR Browser check: safe exit if running on server
+    if (typeof window === "undefined" || !window.document) {
+      return;
+    }
+
+    // 2. Inject CleanTraffic core client agent if not present
+    if (!document.getElementById("cleantraffic-agent")) {
+      const script = document.createElement("script");
+      script.id = "cleantraffic-agent";
+      script.src = "${endpoint}/v1/protect.js";
+      script.setAttribute("data-api-key", "${apiKey}");
+      script.setAttribute("data-loading", "${options.enableLoading !== false ? "true" : "false"}");
+      script.setAttribute("data-fail-mode", "${options.failMode || "open"}");
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    // 3. Resolve visitor signals and hardware entropy (Fingerprint-style)
+    const checkInterval = setInterval(() => {
+      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {
+        clearInterval(checkInterval);
+        (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+          setVisitor(res);
+          setLoading(false);
+        });
+      }
+    }, 50);
+
+    const timeout = setTimeout(() => {
+      clearInterval(checkInterval);
+      setLoading(false);
+    }, 3500);
+
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timeout);
+    };
+  }, []);
+
+  return { visitor, loading };
+}
 `;
 }
 
 /**
- * 6. Fastify Hook (for modern ultra-fast Node.js backends)
- * Zero external dependencies (native fetch & built-in Map cache).
+ * 8. Next.js Script & App Router Integration
+ * Embeds CleanTraffic using next/script for Next.js 13, 14, and 15 (App & Pages Router)
  */
-export function generateFastifyHook(options: GeneratorOptions): string {
+export function generateNextJsScriptSnippet(options: GeneratorOptions): string {
   const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
   const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
-  const timeoutMs = options.timeoutMs && options.timeoutMs >= 200 ? options.timeoutMs : 800;
 
-  return `// cleantrafficFastify.js (Fastify Plugin / Hook)
-// Zero external dependencies (Node 18+ native fetch)
+  return `// app/layout.tsx (Next.js App Router)
+import Script from "next/script";
 
-const API_KEY = process.env.CLEANTRAFFIC_API_KEY || '${apiKey}';
-const ENDPOINT = (process.env.CLEANTRAFFIC_ENDPOINT || '${endpoint}').replace(/\\/+$/, '');
-const TIMEOUT_MS = ${timeoutMs};
-const CACHE_TTL_MS = 3600 * 1000;
-
-const verdictCache = new Map();
-const STATIC_ASSET_REGEX = /\\.(css|js|mjs|png|jpg|jpeg|gif|svg|ico|webp|avif|woff|woff2|ttf|eot|mp4|webm|pdf|map|json|txt|xml)$/i;
-
-async function cleanTrafficPlugin(fastify, options) {
-  const apiKey = options?.apiKey || API_KEY;
-  const endpoint = (options?.endpoint || ENDPOINT).replace(/\\/+$/, '');
-  const timeoutMs = options?.timeout || TIMEOUT_MS;
-
-  fastify.addHook('onRequest', async (req, reply) => {
-    // 1. Skip static assets & health checks
-    if (STATIC_ASSET_REGEX.test(req.url) || req.url === '/health' || req.url === '/favicon.ico') {
-      return;
-    }
-
-    // 2. Extract visitor IP
-    const ip = req.headers['cf-connecting-ip'] 
-      || req.headers['x-real-ip']
-      || req.headers['x-forwarded-for']?.split(',')[0]?.trim() 
-      || req.ip 
-      || '127.0.0.1';
-
-    // 3. Fast-path: Check server in-memory verdict cache (0ms latency)
-    const cached = verdictCache.get(ip);
-    if (cached && cached.expires > Date.now()) {
-      if (!cached.isHuman) {
-        if (cached.customBody) {
-          if (Array.isArray(cached.customHeaders)) {
-            for (const h of cached.customHeaders) {
-              if (h?.key && h?.value) reply.header(h.key, h.value);
-            }
-          }
-          const isHtml = typeof cached.customBody === 'string' && /<[a-z][\s\S]*>/i.test(cached.customBody);
-          return reply.code(cached.statusCode || 403).type(isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8').send(cached.customBody);
-        }
-        return reply.code(cached.statusCode || 403).send(
-          cached.statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
-        );
-      }
-      return;
-    }
-
-    try {
-      const response = await fetch(\`\${endpoint}/api/classify\`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
-          'User-Agent': 'CleanTraffic-Fastify-Plugin/3.0'
-        },
-        body: JSON.stringify({
-          apiKey,
-          ip,
-          userAgent: req.headers['user-agent'] || '',
-          url: req.protocol + '://' + req.hostname + req.url
-        }),
-        signal: AbortSignal.timeout(timeoutMs)
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const isHuman = Boolean(data.isHuman || data.is_human || data.visitorType === 'Human');
-        const action = String(data.action || '');
-        const statusCode = data.statusCode || (action === '404' ? 404 : 403);
-        const isBlocked = !isHuman || action === 'Blocked' || action === 'Restricted' || action === '403' || action === '404';
-
-        verdictCache.set(ip, {
-          isHuman: !isBlocked,
-          statusCode,
-          customBody: data.customBody,
-          customHeaders: data.customHeaders,
-          expires: Date.now() + CACHE_TTL_MS
-        });
-
-        if (isBlocked) {
-          if (data.customBody) {
-            if (Array.isArray(data.customHeaders)) {
-              for (const h of data.customHeaders) {
-                if (h?.key && h?.value) reply.header(h.key, h.value);
-              }
-            }
-            const isHtml = typeof data.customBody === 'string' && /<[a-z][\s\S]*>/i.test(data.customBody);
-            return reply.code(statusCode || 403).type(isHtml ? 'text/html; charset=utf-8' : 'application/json; charset=utf-8').send(data.customBody);
-          }
-          return reply.code(statusCode).send(
-            statusCode === 404 ? '404 Not Found' : '403 Forbidden - Access Denied'
-          );
-        }
-      }
-    } catch (err) {
-      // Fail-open: allow request to proceed without interruption
-    }
-  });
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <head />
+      <body>
+        {/* CleanTraffic Next.js Visitor Identification & Protection Script */}
+        <Script
+          id="cleantraffic-agent"
+          src="${endpoint}/v1/protect.js"
+          data-api-key="${apiKey}"
+          data-loading="${options.enableLoading !== false ? "true" : "false"}"
+          data-fail-mode="${options.failMode || "open"}"
+          strategy="afterInteractive"
+        />
+        {children}
+      </body>
+    </html>
+  );
+}
+`;
 }
 
-module.exports = cleanTrafficPlugin;
+/**
+ * 9. Vue.js 3 Composable (useCleanTraffic)
+ * Composition API hook for Vue 3, Nuxt 3, and Vite-Vue apps.
+ */
+export function generateVueSnippet(options: GeneratorOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `// composables/useCleanTraffic.ts (Vue 3 / Nuxt 3)
+import { ref, onMounted } from "vue";
+
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+}
+
+export function useCleanTraffic() {
+  const visitor = ref<CleanTrafficVisitor | null>(null);
+  const loading = ref<boolean>(true);
+
+  onMounted(() => {
+    // 1. SSR check (essential for Nuxt / Vite SSR)
+    if (typeof window === "undefined") return;
+
+    // 2. Inject CleanTraffic agent
+    if (!document.getElementById("cleantraffic-agent")) {
+      const script = document.createElement("script");
+      script.id = "cleantraffic-agent";
+      script.src = "${endpoint}/v1/protect.js";
+      script.setAttribute("data-api-key", "${apiKey}");
+      script.setAttribute("data-loading", "${options.enableLoading !== false ? "true" : "false"}");
+      script.setAttribute("data-fail-mode", "${options.failMode || "open"}");
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    // 3. Resolve visitor data asynchronously
+    const timer = setInterval(() => {
+      if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === "function") {
+        clearInterval(timer);
+        (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+          visitor.value = res;
+          loading.value = false;
+        });
+      }
+    }, 50);
+
+    setTimeout(() => {
+      clearInterval(timer);
+      loading.value = false;
+    }, 3500);
+  });
+
+  return { visitor, loading };
+}
+`;
+}
+
+/**
+ * 10. Angular Service (CleanTrafficService)
+ * Injectable service with SSR guards for Angular 15, 16, 17, and 18.
+ */
+export function generateAngularSnippet(options: GeneratorOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `// src/app/services/cleantraffic.service.ts
+import { Injectable, PLATFORM_ID, Inject } from '@angular/core';
+import { isPlatformBrowser } from '@angular/common';
+
+export interface CleanTrafficVisitor {
+  visitorId?: string;
+  deviceId?: string;
+  isHuman?: boolean;
+  action?: string;
+  confidenceScore?: number;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class CleanTrafficService {
+  private visitor: CleanTrafficVisitor | null = null;
+
+  constructor(@Inject(PLATFORM_ID) private platformId: Object) {}
+
+  public async getVisitor(): Promise<CleanTrafficVisitor | null> {
+    // SSR safe-guard: do not execute DOM manipulation on server
+    if (!isPlatformBrowser(this.platformId)) {
+      return null;
+    }
+
+    if (this.visitor) return this.visitor;
+
+    // Inject agent script if not present
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    return new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        if ((window as any).CleanTraffic && typeof (window as any).CleanTraffic.get === 'function') {
+          clearInterval(checkInterval);
+          (window as any).CleanTraffic.get().then((res: CleanTrafficVisitor) => {
+            this.visitor = res;
+            resolve(res);
+          });
+        }
+      }, 50);
+
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve(this.visitor);
+      }, 3500);
+    });
+  }
+}
+`;
+}
+
+/**
+ * 11. Preact Hook (useCleanTraffic)
+ * Lightweight hook using preact/hooks for ultra-fast Preact apps.
+ */
+export function generatePreactSnippet(options: GeneratorOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `// src/hooks/useCleanTraffic.js (Preact)
+import { useState, useEffect } from "preact/hooks";
+
+export function useCleanTraffic() {
+  const [visitor, setVisitor] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (!document.getElementById("cleantraffic-agent")) {
+      const script = document.createElement("script");
+      script.id = "cleantraffic-agent";
+      script.src = "${endpoint}/v1/protect.js";
+      script.setAttribute("data-api-key", "${apiKey}");
+      script.setAttribute("data-loading", "${options.enableLoading !== false ? "true" : "false"}");
+      script.setAttribute("data-fail-mode", "${options.failMode || "open"}");
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    const checkInterval = setInterval(() => {
+      if (window.CleanTraffic && typeof window.CleanTraffic.get === "function") {
+        clearInterval(checkInterval);
+        window.CleanTraffic.get().then((res) => {
+          setVisitor(res);
+          setLoading(false);
+        });
+      }
+    }, 50);
+
+    const timer = setTimeout(() => {
+      clearInterval(checkInterval);
+      setLoading(false);
+    }, 3500);
+
+    return () => {
+      clearInterval(checkInterval);
+      clearTimeout(timer);
+    };
+  }, []);
+
+  return { visitor, loading };
+}
+`;
+}
+
+/**
+ * 12. Svelte Store & Component (CleanTraffic.svelte)
+ * Compatible with Svelte 4 and Svelte 5 / SvelteKit.
+ */
+export function generateSvelteSnippet(options: GeneratorOptions): string {
+  const apiKey = options.apiKeyValue || "ctc_live_your_api_key_here";
+  const endpoint = options.effectiveEndpoint.replace(/\/+$/, "");
+
+  return `<!-- src/lib/CleanTraffic.svelte (Svelte / SvelteKit) -->
+<script>
+  import { onMount } from 'svelte';
+  import { writable } from 'svelte/store';
+
+  export const visitor = writable(null);
+  export const isReady = writable(false);
+
+  onMount(() => {
+    if (typeof window === 'undefined') return;
+
+    // Inject agent script
+    if (!document.getElementById('cleantraffic-agent')) {
+      const script = document.createElement('script');
+      script.id = 'cleantraffic-agent';
+      script.src = '${endpoint}/v1/protect.js';
+      script.setAttribute('data-api-key', '${apiKey}');
+      script.setAttribute('data-loading', '${options.enableLoading !== false ? "true" : "false"}');
+      script.setAttribute('data-fail-mode', '${options.failMode || "open"}');
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    const interval = setInterval(() => {
+      if (window.CleanTraffic && typeof window.CleanTraffic.get === 'function') {
+        clearInterval(interval);
+        window.CleanTraffic.get().then((data) => {
+          visitor.set(data);
+          isReady.set(true);
+        });
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
+  });
+</script>
 `;
 }
