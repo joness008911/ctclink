@@ -2,7 +2,10 @@
 # Overrides default frozen-lockfile behavior to prevent build failures when dependencies update
 
 [phases.setup]
-nixPkgs = ["bun", "nodejs_20"]
+nixPkgs = ["bun", "nodejs_22"]
+
+[variables]
+NODE_OPTIONS = "--import tsx"
 
 [phases.install]
 cmds = ["bun install"]
@@ -12,3 +15,4 @@ cmds = ["npm run build"]
 
 [start]
 cmd = "npm start"
+
