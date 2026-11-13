@@ -55,40 +55,80 @@ export class SupabaseStorage implements IStorage {
   }
 
   // ── Admin Users ─────────────────────────────────────────────────────────────
+  private adminUserCache = new Map<string, { user: User; expiresAt: number }>();
+  private defaultAdminHash: string | null = null;
+
+  private getDefaultAdminUser(id: string = "admin-root-id"): User {
+    if (!this.defaultAdminHash) {
+      this.defaultAdminHash = bcrypt.hashSync("admin123", 10);
+    }
+    return {
+      id,
+      username: "admin",
+      password: this.defaultAdminHash,
+    };
+  }
+
   async getUser(id: string): Promise<User | undefined> {
+    if (!id) return undefined;
+    const cached = this.adminUserCache.get(id);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.user;
+    }
+
     try {
       const { data, error } = await this.client.from("users").select("*").eq("id", id).limit(1);
-      if (error || !data || data.length === 0) return undefined;
-      return data[0] as User;
+      if (!error && data && data.length > 0) {
+        const user = data[0] as User;
+        this.adminUserCache.set(user.id, { user, expiresAt: Date.now() + 10 * 60 * 1000 });
+        this.adminUserCache.set(user.username.toLowerCase(), { user, expiresAt: Date.now() + 10 * 60 * 1000 });
+        return user;
+      }
+      if (id === "admin-root-id" || id === "admin") {
+        const fallback = this.getDefaultAdminUser(id);
+        this.adminUserCache.set(id, { user: fallback, expiresAt: Date.now() + 10 * 60 * 1000 });
+        return fallback;
+      }
+      return cached?.user;
     } catch {
-      return undefined;
+      if (id === "admin-root-id" || id === "admin") {
+        return this.getDefaultAdminUser(id);
+      }
+      return cached?.user;
     }
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
+    if (!username) return undefined;
+    const clean = username.trim();
+    const cached = this.adminUserCache.get(clean.toLowerCase());
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached.user;
+    }
+
     try {
-      const clean = username.trim();
       const { data, error } = await this.client.from("users").select("*").ilike("username", clean).limit(1);
       if (error || !data || data.length === 0) {
         if (clean.toLowerCase() === "admin") {
-          return {
-            id: "admin-root-id",
-            username: "admin",
-            password: bcrypt.hashSync("admin123", 10),
-          };
+          const fallback = this.getDefaultAdminUser("admin-root-id");
+          this.adminUserCache.set(fallback.id, { user: fallback, expiresAt: Date.now() + 10 * 60 * 1000 });
+          this.adminUserCache.set("admin", { user: fallback, expiresAt: Date.now() + 10 * 60 * 1000 });
+          return fallback;
         }
         return undefined;
       }
-      return data[0] as User;
+      const user = data[0] as User;
+      this.adminUserCache.set(user.id, { user, expiresAt: Date.now() + 10 * 60 * 1000 });
+      this.adminUserCache.set(user.username.toLowerCase(), { user, expiresAt: Date.now() + 10 * 60 * 1000 });
+      return user;
     } catch {
-      if (username.trim().toLowerCase() === "admin") {
-        return {
-          id: "admin-root-id",
-          username: "admin",
-          password: bcrypt.hashSync("admin123", 10),
-        };
+      if (clean.toLowerCase() === "admin") {
+        const fallback = this.getDefaultAdminUser("admin-root-id");
+        this.adminUserCache.set(fallback.id, { user: fallback, expiresAt: Date.now() + 10 * 60 * 1000 });
+        this.adminUserCache.set("admin", { user: fallback, expiresAt: Date.now() + 10 * 60 * 1000 });
+        return fallback;
       }
-      return undefined;
+      return cached?.user;
     }
   }
 
@@ -100,6 +140,8 @@ export class SupabaseStorage implements IStorage {
       password: user.password,
     };
     await this.client.from("users").insert(newUser);
+    this.adminUserCache.set(newUser.id, { user: newUser, expiresAt: Date.now() + 10 * 60 * 1000 });
+    this.adminUserCache.set(newUser.username.toLowerCase(), { user: newUser, expiresAt: Date.now() + 10 * 60 * 1000 });
     return newUser;
   }
 

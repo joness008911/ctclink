@@ -34,7 +34,36 @@ export function sanitizeRedisUrl(raw?: string): string {
   return cleaned.replace(/^redis-cli\s+(-u\s+)?/i, "").trim();
 }
 
-const rawRedisUrl = sanitizeRedisUrl(process.env.REDIS_URL) || (process.env.NODE_ENV === "production" ? "" : "redis://127.0.0.1:6379");
+/**
+ * Resolves the Redis connection URL from standard and Railway-specific environment variables.
+ */
+export function resolveRedisUrlFromEnv(): string {
+  const candidates = [
+    process.env.REDIS_URL,
+    process.env.REDIS_PRIVATE_URL,
+    process.env.REDIS_TLS_URL,
+    process.env.REDIS_PUBLIC_URL,
+  ];
+
+  for (const candidate of candidates) {
+    const cleaned = sanitizeRedisUrl(candidate);
+    if (cleaned) return cleaned;
+  }
+
+  const host = (process.env.REDISHOST || process.env.REDIS_HOST || "").trim();
+  if (host) {
+    const port = (process.env.REDISPORT || process.env.REDIS_PORT || "6379").trim();
+    const user = encodeURIComponent((process.env.REDISUSER || process.env.REDIS_USER || "default").trim());
+    const password = process.env.REDISPASSWORD || process.env.REDIS_PASSWORD || "";
+    const authPart = password ? `${user}:${encodeURIComponent(password.trim())}@` : "";
+    return `redis://${authPart}${host}:${port}`;
+  }
+
+  return "";
+}
+
+const configuredRedisUrl = resolveRedisUrlFromEnv();
+const rawRedisUrl = configuredRedisUrl || (process.env.NODE_ENV === "production" ? "" : "redis://127.0.0.1:6379");
 
 let isTls = false;
 try {
@@ -53,6 +82,9 @@ const redisOptions: RedisOptions = {
   connectTimeout: 5000,
   commandTimeout: 1500, // 1.5s Anti-Freeze Guard for web requests
   retryStrategy(times: number) {
+    if (!rawRedisUrl && process.env.NODE_ENV === "production") {
+      return null; // Do not retry when no Redis URL is configured in production
+    }
     // Exponential backoff: 50ms, 100ms, 150ms... capped at 2000ms
     const delay = Math.min(times * 50, 2000);
     return delay;
@@ -75,7 +107,7 @@ let realClient: Redis | null = null;
 let realPub: Redis | null = null;
 let realSub: Redis | null = null;
 
-// Mock fallback instance for dev when real Redis is unavailable
+// Mock fallback instance for dev/fallback when real Redis is unavailable
 let devMockClient: any = null;
 let devMockPub: any = null;
 let devMockSub: any = null;
@@ -94,47 +126,48 @@ function getDevMock() {
   return { devMockClient, devMockPub, devMockSub };
 }
 
-// Instantiate real clients
-try {
-  const targetUrl = rawRedisUrl || "redis://127.0.0.1:6379";
-  realClient = new Redis(targetUrl, {
-    ...redisOptions,
-    lazyConnect: true,
-  });
+// Instantiate real clients only if a target URL exists
+if (rawRedisUrl) {
+  try {
+    realClient = new Redis(rawRedisUrl, {
+      ...redisOptions,
+      lazyConnect: true,
+    });
 
-  realPub = new Redis(targetUrl, {
-    ...redisOptions,
-    lazyConnect: true,
-  });
+    realPub = new Redis(rawRedisUrl, {
+      ...redisOptions,
+      lazyConnect: true,
+    });
 
-  realSub = new Redis(targetUrl, {
-    ...redisOptions,
-    lazyConnect: true,
-  });
+    realSub = new Redis(rawRedisUrl, {
+      ...redisOptions,
+      lazyConnect: true,
+    });
 
-  // Attach error listeners immediately to ALL clients to prevent Node.js Unhandled error event crashes
-  realClient.on("connect", () => { /* wait for ready event */ });
-  realClient.on("ready", () => { 
-    isRedisConnected = true; 
-    fallbackActive = false;
-  });
-  realClient.on("error", (err) => {
-    isRedisConnected = false;
-    console.warn(`[REDIS_WARN] Redis Client connection notice: ${err.message}`);
-  });
-  realClient.on("close", () => { isRedisConnected = false; });
-  realClient.on("reconnecting", () => { isRedisConnected = false; });
-  realClient.on("end", () => { isRedisConnected = false; });
+    // Attach error listeners immediately to ALL clients to prevent Node.js Unhandled error event crashes
+    realClient.on("connect", () => { /* wait for ready event */ });
+    realClient.on("ready", () => { 
+      isRedisConnected = true; 
+      fallbackActive = false;
+    });
+    realClient.on("error", (err) => {
+      isRedisConnected = false;
+      console.warn(`[REDIS_WARN] Redis Client connection notice: ${err.message}`);
+    });
+    realClient.on("close", () => { isRedisConnected = false; });
+    realClient.on("reconnecting", () => { isRedisConnected = false; });
+    realClient.on("end", () => { isRedisConnected = false; });
 
-  realPub.on("error", (err) => {
-    console.warn(`[REDIS_WARN] Redis Pub connection notice: ${err.message}`);
-  });
+    realPub.on("error", (err) => {
+      console.warn(`[REDIS_WARN] Redis Pub connection notice: ${err.message}`);
+    });
 
-  realSub.on("error", (err) => {
-    console.warn(`[REDIS_WARN] Redis Sub connection notice: ${err.message}`);
-  });
-} catch (err: any) {
-  console.warn(`[REDIS_INIT_WARN] Could not construct ioredis instances: ${err.message}`);
+    realSub.on("error", (err) => {
+      console.warn(`[REDIS_WARN] Redis Sub connection notice: ${err.message}`);
+    });
+  } catch (err: any) {
+    console.warn(`[REDIS_INIT_WARN] Could not construct ioredis instances: ${err.message}`);
+  }
 }
 
 // Transparent Proxy Dispatchers: routes to real Redis when connected and ready, or dev mock if down/unready
@@ -238,14 +271,15 @@ export const redisSub: Redis = new Proxy({} as any, {
 
 /**
  * Boot-time Health Check & Initialization
- * Strictly validates that Redis is reachable before the HTTP server begins serving requests.
+ * Connects to Redis when configured, or falls back gracefully to in-memory store so deployments never crash at boot.
  */
 export async function initRedis(): Promise<void> {
   const isProduction = process.env.NODE_ENV === "production";
-  const url = sanitizeRedisUrl(process.env.REDIS_URL) || (isProduction ? "" : "redis://127.0.0.1:6379");
+  const envUrl = resolveRedisUrlFromEnv();
+  const url = envUrl || (isProduction ? "" : "redis://127.0.0.1:6379");
 
   // In local development, try starting local redis-server daemon if installed
-  if (!isProduction && !process.env.REDIS_URL) {
+  if (!isProduction && !envUrl) {
     try {
       const { spawnSync } = await import("child_process");
       spawnSync("redis-server", ["--daemonize", "yes"], { stdio: "ignore" });
@@ -254,10 +288,14 @@ export async function initRedis(): Promise<void> {
     }
   }
 
-  if (isProduction && !url) {
-    const fatalMsg = "FATAL: REDIS_URL environment variable is required in production. Please configure REDIS_URL in your hosting platform (e.g. Railway Redis plugin).";
-    console.error(`🚨 [REDIS_FATAL] ${fatalMsg}`);
-    throw new Error(fatalMsg);
+  if (!url) {
+    isRedisConnected = false;
+    fallbackActive = true;
+    console.warn(
+      "⚠️ [REDIS_FALLBACK] REDIS_URL is not configured in production. Activated in-memory Redis fallback so the server can start cleanly. (Tip: Link a Redis service in Railway to enable distributed caching.)"
+    );
+    getDevMock();
+    return;
   }
 
   if (realClient && realPub && realSub) {
@@ -290,24 +328,16 @@ export async function initRedis(): Promise<void> {
       isRedisConnected = false;
       fallbackActive = true;
       const msg = `Failed to establish Redis connection: ${error.message}`;
-      
-      if (isProduction && !process.env.REDIS_URL) {
-        console.error(`🚨 [REDIS_FATAL] ${msg}`);
-        throw new Error(msg);
-      } else {
-        console.warn(`⚠️ [REDIS_DEV_NOTICE] ${msg}. Activated local in-memory fallback.`);
-        getDevMock();
-        return;
-      }
+      console.warn(`⚠️ [REDIS_FALLBACK] ${msg}. Activated local in-memory fallback.`);
+      getDevMock();
+      return;
     }
   }
 
-  if (isProduction) {
-    throw new Error("FATAL: Redis client could not be initialized in production.");
-  } else {
-    console.warn("⚠️ [REDIS_DEV_NOTICE] Real Redis unavailable. Running with dev mock instance.");
-    getDevMock();
-  }
+  isRedisConnected = false;
+  fallbackActive = true;
+  console.warn("⚠️ [REDIS_FALLBACK] Real Redis unavailable. Running with in-memory fallback instance.");
+  getDevMock();
 }
 
 /**

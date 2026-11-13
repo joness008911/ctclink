@@ -1,7 +1,46 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
+import dns from "dns";
+import net from "net";
 import { storage } from "./storage";
 import { randomUUID } from "crypto";
+
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {
+  // Ignore if unsupported
+}
+
+/**
+ * Resolves an SMTP hostname strictly to an IPv4 address.
+ * Why: Nodemailer's internal resolveHostname() queries both resolve4 and resolve6 and places
+ * IPv6 AAAA addresses (e.g. 2607:f8b0:4004:c0b::6d for smtp.gmail.com) into its connection pool.
+ * On Railway/Docker/Cloud Run containers without IPv6 routing, connecting to an IPv6 address
+ * fails with `connect ENETUNREACH 2607:f8b0:...:465 - Local (:::0)`.
+ * By passing a resolved IPv4 literal as `host` and keeping `servername: originalHost` for TLS SNI,
+ * Nodemailer skips IPv6 resolution completely and connects strictly over IPv4.
+ */
+async function resolveIpv4Host(hostname: string): Promise<string> {
+  const clean = (hostname || "").trim();
+  if (!clean || net.isIP(clean) === 4) return clean;
+  try {
+    const ipv4List = await dns.promises.resolve4(clean);
+    if (ipv4List && ipv4List.length > 0) {
+      return ipv4List[0];
+    }
+  } catch {
+    // Fallback to dns.lookup with family: 4
+  }
+  try {
+    const lookedUp = await dns.promises.lookup(clean, { family: 4 });
+    if (lookedUp && lookedUp.address) {
+      return lookedUp.address;
+    }
+  } catch {
+    // If all IPv4 lookups fail, return original hostname
+  }
+  return clean;
+}
 
 export interface SmtpConfig {
   host: string;
@@ -169,7 +208,34 @@ export async function saveSmtpConfig(config: Partial<SmtpConfig>): Promise<void>
   await storage.setSetting("smtp_provider_preset", sanitized.providerPreset || "custom");
 }
 
-// ── Create Transporter Instance ─────────────────────────────────────────────
+// ── Create Transporter Instance (Strictly IPv4) ─────────────────────────────
+export async function buildIpv4NodemailerTransport(config: SmtpConfig, portOverride?: number, secureOverride?: boolean): Promise<Transporter> {
+  const ipv4Host = await resolveIpv4Host(config.host);
+  const targetPort = portOverride ?? config.port;
+  const targetSecure = secureOverride ?? config.secure;
+
+  return nodemailer.createTransport({
+    host: ipv4Host,
+    port: targetPort,
+    secure: targetSecure, // true for 465, false for other ports (e.g. 587 using STARTTLS)
+    name: config.host,
+    auth: {
+      user: config.user,
+      pass: config.pass,
+    },
+    tls: {
+      rejectUnauthorized: false,
+      servername: config.host, // Critical for TLS SNI when connecting via IPv4 literal
+    },
+    // Ensure Nodemailer internal options also preserve TLS SNI servername & IPv4 family
+    servername: config.host,
+    family: 4,
+    connectionTimeout: 8000, // 8s connection timeout prevents long hangs
+    greetingTimeout: 8000,   // 8s greeting timeout
+    socketTimeout: 12000,    // 12s socket timeout
+  } as any);
+}
+
 export async function createTransporter(overrideConfig?: Partial<SmtpConfig>): Promise<{
   transporter: Transporter | null;
   config: SmtpConfig;
@@ -184,23 +250,26 @@ export async function createTransporter(overrideConfig?: Partial<SmtpConfig>): P
     return { transporter: null, config, isConfigured: false };
   }
 
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port: config.port,
-    secure: config.secure, // true for 465, false for other ports (e.g. 587 using STARTTLS)
-    auth: {
-      user: config.user,
-      pass: config.pass,
-    },
-    tls: {
-      rejectUnauthorized: false, // Prevents self-signed cert issues during dev
-    },
-    connectionTimeout: 10000, // 10s connection timeout prevents long hangs
-    greetingTimeout: 10000,   // 10s greeting timeout
-    socketTimeout: 15000,     // 15s socket timeout
-  });
+  const transporter = await buildIpv4NodemailerTransport(config);
 
   return { transporter, config, isConfigured: true };
+}
+
+function isNetworkOrTimeoutError(err: any): boolean {
+  const code = String(err?.code || "").toUpperCase();
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    code === "ETIMEDOUT" ||
+    code === "ENETUNREACH" ||
+    code === "EHOSTUNREACH" ||
+    code === "ECONNREFUSED" ||
+    code === "ESOCKET" ||
+    code === "ECONNECTION" ||
+    msg.includes("timeout") ||
+    msg.includes("enetunreach") ||
+    msg.includes("ehostunreach") ||
+    msg.includes("econnrefused")
+  );
 }
 
 // ── Helper: Format User-Friendly SMTP Errors ────────────────────────────────
@@ -211,8 +280,13 @@ function formatSmtpError(error: any, config: SmtpConfig): string {
     errorMsg.toLowerCase().includes("timeout") ||
     errorMsg.toLowerCase().includes("connection timeout");
 
-  if (isTimeout) {
-    return `Connection timed out connecting to ${config.host}:${config.port}. Please check that the port is correct (e.g. 465 for SSL or 587 for TLS) and that outbound SMTP traffic is not blocked.`;
+  const isUnreachable =
+    error?.code === "ENETUNREACH" ||
+    error?.code === "EHOSTUNREACH" ||
+    errorMsg.toLowerCase().includes("enetunreach");
+
+  if (isTimeout || isUnreachable) {
+    return `Outbound SMTP connection to ${config.host} (ports 465/587) was blocked or unreachable from this hosting environment (${error?.code || "TIMEOUT"}). Note: Cloud hosts like Railway block outbound SMTP ports (465/587) on Free/Trial/Hobby plans. To send emails on Railway without upgrading to Railway Pro, use a Resend API key (smtp.resend.com or RESEND_API_KEY) which automatically dispatches over HTTPS (port 443).`;
   }
 
   if (error?.code === "EAUTH" || error?.responseCode === 535) {
@@ -251,38 +325,20 @@ export async function verifySmtpConnection(testConfig?: Partial<SmtpConfig>): Pr
       await transporter.verify();
       return {
         success: true,
-        message: `Successfully connected and authenticated with SMTP server (${config.host}:${config.port}, secure: ${config.secure ? "SSL" : "TLS"}).`,
+        message: `Successfully connected and authenticated with SMTP server (${config.host}:${config.port} over IPv4, secure: ${config.secure ? "SSL" : "TLS"}).`,
       };
     } catch (firstErr: any) {
-      // If verification timed out and host has a known alternative port (e.g. Gmail 465 <-> 587), try the sibling port!
-      const isTimeout =
-        firstErr?.code === "ETIMEDOUT" ||
-        (firstErr?.message || "").toLowerCase().includes("timeout");
-
-      const isKnownProvider =
-        config.host.toLowerCase().includes("gmail.com") ||
-        config.host.toLowerCase().includes("googlemail.com");
-
-      if (isTimeout && isKnownProvider) {
+      // If verification failed due to timeout/network error, try alternative port (465 <-> 587) over IPv4!
+      if (isNetworkOrTimeoutError(firstErr)) {
         const altPort = config.port === 465 ? 587 : 465;
         const altSecure = altPort === 465;
 
         console.log(
-          `[SMTP Verification] Port ${config.port} timed out. Attempting fallback on alternative port ${altPort} (secure: ${altSecure})...`
+          `[SMTP Verification] Port ${config.port} failed (${firstErr?.code || firstErr?.message}). Attempting IPv4 fallback on port ${altPort} (secure: ${altSecure})...`
         );
 
         try {
-          const altTransporter = nodemailer.createTransport({
-            host: config.host,
-            port: altPort,
-            secure: altSecure,
-            auth: { user: config.user, pass: config.pass },
-            tls: { rejectUnauthorized: false },
-            connectionTimeout: 10000,
-            greetingTimeout: 10000,
-            socketTimeout: 15000,
-          });
-
+          const altTransporter = await buildIpv4NodemailerTransport(config, altPort, altSecure);
           await altTransporter.verify();
 
           // Auto-save the working port configuration
@@ -290,10 +346,10 @@ export async function verifySmtpConnection(testConfig?: Partial<SmtpConfig>): Pr
 
           return {
             success: true,
-            message: `Successfully connected and authenticated on port ${altPort} (${altSecure ? "SSL" : "TLS"}). Settings automatically updated from timed-out port ${config.port}.`,
+            message: `Successfully connected and authenticated over IPv4 on port ${altPort} (${altSecure ? "SSL" : "TLS"}). Settings automatically updated from port ${config.port}.`,
           };
         } catch (secondErr: any) {
-          console.error("[SMTP Verification Error (Fallback)]:", secondErr);
+          console.error("[SMTP Verification Error (Fallback)]:", secondErr?.message || secondErr);
           throw firstErr; // Propagate original with formatting
         }
       }
@@ -802,45 +858,65 @@ export async function sendEmail(options: SendEmailOptions): Promise<{
         },
       });
     } catch (sendErr: any) {
-      // If delivery timed out and host has a known alternative port (e.g. Gmail 465 <-> 587), try the alternative port once
-      const isTimeout =
-        sendErr?.code === "ETIMEDOUT" ||
-        (sendErr?.message || "").toLowerCase().includes("timeout");
+      // 1. If Resend API key is configured (via smtp.resend.com, pass starting with re_, or RESEND_API_KEY),
+      // dispatch over HTTPS (port 443) which bypasses cloud provider SMTP port blocks completely!
+      const resendKey =
+        process.env.RESEND_API_KEY ||
+        (config.host.toLowerCase().includes("resend.com") || config.pass.startsWith("re_") ? config.pass : "");
 
-      const isKnownProvider =
-        config.host.toLowerCase().includes("gmail.com") ||
-        config.host.toLowerCase().includes("googlemail.com");
+      if (resendKey && isNetworkOrTimeoutError(sendErr)) {
+        try {
+          console.log(`[Email Service] SMTP port blocked/unreachable. Falling back to Resend HTTPS API (port 443) for ${to}...`);
+          const resp = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${resendKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              from: fromAddress,
+              to: [to],
+              subject: renderedSubject,
+              html: renderedHtml,
+              text: plainText,
+            }),
+          });
+          if (resp.ok) {
+            const data: any = await resp.json();
+            info = { messageId: data.id || `resend_${randomUUID()}`, response: "250 OK via Resend HTTPS API" };
+          }
+        } catch (httpErr) {
+          console.warn("[Email Service] Resend HTTPS fallback error:", httpErr);
+        }
+      }
 
-      if (isTimeout && isKnownProvider) {
+      // 2. If not sent yet and error is a network/timeout error, try alternative SMTP port (465 <-> 587) strictly over IPv4
+      if (!info && isNetworkOrTimeoutError(sendErr)) {
         const altPort = config.port === 465 ? 587 : 465;
         const altSecure = altPort === 465;
 
         console.log(
-          `[Email Service] Port ${config.port} timed out sending to ${to}. Retrying via alternate port ${altPort} (secure: ${altSecure})...`
+          `[Email Service] Port ${config.port} failed (${sendErr?.code || sendErr?.message}) sending to ${to}. Retrying via IPv4 alternate port ${altPort} (secure: ${altSecure})...`
         );
 
-        const altTransporter = nodemailer.createTransport({
-          host: config.host,
-          port: altPort,
-          secure: altSecure,
-          auth: { user: config.user, pass: config.pass },
-          tls: { rejectUnauthorized: false },
-          connectionTimeout: 10000,
-          greetingTimeout: 10000,
-          socketTimeout: 15000,
-        });
+        const altTransporter = await buildIpv4NodemailerTransport(config, altPort, altSecure);
 
         info = await altTransporter.sendMail({
           from: fromAddress,
+          replyTo: fromAddress,
           to,
           subject: renderedSubject,
           html: renderedHtml,
           text: plainText,
+          headers: {
+            "X-Entity-Ref-ID": randomUUID(),
+            "X-Mailer": "CleanTraffic-Security-Mailer",
+          },
         });
 
         // Persist working configuration
         await saveSmtpConfig({ ...config, port: altPort, secure: altSecure });
-      } else {
+      } else if (!info) {
         throw sendErr;
       }
     }

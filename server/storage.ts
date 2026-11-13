@@ -331,9 +331,9 @@ export class MemStorage implements IStorage {
       updatedAt: new Date()
     };
 
-    // Seed default admin user (admin / admin123)
+    // Seed default admin user (admin / admin123) with deterministic ID
     const adminPasswordHash = bcrypt.hashSync("admin123", 10);
-    const adminId = randomUUID();
+    const adminId = "admin-root-id";
     this.users.set(adminId, {
       id: adminId,
       username: "admin",
@@ -407,7 +407,7 @@ export class MemStorage implements IStorage {
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    return this.users.get(id) || (id === "admin-root-id" ? Array.from(this.users.values()).find(u => u.username === "admin") : undefined);
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {

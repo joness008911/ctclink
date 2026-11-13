@@ -1,10 +1,18 @@
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
+import dns from "dns";
 import { execSync } from "child_process";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { isValidDatabaseUrl } from "./db";
 import { initRedis } from "./redis";
+
+// Force IPv4-first DNS resolution across Node.js to prevent IPv6 ENETUNREACH in Railway/Docker/Cloud Run
+try {
+  dns.setDefaultResultOrder("ipv4first");
+} catch {
+  // Ignore if unsupported in older runtime
+}
 
 const app = express();
 
