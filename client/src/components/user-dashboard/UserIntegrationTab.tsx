@@ -84,7 +84,6 @@ import {
   PreactLogo,
   SquarespaceLogo,
 } from "./IntegrationLogos";
-import { AgentSetupView } from "./AgentSetupView";
 import { SyncedPolicyBanner } from "./SyncedPolicyBanner";
 import type { Ruleset } from "@shared/rulesEngine";
 
@@ -172,10 +171,6 @@ export function UserIntegrationTab({
   const [preactSubTab, setPreactSubTab] = useState<"hook" | "usage">("hook");
   const [svelteSubTab, setSvelteSubTab] = useState<"component" | "usage">("component");
   const [jsSubTab, setJsSubTab] = useState<"tag" | "api">("tag");
-
-  // Segmented Setup Mode (Agent setup vs Manual setup - Fingerprint.com style)
-  const [setupMode, setSetupMode] = useState<"agent" | "manual">("agent");
-  const [detailSetupMode, setDetailSetupMode] = useState<"agent" | "manual">("manual");
 
   // Copy & reveal states
   const [copiedCode, setCopiedCode] = useState(false);
@@ -1268,69 +1263,15 @@ export function UserIntegrationTab({
 
           {/* Main Full-Width Content Layout */}
           <div className="space-y-6">
-            {/* Segmented Control: Manual setup vs Agent setup */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/90 w-fit">
-                <button
-                  onClick={() => setDetailSetupMode("manual")}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    detailSetupMode === "manual"
-                      ? "bg-white text-slate-900 shadow-2xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <User className="h-3.5 w-3.5 text-slate-500" />
-                  <span>Manual setup</span>
-                </button>
-                <button
-                  onClick={() => setDetailSetupMode("agent")}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    detailSetupMode === "agent"
-                      ? "bg-white text-slate-900 shadow-2xs"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-[#F25A2A]" />
-                  <span>Agent setup</span>
-                </button>
-              </div>
-            </div>
-
-            {detailSetupMode === "agent" ? (
-              <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs w-full">
-                  <div className="mb-4 pb-3 border-b border-slate-100 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold text-[#0F172A] flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-[#F25A2A]" />
-                        <span>AI Assistant Setup for {currentItem.name}</span>
-                      </h3>
-                      <p className="text-xs text-[#64748B] mt-0.5">
-                        Copy the custom prompt below into Cursor, Claude Code, Windsurf, or Copilot.
-                      </p>
-                    </div>
-                  </div>
-                  <AgentSetupView
-                    apiKeyValue={apiKeyValue || ""}
-                    effectiveEndpoint={effectiveEndpoint}
-                    targetStack={selectedIntegration}
-                    rulesets={parsedRulesets}
-                    serverBotUrl={userSettings?.botUrl}
-                    onNavigateToLiveFeed={handleNavigateToLiveFeed}
-                    onNavigateToRules={handleNavigateToRules}
-                    onSelectStack={(stack) => setSelectedIntegration(stack as IntegrationStack)}
-                  />
-                </div>
-              ) : (
-                <>
-                  {/* Synced Policy Status Banner for Manual Mode */}
-                  {selectedIntegration && (
-                    <SyncedPolicyBanner
-                      rulesets={parsedRulesets}
-                      serverBotUrl={userSettings?.botUrl}
-                      onNavigateToRules={handleNavigateToRules}
-                      className="mb-2"
-                    />
-                  )}
+            {/* Synced Policy Status Banner for Live Rules */}
+            {selectedIntegration && (
+              <SyncedPolicyBanner
+                rulesets={parsedRulesets}
+                serverBotUrl={userSettings?.botUrl}
+                onNavigateToRules={handleNavigateToRules}
+                className="mb-2"
+              />
+            )}
 
                   {/* 1. CLOUDFLARE EDGE WORKER DETAIL PAGE */}
                   {selectedIntegration === "cloudflare" && (
@@ -3181,8 +3122,6 @@ export function App() {
                   </div>
                 </div>
               )}
-                </>
-              )}
             </div>
         </div>
       ) : (
@@ -3222,65 +3161,8 @@ export function App() {
             </div>
           </div>
 
-          {/* Top Segmented Control (Agent setup vs Manual setup - Matching Fingerprint Screenshot) */}
-          <div className="flex items-center justify-between gap-4 flex-wrap bg-white border border-[#E5EAE7] rounded-xl p-3 shadow-xs">
-            <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200/90 w-fit">
-              <button
-                onClick={() => setSetupMode("agent")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                  setupMode === "agent"
-                    ? "bg-white text-slate-900 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Sparkles className="h-3.5 w-3.5 text-[#F25A2A]" />
-                <span>Agent setup</span>
-              </button>
-              <button
-                onClick={() => setSetupMode("manual")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-                  setupMode === "manual"
-                    ? "bg-white text-slate-900 shadow-2xs"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <User className="h-3.5 w-3.5 text-slate-500" />
-                <span>Manual setup</span>
-              </button>
-            </div>
-
-            <div className="text-xs text-slate-500 hidden sm:flex items-center gap-2">
-              {setupMode === "agent" ? (
-                <span className="flex items-center gap-1.5 font-medium">
-                  <Sparkles className="h-3.5 w-3.5 text-[#F25A2A]" />
-                  AI assistant automated prompt (Cursor, Claude Code, Windsurf, Copilot).
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 font-medium">
-                  <User className="h-3.5 w-3.5 text-slate-400" />
-                  Manual code snippets, edge workers, and downloadable plugins.
-                </span>
-              )}
-            </div>
-          </div>
-
-          {setupMode === "agent" ? (
-            <div className="bg-white border border-[#E5EAE7] rounded-xl p-6 shadow-xs">
-              <AgentSetupView
-                apiKeyValue={apiKeyValue || ""}
-                effectiveEndpoint={effectiveEndpoint}
-                targetStack={selectedIntegration || "javascript"}
-                rulesets={parsedRulesets}
-                serverBotUrl={userSettings?.botUrl}
-                onNavigateToLiveFeed={handleNavigateToLiveFeed}
-                onNavigateToRules={handleNavigateToRules}
-                onSelectStack={(stack) => setSelectedIntegration(stack as IntegrationStack)}
-              />
-            </div>
-          ) : (
-            <>
-              {/* Filter Pills (Fingerprint Style) */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          {/* Filter Pills (Stack Categories) */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
               {[
                 { id: "all", label: "All Stacks" },
@@ -3359,8 +3241,6 @@ export function App() {
               );
             })}
           </div>
-            </>
-          )}
         </div>
       )}
 

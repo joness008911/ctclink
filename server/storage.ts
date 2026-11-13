@@ -70,7 +70,7 @@ interface CachedIPData {
 class IP2GeoCache {
   private cache = new Map<string, CachedIPData>();
   private readonly DEFAULT_TTL = 24 * 60 * 60 * 1000; // 24 hours high-speed retention
-  private readonly MAX_ENTRIES = 50000; // Capacity limit to protect server memory
+  private readonly MAX_ENTRIES = 500; // Bounded capacity limit to protect Node.js heap RAM
   
   set(ip: string, data: any, ttl = this.DEFAULT_TTL): void {
     if (this.cache.size >= this.MAX_ENTRIES) {
@@ -630,7 +630,11 @@ export class MemStorage implements IStorage {
       const owner = await this.getClientUserByApiKey(apiKey.id);
       const isOwnerActive = owner && (
         (owner.subscriptionStatus || '').toLowerCase() === 'active' ||
-        ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (!owner.trialEndsAt || new Date(owner.trialEndsAt) > new Date()))
+        ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (
+          owner.trialEndsAt ? new Date(owner.trialEndsAt) > new Date() : (
+            owner.createdAt ? (new Date(owner.createdAt).getTime() + 14 * 86400000) > Date.now() : false
+          )
+        ))
       ) && owner.status !== 'suspended' && owner.status !== 'inactive';
 
       // Check expiration for standalone keys or accounts without active entitlement
@@ -1488,7 +1492,8 @@ export class DatabaseStorage {
         .select()
         .from(classifications)
         .where(queryConditions)
-        .orderBy(classifications.timestamp);
+        .orderBy(classifications.timestamp)
+        .limit(50);
 
       if (pastVisits.length === 0) {
         return {
@@ -1647,7 +1652,11 @@ export class DatabaseStorage {
     const owner = await this.getClientUserByApiKey(apiKey.id);
     const isOwnerActive = owner && (
       (owner.subscriptionStatus || '').toLowerCase() === 'active' ||
-      ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (!owner.trialEndsAt || new Date(owner.trialEndsAt) > new Date()))
+      ((owner.subscriptionStatus || '').toLowerCase() === 'trialing' && (
+        owner.trialEndsAt ? new Date(owner.trialEndsAt) > new Date() : (
+          owner.createdAt ? (new Date(owner.createdAt).getTime() + 14 * 86400000) > Date.now() : false
+        )
+      ))
     ) && owner.status !== 'suspended' && owner.status !== 'inactive';
 
     // Check if key is expired (only for non-active/non-entitled accounts or standalone keys)
@@ -1958,12 +1967,35 @@ export class DatabaseStorage {
   }
 
   async updateClientUser(id: string, updates: Partial<ClientUser>): Promise<ClientUser | undefined> {
-    const [updated] = await db
-      .update(clientUsers)
-      .set(updates)
-      .where(eq(clientUsers.id, id))
-      .returning();
-    return updated;
+    const sanitized = { ...updates };
+    if (sanitized.apiKeyId !== undefined) {
+      const raw = sanitized.apiKeyId;
+      if (!raw || typeof raw !== "string" || raw.trim() === "" || raw === "none" || raw === "null" || raw === "undefined") {
+        sanitized.apiKeyId = null;
+      } else {
+        sanitized.apiKeyId = raw.trim();
+      }
+    }
+    try {
+      const [updated] = await db
+        .update(clientUsers)
+        .set(sanitized)
+        .where(eq(clientUsers.id, id))
+        .returning();
+      return updated;
+    } catch (err: any) {
+      if (err?.message && err.message.includes("client_users_api_key_id_fkey")) {
+        console.warn(`[FK_RECOVERY] Foreign key error on DatabaseStorage updateClientUser. Retrying with apiKeyId = null.`);
+        sanitized.apiKeyId = null;
+        const [updated] = await db
+          .update(clientUsers)
+          .set(sanitized)
+          .where(eq(clientUsers.id, id))
+          .returning();
+        return updated;
+      }
+      throw err;
+    }
   }
 
   async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {

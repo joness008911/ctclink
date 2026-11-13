@@ -127,13 +127,15 @@ export function getSessionOrToken(req: any): { type: 'admin' | 'client'; userId:
 }
 import { createServer, type Server } from "http";
 import { storage, ip2geoCache } from "./storage";
+import { cacheService } from "./cacheService";
+import { classificationBuffer } from "./classificationBuffer";
 import { ip2LocationHealth } from "./ip2locationHealth";
 import { evaluateSafeProxyClassification, formatUsageTypeDescription } from "./vpnClassifier";
 import { db } from "./db";
 import { sql as sqlTag } from "drizzle-orm";
 import session from "express-session";
-import createMemoryStore from "memorystore";
-const MemoryStore = createMemoryStore(session);
+import { RedisStore } from "connect-redis";
+import { redisClient, isRedisConnected, createRateLimitRedisStore } from "./redis";
 import { insertClassificationSchema, type ClientUser, computeEffectiveAccountStatus, normalizeTier, getTierCallLimit, type AccountStatusSummary } from "@shared/schema";
 import { authorizeApiKey, syncClientUserSubscription, getEntitlementType, type AuthorizationResult } from "./authorizationService";
 import { UAParser } from "ua-parser-js";
@@ -184,9 +186,10 @@ import {
 // 10 attempts per IP per 15 minutes; returns 429 with Retry-After header.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === "test" ? 1000 : 10,
+  max: process.env.NODE_ENV === "production" ? 10 : 1000,
   standardHeaders: true,   // RateLimit-* headers (RFC 6585 draft)
   legacyHeaders: false,
+  store: createRateLimitRedisStore("auth"),
   message: { message: "Too many login attempts. Please try again later." },
 });
 
@@ -194,9 +197,10 @@ const authLimiter = rateLimit({
 // 5 registration attempts per IP per 15 minutes.
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === "production" ? 5 : 500,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("register"),
   message: { message: "Too many registration attempts from this IP address. Please wait 15 minutes before trying again." },
 });
 
@@ -204,9 +208,10 @@ const registerLimiter = rateLimit({
 // 5 email dispatch requests per IP per 15 minutes to prevent email spamming and quota exhaustion.
 const emailVerificationLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: process.env.NODE_ENV === "production" ? 5 : 500,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("email_verification"),
   message: { message: "Too many verification email requests. Please wait a few minutes before requesting another code." },
 });
 
@@ -216,6 +221,7 @@ const verifyCodeLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("verify_code"),
   message: { message: "Too many verification code attempts. Please wait 15 minutes before trying again." },
 });
 
@@ -223,33 +229,32 @@ const verifyCodeLimiter = rateLimit({
 const emailDispatchCooldowns = new Map<string, number>();
 
 // Per-API-key rate limit for the classification endpoint (GET + POST).
-// Key extraction mirrors every path the two handlers accept:
-//   POST → X-API-Key header
-//   GET  → ?api_key=XXX (standard) | first query param name (legacy)
-// Each API key in any supported format gets its own independent bucket.
-// Keyless requests (redirected immediately) are bucketed by socket IP to
-// prevent them collapsing into one shared slot.
+// Prevents query-param cache poisoning and memory exhaustion on Redis free tier.
 const classifyLimiter = rateLimit({
   windowMs: 60 * 1000,     // 1 minute window
   max: 300,
+  store: createRateLimitRedisStore("classify"),
   keyGenerator: (req) => {
-    // Check multiple locations for API key
+    // 1. Strict extraction of authenticated API keys (valid format: alphanumeric/hyphen/underscore, 8-64 chars)
     const headerKey = ((req.headers["x-api-key"] || req.headers["api-key"]) as string | undefined)?.trim();
-    if (headerKey) return headerKey;
+    if (headerKey && /^[\w-]{8,64}$/.test(headerKey)) return `key:${headerKey}`;
+
     const authHeader = req.headers["authorization"] as string | undefined;
     if (authHeader) {
       const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : authHeader.trim();
-      if (token) return token;
+      if (token && /^[\w-]{8,64}$/.test(token)) return `key:${token}`;
     }
+
     const bodyKey = (req.body?.apiKey || req.body?.api_key) as string | undefined;
-    if (bodyKey?.trim()) return bodyKey.trim();
+    if (bodyKey?.trim() && /^[\w-]{8,64}$/.test(bodyKey.trim())) return `key:${bodyKey.trim()}`;
+
     const queryKey = (req.query?.api_key || req.query?.apiKey) as string | undefined;
-    if (queryKey?.trim()) return queryKey.trim();
-    const legacyKey = Object.keys(req.query)[0];
-    if (legacyKey) return legacyKey;
-    const rawIp =
-      (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
-    return `nokey:${rawIp}`;
+    if (queryKey?.trim() && /^[\w-]{8,64}$/.test(queryKey.trim())) return `key:${queryKey.trim()}`;
+
+    // 2. Fallback to deterministic hashed IP bucket (prevents unbounded memory growth & query poisoning)
+    const rawIp = (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
+    const ipHash = createHash("sha256").update(rawIp).digest("hex").slice(0, 16);
+    return `ip:${ipHash}`;
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -268,6 +273,7 @@ const apiKeyVerificationLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("apikey_verify"),
   message: {
     status: 429,
     code: "RATE_LIMITED",
@@ -281,6 +287,7 @@ const simulatorLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("simulator"),
   keyGenerator: (req) => {
     // Bucket by user session or IP so one user cannot exceed 10 tests/min
     return (req as any).session?.userId || (req.socket?.remoteAddress ?? "unknown").replace(/^::ffff:/, "");
@@ -300,6 +307,7 @@ const sensitiveAccountLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("sensitive_account"),
   message: {
     status: 429,
     code: "RATE_LIMITED",
@@ -311,9 +319,10 @@ const sensitiveAccountLimiter = rateLimit({
 // Protects against password guessing, repeated current-password attempts, and email notification abuse
 const changePasswordLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === "test" ? 100 : 10,
+  max: process.env.NODE_ENV === "production" ? 10 : 200,
   standardHeaders: true,
   legacyHeaders: false,
+  store: createRateLimitRedisStore("change_password"),
   message: {
     status: 429,
     code: "RATE_LIMITED",
@@ -433,22 +442,52 @@ export function extractFirstPublicIp(rawIpOrHeader: string | string[] | undefine
   return parts[0] || 'unknown';
 }
 
+let cachedEffectiveIp2GeoKey: { key: string; expiresAt: number } | null = null;
+
 export async function getEffectiveIp2GeoKey(): Promise<string> {
-  const dbKey = await storage.getSetting('cleantraffic_api_key');
-  if (dbKey && dbKey.trim()) return dbKey.trim();
-  
-  const envKey = process.env.IP2GEOLOCATION_API_KEY || process.env.IP2LOCATION_API_KEY || process.env.IP2GEO_API_KEY;
-  if (envKey && envKey.trim()) return envKey.trim();
+  if (cachedEffectiveIp2GeoKey && Date.now() < cachedEffectiveIp2GeoKey.expiresAt) {
+    return cachedEffectiveIp2GeoKey.key;
+  }
 
+  // 1. Check Redis RAM cache via cacheService
+  let effectiveKey = "";
   try {
-    const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
-    if (fs.existsSync(keyFile)) {
-      const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
-      if (fileKey) return fileKey;
+    const cachedSetting = await cacheService.getSetting('cleantraffic_api_key');
+    if (typeof cachedSetting === "string" && cachedSetting.trim()) {
+      effectiveKey = cachedSetting.trim();
     }
-  } catch (e) {}
+  } catch {}
 
-  return '';
+  // 2. On cache miss, query persistent storage
+  if (!effectiveKey) {
+    try {
+      const dbKey = await storage.getSetting('cleantraffic_api_key');
+      if (dbKey && dbKey.trim()) {
+        effectiveKey = dbKey.trim();
+        await cacheService.setSetting('cleantraffic_api_key', effectiveKey, 600);
+      }
+    } catch {}
+  }
+  
+  // 3. Fallback to process.env variables
+  if (!effectiveKey) {
+    const envKey = process.env.IP2GEOLOCATION_API_KEY || process.env.IP2LOCATION_API_KEY || process.env.IP2GEO_API_KEY;
+    if (envKey && envKey.trim()) effectiveKey = envKey.trim();
+  }
+
+  // 4. Fallback to local file if present
+  if (!effectiveKey) {
+    try {
+      const keyFile = path.join(process.cwd(), 'cleantraffic-php-package', 'api_key.txt');
+      if (fs.existsSync(keyFile)) {
+        const fileKey = fs.readFileSync(keyFile, 'utf8').trim();
+        if (fileKey) effectiveKey = fileKey;
+      }
+    } catch (e) {}
+  }
+
+  cachedEffectiveIp2GeoKey = { key: effectiveKey, expiresAt: Date.now() + 60000 };
+  return effectiveKey;
 }
 
 async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string): Promise<any> {
@@ -467,6 +506,17 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
       is_proxy: false,
       proxy_data: null
     };
+  }
+
+  // Tier 1: Check high-speed local memory cache
+  const localCached = ip2geoCache.get(ip);
+  if (localCached) return localCached;
+
+  // Tier 2: Check central Redis RAM cache (prevents duplicate external HTTP calls across instances)
+  const redisCached = await cacheService.getGeo(ip);
+  if (redisCached) {
+    ip2geoCache.set(ip, redisCached);
+    return redisCached;
   }
 
   if (!apiKey || apiKey.trim() === '') {
@@ -525,7 +575,7 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
         p.is_bogon
       );
 
-      return {
+      const geoResult = {
         ip,
         location: data.city_name && data.country_name ? `${data.city_name}, ${data.country_name}` : (data.country_name || 'Unknown'),
         isp: data.as || data.isp || 'Unknown',
@@ -559,6 +609,12 @@ async function fetchIpGeolocation(apiKey: string, ip: string, userAgent: string)
           is_bogon: Boolean(p.is_bogon),
         }
       };
+
+      // Populate Tier 1 (local RAM) and Tier 2 (Redis central cache)
+      ip2geoCache.set(ip, geoResult);
+      void cacheService.setGeo(ip, geoResult, 24 * 60 * 60);
+
+      return geoResult;
     }
 
     // Inspect errors returned by IP2Location.io
@@ -743,31 +799,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
     } catch (error) {
       console.error('🚨 IP whitelist middleware error:', error);
-      // Fail-open on error to avoid locking out all users
-      next();
+      // Fail-closed to prevent unauthorized access if database or parsing encounters an error
+      return res.status(403).json({ 
+        message: "Access forbidden: IP access verification failed. Please try again.",
+        code: "WHITELIST_VERIFICATION_ERROR"
+      });
     }
   });
   
-  // Session middleware
-  const sessionSecret = process.env.SESSION_SECRET || (
-    process.env.NODE_ENV === "production"
-      ? randomBytes(32).toString("hex")
-      : "cleantraffic_dev_session_secret_2026_default_secure_key"
-  );
+  // Session configuration & boot-time validation
+  let sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn("⚠️ [SECURITY_WARNING] SESSION_SECRET is not configured in production. For session persistence across container restarts, set a 64-character random string in SESSION_SECRET.");
+      sessionSecret = "cleantraffic_prod_persistent_secret_key_ensure_env_is_set_in_production";
+    } else {
+      sessionSecret = "cleantraffic_dev_session_secret_2026_default_secure_key";
+    }
+  } else if (sessionSecret.length < 32 && process.env.NODE_ENV === "production") {
+    console.warn("⚠️ [SECURITY_WARNING] SESSION_SECRET is shorter than 32 characters. Recommend using 64 random characters.");
+  }
+
+  // Redis-backed distributed session store
+  const sessionStore = new RedisStore({
+    client: redisClient,
+    prefix: "cleantraffic:sess:",
+    ttl: 24 * 60 * 60, // 24 hours explicit TTL
+  });
 
   // Capture session middleware reference so we can authenticate WebSocket upgrade requests
   const sessionMw = session({
-    store: new MemoryStore({
-      checkPeriod: 86400000 // prune expired entries every 24h
-    }),
+    store: sessionStore,
     name: 'ctid', // Obscure the default 'connect.sid' identifier
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: false, // Must be false behind reverse proxies / iframe dev environment
+      secure: process.env.COOKIE_SECURE === "true" || (process.env.NODE_ENV === "production" && !process.env.AIS_EMBEDDED),
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: (process.env.COOKIE_SAMESITE as 'lax' | 'strict' | 'none') || 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     }
   });
@@ -2301,6 +2371,28 @@ Disallow: /*`);
         });
       }
 
+      // Strict Email Verification Gate
+      // Prevents unverified users from accessing protected routing rules, APIs, and domain generation
+      if (user.emailVerified === false) {
+        const path = (req.path || "").toLowerCase();
+        const allowedUnverifiedPaths = [
+          "/api/user/me",
+          "/api/user/resend-verification",
+          "/api/user/verify-email",
+          "/api/user/logout",
+          "/api/user/accept-tos",
+          "/api/user/change-password"
+        ];
+        if (!allowedUnverifiedPaths.some((p) => path.startsWith(p))) {
+          return res.status(403).json({
+            message: "Email verification required. Please check your inbox and verify your email to unlock platform access.",
+            code: "EMAIL_VERIFICATION_REQUIRED",
+            emailVerified: false,
+            email: user.email,
+          });
+        }
+      }
+
       req.session.clientUserId = auth.userId;
       req.session.clientUserAuthenticated = true;
       (req as any).clientUserId = auth.userId;
@@ -2341,7 +2433,11 @@ Disallow: /*`);
       });
     } catch (error) {
       console.error("Subscription check error:", error);
-      next(); // Fail-open on transient error
+      // Strictly Fail-Closed: Never allow unauthorized traffic past an erroring gateway
+      return res.status(500).json({
+        message: "Security gateway subscription verification failed.",
+        code: "SUBSCRIPTION_CHECK_ERROR"
+      });
     }
   };
 
@@ -2353,9 +2449,19 @@ Disallow: /*`);
       if (db) {
         await db.execute(sqlTag`SELECT 1`);
       }
-      res.json({ status: "ok", uptime: process.uptime(), db: db ? "reachable" : "in-memory" });
+      res.json({ 
+        status: "ok", 
+        uptime: process.uptime(), 
+        db: db ? "reachable" : "in-memory",
+        redis: isRedisConnected ? "connected" : "disconnected"
+      });
     } catch {
-      res.status(503).json({ status: "error", uptime: process.uptime(), db: "unreachable" });
+      res.status(503).json({ 
+        status: "error", 
+        uptime: process.uptime(), 
+        db: "unreachable",
+        redis: isRedisConnected ? "connected" : "disconnected"
+      });
     }
   });
 
@@ -2486,8 +2592,8 @@ Disallow: /*`);
     }
   });
 
-  // Update client user's redirect URLs and routing rules
-  app.put("/api/user/redirect-urls", requireClientAuth, async (req: any, res) => {
+  // Update client user's redirect URLs and routing rules (supports PUT & POST on /api/user/redirect-urls and /api/settings)
+  const handleUpdateRedirectUrls = async (req: any, res: any) => {
     try {
       const auth = getSessionOrToken(req);
       const userId = auth?.userId || req.session?.clientUserId || (req as any).clientUserId;
@@ -2574,9 +2680,9 @@ Disallow: /*`);
         parsedHuman = new URL("https://yourdomain.com");
       }
 
-      // Bot action validation: Can be "404", "403" or a valid HTTP/HTTPS URL
+      // Bot action validation: Can be any standard 4xx/5xx HTTP status code (403, 404, 409, 410, 421, 423, 424, 429, 451, 500) or a valid HTTP/HTTPS URL
       const trimmedBot = rawBot;
-      const isHttpErrorCode = trimmedBot === "404" || trimmedBot === "403" || trimmedBot.startsWith("404") || trimmedBot.startsWith("403");
+      const isHttpErrorCode = /^\d{3}$/.test(trimmedBot) && parseInt(trimmedBot, 10) >= 400 && parseInt(trimmedBot, 10) <= 599;
       let normalizedBotUrl = trimmedBot;
 
       const blockedHosts = [
@@ -2596,17 +2702,17 @@ Disallow: /*`);
       ];
 
       if (isHttpErrorCode) {
-        normalizedBotUrl = trimmedBot.includes("403") ? "403" : "404";
+        normalizedBotUrl = trimmedBot;
       } else {
         let parsedBot: URL;
         try {
           parsedBot = new URL(trimmedBot);
         } catch {
-          return res.status(400).json({ message: "Bot Action must be 404, 403, or a valid full URL (https://...)" });
+          return res.status(400).json({ message: "Bot Action must be a valid HTTP status code (e.g. 403, 404, 409, 410, 421, 423, 424, 429, 451, 500) or a valid full URL (https://...)" });
         }
 
         if (parsedBot.protocol !== 'http:' && parsedBot.protocol !== 'https:') {
-          return res.status(400).json({ message: "botUrl must use http or https, or be 404/403" });
+          return res.status(400).json({ message: "botUrl must use http or https, or be a valid HTTP status code" });
         }
 
         const botHost = parsedBot.hostname.replace(/^www\./, '').toLowerCase();
@@ -2649,11 +2755,13 @@ Disallow: /*`);
         }
       }
 
-      const validDevices = ["all", "desktop", "mobile", "mobile_tablet"];
+      const validDevices = ["all", "desktop", "mobile", "tablet", "mobile_tablet"];
       const formattedAllowedDevices = validDevices.includes(allowedDevices) ? allowedDevices : "all";
 
-      const validOs = ["both", "windows", "mac"];
-      const formattedDesktopOsFilter = validOs.includes(desktopOsFilter) ? desktopOsFilter : "both";
+      let formattedDesktopOsFilter = "both";
+      if (typeof desktopOsFilter === "string" && desktopOsFilter.trim()) {
+        formattedDesktopOsFilter = desktopOsFilter.trim();
+      }
 
       const effectiveBlockVpn = blockVpn === "allow" ? "allow" : (blockVpn === "block" ? "block" : (allowVpn ? "allow" : "block"));
       const effectiveAllowVpn = effectiveBlockVpn === "allow";
@@ -2707,7 +2815,12 @@ Disallow: /*`);
       console.error("Update user redirect URLs error:", error);
       res.status(500).json({ message: "Internal server error" });
     }
-  });
+  };
+
+  app.put("/api/user/redirect-urls", requireClientAuth, handleUpdateRedirectUrls);
+  app.post("/api/user/redirect-urls", requireClientAuth, handleUpdateRedirectUrls);
+  app.put("/api/settings", requireClientAuth, handleUpdateRedirectUrls);
+  app.post("/api/settings", requireClientAuth, handleUpdateRedirectUrls);
 
   // Client user IP Access Lists (Custom IP Blocklist & IP Allowlist)
   app.get("/api/user/ip-rules", requireClientAuth, async (req: any, res) => {
@@ -2998,14 +3111,16 @@ Disallow: /*`);
       // Dispatch security confirmation email to user's verified address
       if (user.email) {
         const userEmail = user.email;
-        void sendPasswordChangedEmail({
-          to: userEmail,
-          name: user.fullName || user.username || userEmail.split("@")[0],
-          ipAddress: clientIp.replace("::ffff:", ""),
-          timestamp: new Date().toUTCString(),
-        }).catch((err) => {
+        try {
+          await sendPasswordChangedEmail({
+            to: userEmail,
+            name: user.fullName || user.username || userEmail.split("@")[0],
+            ipAddress: clientIp.replace("::ffff:", ""),
+            timestamp: new Date().toUTCString(),
+          });
+        } catch (err) {
           console.error("[Email] Failed to dispatch password change alert:", err);
-        });
+        }
       }
 
       return res.json({
@@ -3462,8 +3577,10 @@ Disallow: /*`);
       } catch {}
 
       const cleanReason = typeof reason === 'string' && reason.trim() ? reason.trim() : null;
+      const targetStatus = complianceStatus === 'suspended' ? 'suspended' : (complianceStatus === 'cleared' && user.status === 'suspended' ? 'active' : user.status);
       const updates: Partial<ClientUser> = {
         complianceStatus,
+        status: targetStatus,
         statusUpdatedAt: now,
         statusUpdatedBy: adminUsername,
       };
@@ -3471,12 +3588,12 @@ Disallow: /*`);
         updates.statusReason = cleanReason;
       }
 
-      // Update status audit history
+      // Update status audit history with synchronized state
       const existingHistory = Array.isArray(user.statusHistory) ? [...user.statusHistory] : [];
       existingHistory.unshift({
         timestamp: now.toISOString(),
         fromStatus: user.status,
-        toStatus: user.status,
+        toStatus: targetStatus,
         fromCompliance: user.complianceStatus,
         toCompliance: complianceStatus,
         reason: cleanReason || `Compliance status set to ${complianceStatus}`,
@@ -3499,7 +3616,7 @@ Disallow: /*`);
             console.error(`Failed to suspend API key for compliance user ${id}:`, keyErr);
           }
         }
-      } else if (complianceStatus === "cleared" && user.status === "active") {
+      } else if (complianceStatus === "cleared" && targetStatus === "active") {
         if (user.apiKeyId) {
           try {
             const currentKey = await storage.getApiKeyById(user.apiKeyId);
@@ -3512,7 +3629,7 @@ Disallow: /*`);
         }
       }
 
-      console.log(`[COMPLIANCE] Admin ${adminUsername} updated user ${user.username} (${id}) compliance status to ${complianceStatus}`);
+      console.log(`[COMPLIANCE] Admin ${adminUsername} updated user ${user.username} (${id}) compliance to ${complianceStatus}, status to ${targetStatus}`);
       void auditLog({
         actorId: adminId,
         actorType: "admin",
@@ -3522,27 +3639,31 @@ Disallow: /*`);
         metadata: {
           previousCompliance: user.complianceStatus,
           newCompliance: complianceStatus,
+          previousStatus: user.status,
+          newStatus: targetStatus,
           reason: cleanReason,
           changedBy: adminUsername,
         },
       });
 
-      // Send transactional status notification email if requested
-      let emailResult: any = null;
+      // Send transactional status notification email asynchronously so SMTP drops/delays never freeze API responses
       if (notifyUser && user.email) {
-        try {
-          emailResult = await sendAccountStatusEmail({
-            to: user.email,
-            name: user.fullName || user.username,
-            username: user.username,
-            newStatus: complianceStatus,
-            previousStatus: user.complianceStatus || "cleared",
-            reason: cleanReason || undefined,
-            changedBy: adminUsername,
-          });
-        } catch (emailErr) {
-          console.error(`Failed to dispatch compliance status email to ${user.email}:`, emailErr);
-        }
+        const recipientEmail = user.email;
+        setImmediate(async () => {
+          try {
+            await sendAccountStatusEmail({
+              to: recipientEmail,
+              name: user.fullName || user.username,
+              username: user.username,
+              newStatus: targetStatus,
+              previousStatus: user.status || "active",
+              reason: cleanReason || undefined,
+              changedBy: adminUsername,
+            });
+          } catch (emailErr) {
+            console.error(`[NOTIFICATION_QUEUE_ERROR] Failed to dispatch compliance status email to ${recipientEmail}:`, emailErr);
+          }
+        });
       }
 
       const { user: syncedUser, statusSummary } = await syncClientUserSubscription(updated);
@@ -3562,7 +3683,7 @@ Disallow: /*`);
           isCleared: statusSummary.isCleared,
           isRestricted: statusSummary.isRestricted,
         },
-        emailNotification: emailResult ? { sent: emailResult.success, message: emailResult.message } : null,
+        emailNotification: notifyUser ? { sent: true, queued: true } : null,
       });
     } catch (error) {
       console.error("Update compliance status error:", error);
@@ -3698,12 +3819,15 @@ Disallow: /*`);
         return res.status(400).json({ message: "Username already exists" });
       }
 
-      // If apiKeyId is provided, verify it exists
-      if (apiKeyId) {
-        const apiKey = await storage.getApiKeyById(apiKeyId);
+      // If apiKeyId is provided, verify it exists and resolve to canonical ID
+      let resolvedApiKeyId: string | null = null;
+      if (apiKeyId && typeof apiKeyId === "string" && apiKeyId.trim() !== "" && apiKeyId !== "none" && apiKeyId !== "null") {
+        const cleanKey = apiKeyId.trim();
+        const apiKey = (await storage.getApiKeyById(cleanKey)) || (await storage.getApiKey(cleanKey));
         if (!apiKey) {
           return res.status(400).json({ message: "Invalid API key ID" });
         }
+        resolvedApiKeyId = apiKey.id;
       }
 
       // Hash password before storing
@@ -3718,7 +3842,7 @@ Disallow: /*`);
         username,
         password: hashedPassword,
         email: email || null,
-        apiKeyId: apiKeyId || null,
+        apiKeyId: resolvedApiKeyId,
         status: 'active',
         subscriptionStatus: initialStatus,
         subscriptionTier,
@@ -5842,8 +5966,12 @@ Disallow: /*`);
         rawIncomingVisitorId !== authoritativeVisitorId
       );
 
-      // Query genuine stored visit history from persistent database (tenant-isolated by apiKeyId)
-      const dbHistory = await storage.getVisitorHistory(apiKeyId, resolvedDeviceId, clientIp, authoritativeVisitorId);
+      // Query genuine stored visit history: Check Redis RAM cache first, fallback to persistent DB on cache miss
+      let dbHistory = await cacheService.getVisitorHistory(apiKeyId, resolvedDeviceId, clientIp);
+      if (!dbHistory) {
+        dbHistory = await storage.getVisitorHistory(apiKeyId, resolvedDeviceId, clientIp, authoritativeVisitorId);
+        void cacheService.recordVisitorHistory(apiKeyId, resolvedDeviceId, clientIp, dbHistory);
+      }
 
       // Server-authoritative resolution: prioritize persistent tenant history, otherwise canonical synthesized ID
       const resolvedVisitorId = dbHistory.existingVisitorId || authoritativeVisitorId;
@@ -5863,7 +5991,7 @@ Disallow: /*`);
       // Load Geolocation & Threat Intelligence API key
       const cleanTrafficApiKey = await getEffectiveIp2GeoKey();
 
-      // Fetch user configured redirect URLs & routing rules strictly from API key owner account
+      // Fetch user configured redirect URLs & routing rules strictly from API key owner account (Redis Cache-Aside)
       let ownerUser: ClientUser | undefined = undefined;
       let configuredHumanUrl: string | null = null;
       let configuredBotUrl: string | null = null;
@@ -5889,11 +6017,20 @@ Disallow: /*`);
 
       if (apiKeyId) {
         try {
-          ownerUser = await storage.getClientUserByApiKey(apiKeyId);
+          ownerUser = await cacheService.getClientUserByApiKey(apiKeyId);
+          if (!ownerUser) {
+            ownerUser = await storage.getClientUserByApiKey(apiKeyId);
+            if (ownerUser) void cacheService.setClientUser(ownerUser, 600);
+          }
+
           if (ownerUser) {
-            // Load user-specific IP Access Lists (IP Blocklist & Allowlist)
+            // Load user-specific IP Access Lists (IP Blocklist & Allowlist) via Cache-Aside
             try {
-              const rawIpRules = await storage.getSetting(`user_ip_rules_${ownerUser.id}`);
+              let rawIpRules = await cacheService.getSetting(`user_ip_rules_${ownerUser.id}`);
+              if (rawIpRules === undefined) {
+                rawIpRules = await storage.getSetting(`user_ip_rules_${ownerUser.id}`);
+                void cacheService.setSetting(`user_ip_rules_${ownerUser.id}`, rawIpRules || null, 600);
+              }
               if (rawIpRules) {
                 const parsedIpRules = JSON.parse(rawIpRules);
                 if (Array.isArray(parsedIpRules.blocklist)) ownerCustomIpBlocklist = parsedIpRules.blocklist;
@@ -5903,7 +6040,11 @@ Disallow: /*`);
               // fallback gracefully
             }
 
-            const redirectUrls = await storage.getUserRedirectUrls(ownerUser.id);
+            let redirectUrls = await cacheService.getRedirectUrls(ownerUser.id);
+            if (!redirectUrls) {
+              redirectUrls = await storage.getUserRedirectUrls(ownerUser.id);
+              if (redirectUrls) void cacheService.setRedirectUrls(ownerUser.id, redirectUrls, 600);
+            }
             if (redirectUrls) {
               configuredHumanUrl = redirectUrls.humanUrl?.trim() || null;
               configuredBotUrl = redirectUrls.botUrl?.trim() || null;
@@ -6269,39 +6410,89 @@ Disallow: /*`);
 
         // TIER 2: USER DEVICE & OS ROUTING RULES (100% Local evaluation from User-Agent - ZERO external IP2 calls)
         // Note: Allowed crawlers & search indexers bypass interactive device filters so indexing works reliably
-        if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && ownerAllowedDevices && ownerAllowedDevices !== 'all') {
+        if (visitorType !== 'Bot' && !isAllowedCrawler && !isVerifiedAdReviewer && (ownerAllowedDevices !== 'all' || (ownerDesktopOsFilter && ownerDesktopOsFilter !== 'both'))) {
           const lowerDevice = (deviceType || '').toLowerCase();
-          if (ownerAllowedDevices === 'desktop') {
-            if (lowerDevice !== 'desktop') {
-              visitorType = 'Bot';
-              detectionMethod = 'Device Restricted (Desktop Only)';
-              blockReason = `Device ${deviceType || 'non-desktop'} blocked by desktop-only policy`;
-              console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is desktop only`);
-            } else if (ownerDesktopOsFilter && ownerDesktopOsFilter !== 'both') {
-              const isWindows = /windows nt|win32|win64/i.test(userAgent);
-              const isMac = /macintosh|mac os x/i.test(userAgent);
-              if (ownerDesktopOsFilter === 'windows' && !isWindows) {
-                visitorType = 'Bot';
-                detectionMethod = 'OS Restricted (Windows Desktop Only)';
-                blockReason = `Non-Windows OS blocked by Windows-only desktop policy`;
-                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required Windows desktop`);
-              } else if (ownerDesktopOsFilter === 'mac' && !isMac) {
-                visitorType = 'Bot';
-                detectionMethod = 'OS Restricted (Mac Desktop Only)';
-                blockReason = `Non-Mac OS blocked by macOS-only desktop policy`;
-                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required Mac desktop`);
+          const ua = userAgent || '';
+          const isWindows = /windows nt|win32|win64/i.test(ua);
+          const isMac = /macintosh|mac os x/i.test(ua) && !/iphone|ipad|ipod/i.test(ua);
+          const isLinux = /linux/i.test(ua) && !/android/i.test(ua);
+          const isIos = /iphone|ipad|ipod|ios/i.test(ua);
+          const isAndroid = /android/i.test(ua);
+
+          // Parse granular OS preferences
+          let permittedDesktopOs = ['windows', 'mac'];
+          let permittedMobileOs = ['ios', 'android'];
+          let permittedTabletOs = ['ios', 'android'];
+
+          if (ownerDesktopOsFilter && ownerDesktopOsFilter !== 'both') {
+            try {
+              if (ownerDesktopOsFilter.startsWith('{')) {
+                const parsedOs = JSON.parse(ownerDesktopOsFilter);
+                if (Array.isArray(parsedOs.desktop)) permittedDesktopOs = parsedOs.desktop;
+                if (Array.isArray(parsedOs.mobile)) permittedMobileOs = parsedOs.mobile;
+                if (Array.isArray(parsedOs.tablet)) permittedTabletOs = parsedOs.tablet;
+              } else if (ownerDesktopOsFilter === 'windows') {
+                permittedDesktopOs = ['windows'];
+              } else if (ownerDesktopOsFilter === 'mac') {
+                permittedDesktopOs = ['mac'];
               }
-            }
+            } catch {}
+          }
+
+          // 1. Device Form Factor check
+          if (ownerAllowedDevices === 'desktop' && lowerDevice !== 'desktop') {
+            visitorType = 'Bot';
+            detectionMethod = 'Device Restricted (Desktop Only)';
+            blockReason = `Device ${deviceType || 'non-desktop'} blocked by desktop-only policy`;
+            console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is desktop only`);
           } else if (ownerAllowedDevices === 'mobile' && lowerDevice !== 'mobile') {
             visitorType = 'Bot';
             detectionMethod = 'Device Restricted (Mobile Only)';
             blockReason = `Device ${deviceType || 'non-mobile'} blocked by mobile-only policy`;
             console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is mobile only`);
+          } else if (ownerAllowedDevices === 'tablet' && lowerDevice !== 'tablet') {
+            visitorType = 'Bot';
+            detectionMethod = 'Device Restricted (Tablet Only)';
+            blockReason = `Device ${deviceType || 'non-tablet'} blocked by tablet-only policy`;
+            console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is tablet only`);
           } else if (ownerAllowedDevices === 'mobile_tablet' && lowerDevice !== 'mobile' && lowerDevice !== 'tablet') {
             visitorType = 'Bot';
             detectionMethod = 'Device Restricted (Mobile & Tablet Only)';
-            blockReason = `Device ${deviceType || 'desktop'} blocked by mobile/tablet policy`;
+            blockReason = `Device ${deviceType || 'desktop'} blocked by mobile & tablet policy`;
             console.log(`🚫 BLOCKED (Tier 2 - Device Filter): ${clientIp} is ${deviceType}, policy is mobile & tablet only`);
+          }
+
+          // 2. Granular Operating System check (if device passed form factor check)
+          if (visitorType !== 'Bot') {
+            if (lowerDevice === 'desktop') {
+              const matchesDesktop = (isWindows && permittedDesktopOs.includes('windows')) ||
+                                     (isMac && permittedDesktopOs.includes('mac')) ||
+                                     (isLinux && permittedDesktopOs.includes('linux'));
+              if (permittedDesktopOs.length > 0 && !matchesDesktop) {
+                visitorType = 'Bot';
+                detectionMethod = 'OS Restricted (Desktop OS Policy)';
+                blockReason = `Desktop operating system is not permitted by policy`;
+                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required desktop OS in [${permittedDesktopOs.join(', ')}]`);
+              }
+            } else if (lowerDevice === 'mobile') {
+              const matchesMobile = (isIos && permittedMobileOs.includes('ios')) ||
+                                    (isAndroid && permittedMobileOs.includes('android'));
+              if (permittedMobileOs.length > 0 && !matchesMobile) {
+                visitorType = 'Bot';
+                detectionMethod = 'OS Restricted (Mobile OS Policy)';
+                blockReason = `Mobile operating system (${isIos ? 'iOS' : isAndroid ? 'Android' : 'Unknown'}) is not permitted by policy`;
+                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required mobile OS in [${permittedMobileOs.join(', ')}]`);
+              }
+            } else if (lowerDevice === 'tablet') {
+              const matchesTablet = (isIos && permittedTabletOs.includes('ios')) ||
+                                    (isAndroid && permittedTabletOs.includes('android'));
+              if (permittedTabletOs.length > 0 && !matchesTablet) {
+                visitorType = 'Bot';
+                detectionMethod = 'OS Restricted (Tablet OS Policy)';
+                blockReason = `Tablet operating system (${isIos ? 'iPadOS' : isAndroid ? 'Android Tablet' : 'Unknown'}) is not permitted by policy`;
+                console.log(`🚫 BLOCKED (Tier 2 - OS Filter): ${clientIp} blocked, required tablet OS in [${permittedTabletOs.join(', ')}]`);
+              }
+            }
           }
         }
 
@@ -6741,8 +6932,11 @@ Disallow: /*`);
         referer: req.headers["referer"] || req.body?.referer || null,
       };
 
+      const isErrorCode = !isHumanVisitor && Boolean(finalBotUrl && /^\d{3}$/.test(finalBotUrl.trim()) && parseInt(finalBotUrl.trim(), 10) >= 400 && parseInt(finalBotUrl.trim(), 10) <= 599);
+      const configuredDeflectCode = matchedRule?.statusCode || (isErrorCode ? parseInt(finalBotUrl!.trim(), 10) : (isHumanVisitor ? 200 : 403));
+
       const responseDetails = {
-        httpStatus: isHumanVisitor ? 200 : (blockReason?.includes("403") ? 403 : 404),
+        httpStatus: isHumanVisitor ? 200 : configuredDeflectCode,
         contentType: "text/html; charset=UTF-8",
         shieldVerdict: isHumanVisitor ? "HUMAN_FORWARD" : (isPolicyFilter ? "POLICY_DEFLECTED" : "BOT_MITIGATED"),
         engineLatency: `${(Math.random() * 1.5 + 0.8).toFixed(1)}ms`,
@@ -6786,45 +6980,86 @@ Disallow: /*`);
         }
       ];
 
-      // Save classification record asynchronously (non-blocking) so HTTP response returns in <30ms
+      // High-performance micro-batch buffer: enqueues record in RAM and commits to DB via multi-row chunked batch insert
       // Simulator tests do NOT log to database or count against quotas
       if (!isSimulation) {
-        (async () => {
-          try {
-            const isSpoofedBot = Boolean(adReviewerDetails?.isReviewer && adReviewerDetails?.isSpoofed);
-            const isFraudClick = adClickInfo.isAdClick && deviceActivity.visitCount > 1;
-            const trafficType = adClickInfo.isAdClick 
-              ? (isFraudClick ? 'ad_fraud_repeat' : 'ad_click')
-              : isVerifiedAdReviewer 
-              ? 'ad_reviewer' 
-              : isSpoofedBot 
-              ? 'spoofed_ad_bot' 
-              : (visitorType === 'Human' ? 'organic' : 'bot');
+        try {
+          const isSpoofedBot = Boolean(adReviewerDetails?.isReviewer && adReviewerDetails?.isSpoofed);
+          const isFraudClick = adClickInfo.isAdClick && deviceActivity.visitCount > 1;
+          const trafficType = adClickInfo.isAdClick 
+            ? (isFraudClick ? 'ad_fraud_repeat' : 'ad_click')
+            : isVerifiedAdReviewer 
+            ? 'ad_reviewer' 
+            : isSpoofedBot 
+            ? 'spoofed_ad_bot' 
+            : (visitorType === 'Human' ? 'organic' : 'bot');
 
-            const classification = await storage.createClassification({
+          const classification = classificationBuffer.enqueue({
+            ipAddress: clientIp,
+            location: classificationData.location || 'Unknown',
+            country: classificationData.country_name || 'Unknown',
+            countryCode: classificationData.country_code || 'Unknown',
+            city: classificationData.city_name || 'Unknown',
+            region: classificationData.region_name || '',
+            browser: classificationData.browser || browser,
+            deviceType: classificationData.device_type || deviceType,
+            deviceId: resolvedDeviceId,
+            visitorId: resolvedVisitorId,
+            isNewVisitor: deviceActivity.isNewVisitor,
+            firstSeen: new Date(deviceActivity.firstSeen),
+            lastSeen: new Date(deviceActivity.lastSeen),
+            visitCount: deviceActivity.visitCount,
+            visitorType: visitorType,
+            isp: classificationData.isp || 'Unknown',
+            detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
+            connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
+            apiKeyId: apiKeyId, // Track which API key made this request
+            adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
+            clickToken: adClickInfo.clickToken || null,
+            clickId: adClickInfo.clickId || null,
+            trafficType: trafficType,
+            isVerifiedReviewer: isVerifiedAdReviewer,
+            reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
+            userAgent: userAgent || null,
+            clientSignals,
+            requestHeaders,
+            responseDetails,
+            timelineEvents,
+            riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 80),
+            usageType: classificationData.usage_type || null,
+          });
+
+          // Broadcast live to connected dashboard clients for this specific API key
+          if (apiKeyId) {
+            broadcastClassification(apiKeyId, {
+              id: classification.id ?? randomUUID(),
+              timestamp: classification.timestamp
+                ? new Date(classification.timestamp).toISOString()
+                : new Date().toISOString(),
               ipAddress: clientIp,
-              location: classificationData.location || 'Unknown',
-              country: classificationData.country_name || 'Unknown',
-              countryCode: classificationData.country_code || 'Unknown',
-              city: classificationData.city_name || 'Unknown',
-              region: classificationData.region_name || '',
-              browser: classificationData.browser || browser,
-              deviceType: classificationData.device_type || deviceType,
               deviceId: resolvedDeviceId,
               visitorId: resolvedVisitorId,
               isNewVisitor: deviceActivity.isNewVisitor,
-              firstSeen: new Date(deviceActivity.firstSeen),
-              lastSeen: new Date(deviceActivity.lastSeen),
+              firstSeen: deviceActivity.firstSeen,
+              lastSeen: deviceActivity.lastSeen,
               visitCount: deviceActivity.visitCount,
-              visitorType: visitorType,
-              isp: classificationData.isp || 'Unknown',
+              visitorType: visitorType as 'Human' | 'Bot',
               detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
+              country: classificationData.country_name || 'Unknown',
+              isp: classificationData.isp || 'Unknown',
+              action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
               connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
-              apiKeyId: apiKeyId, // Track which API key made this request
+              usageType: classificationData.usage_type || '',
+              riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 88),
+              isVpn: Boolean(classificationData.proxy_data?.is_vpn || classificationData.connection_type?.includes('VPN')),
+              isTor: Boolean(classificationData.proxy_data?.is_tor || classificationData.connection_type?.includes('Tor')),
+              isResidentialProxy: Boolean(classificationData.proxy_data?.is_residential_proxy || classificationData.connection_type?.includes('Proxy')),
+              isDatacenter: Boolean(classificationData.proxy_data?.is_data_center || classificationData.usage_type === 'DCH' || classificationData.connection_type?.includes('Datacenter')),
+              isBlocklisted: Boolean(detectionMethod === 'IP Blocklist' || detectionMethod === 'CIDR Blocklist'),
+              trafficType: trafficType,
               adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
               clickToken: adClickInfo.clickToken || null,
               clickId: adClickInfo.clickId || null,
-              trafficType: trafficType,
               isVerifiedReviewer: isVerifiedAdReviewer,
               reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
               userAgent: userAgent || null,
@@ -6832,67 +7067,23 @@ Disallow: /*`);
               requestHeaders,
               responseDetails,
               timelineEvents,
-              riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 80),
-              usageType: classificationData.usage_type || null,
-            });
-            
-            // Broadcast live to connected dashboard clients for this specific API key
-            if (apiKeyId) {
-              broadcastClassification(apiKeyId, {
-                id: classification.id ?? randomUUID(),
-                timestamp: classification.timestamp
-                  ? new Date(classification.timestamp).toISOString()
-                  : new Date().toISOString(),
-                ipAddress: clientIp,
-                deviceId: resolvedDeviceId,
-                visitorId: resolvedVisitorId,
-                isNewVisitor: deviceActivity.isNewVisitor,
-                firstSeen: deviceActivity.firstSeen,
-                lastSeen: deviceActivity.lastSeen,
-                visitCount: deviceActivity.visitCount,
-                visitorType: visitorType as 'Human' | 'Bot',
-                detectionMethod: classificationData.detection_method || detectionMethod || 'IP Analysis',
-                country: classificationData.country_name || 'Unknown',
-                isp: classificationData.isp || 'Unknown',
-                action: visitorType === 'Human' ? 'Allowed' : 'Blocked',
-                connectionType: classificationData.connection_type || (visitorType === 'Human' ? 'Residential Broadband (ISP)' : 'Proxy / Datacenter'),
-                usageType: classificationData.usage_type || '',
-                riskScore: classificationData.risk_score ?? (isHumanVisitor ? 8 : 88),
-                isVpn: Boolean(classificationData.proxy_data?.is_vpn || classificationData.connection_type?.includes('VPN')),
-                isTor: Boolean(classificationData.proxy_data?.is_tor || classificationData.connection_type?.includes('Tor')),
-                isResidentialProxy: Boolean(classificationData.proxy_data?.is_residential_proxy || classificationData.connection_type?.includes('Proxy')),
-                isDatacenter: Boolean(classificationData.proxy_data?.is_data_center || classificationData.usage_type === 'DCH' || classificationData.connection_type?.includes('Datacenter')),
-                isBlocklisted: Boolean(detectionMethod === 'IP Blocklist' || detectionMethod === 'CIDR Blocklist'),
+              adTraffic: {
+                isAdClick: adClickInfo.isAdClick,
+                platform: adClickInfo.platform,
+                platformName: adClickInfo.platformName,
+                clickToken: adClickInfo.clickToken,
+                clickId: adClickInfo.clickId,
                 trafficType: trafficType,
-                adNetwork: adClickInfo.platformName || adClickInfo.platform || null,
-                clickToken: adClickInfo.clickToken || null,
-                clickId: adClickInfo.clickId || null,
+                isReviewer: Boolean(adReviewerDetails?.isReviewer),
                 isVerifiedReviewer: isVerifiedAdReviewer,
+                isSpoofed: isSpoofedBot,
                 reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
-                userAgent: userAgent || null,
-                clientSignals,
-                requestHeaders,
-                responseDetails,
-                timelineEvents,
-                adTraffic: {
-                  isAdClick: adClickInfo.isAdClick,
-                  platform: adClickInfo.platform,
-                  platformName: adClickInfo.platformName,
-                  clickToken: adClickInfo.clickToken,
-                  clickId: adClickInfo.clickId,
-                  trafficType: trafficType,
-                  isReviewer: Boolean(adReviewerDetails?.isReviewer),
-                  isVerifiedReviewer: isVerifiedAdReviewer,
-                  isSpoofed: isSpoofedBot,
-                  reviewerPlatform: adReviewerDetails?.platformName || adReviewerDetails?.platform || null,
-                },
-              });
-            }
-            console.log(`📝 Logged classification for IP ${clientIp} (${visitorType}) under API key ID ${apiKeyId || 'global'}`);
-          } catch (logErr) {
-            console.error("Error writing classification log:", logErr);
+              },
+            });
           }
-        })();
+        } catch (logErr) {
+          console.error("Error enqueuing classification log:", logErr);
+        }
       }
 
       // Comprehensive tracing and audit log for traffic routing decisions
@@ -6911,7 +7102,6 @@ Disallow: /*`);
   Final Redirect URL:      ${effectiveRedirectUrl || '[None / Empty]'}
 ================================================================================`);
 
-      const isErrorCode = !isHumanVisitor && (finalBotUrl === '404' || finalBotUrl === '403');
       const response: any = {
         ip: clientIp,
         deviceId: resolvedDeviceId,

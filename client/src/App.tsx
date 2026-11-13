@@ -39,7 +39,16 @@ function UserPortal() {
 
   const isUserAuthenticated = !!user && !error;
 
-  return isUserAuthenticated ? <UserDashboard /> : <UserLogin />;
+  if (!isUserAuthenticated) {
+    return <UserLogin />;
+  }
+
+  // Strict Verification Gate: unverified accounts cannot bypass OTP verification
+  if (user && user.emailVerified === false) {
+    return <VerificationRequired />;
+  }
+
+  return <UserDashboard />;
 }
 
 // Standalone Admin Control Center

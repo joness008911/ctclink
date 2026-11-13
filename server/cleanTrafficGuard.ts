@@ -1,4 +1,42 @@
 import type { Request, Response, NextFunction } from "express";
+import { createHmac, timingSafeEqual } from "crypto";
+
+const GUARD_SECRET = process.env.SESSION_SECRET || "cleantraffic_guard_signing_secret_2026";
+const COOKIE_MAX_AGE_SEC = 3600; // 1 hour
+
+function createSignedCookie(ip: string): string {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const hmac = createHmac("sha256", GUARD_SECRET).update(`${timestamp}:${ip}`).digest("hex");
+  return `${timestamp}.${hmac}`;
+}
+
+function verifySignedCookie(cookieHeader: string | undefined, ip: string): boolean {
+  if (!cookieHeader) return false;
+  const match = cookieHeader.match(/ctc_verified=([^;]+)/);
+  if (!match) return false;
+  const rawValue = decodeURIComponent(match[1].trim());
+  const parts = rawValue.split(".");
+  if (parts.length !== 2) return false;
+
+  const [tsStr, signature] = parts;
+  const timestamp = parseInt(tsStr, 10);
+  if (isNaN(timestamp)) return false;
+
+  const currentSec = Math.floor(Date.now() / 1000);
+  if (currentSec - timestamp > COOKIE_MAX_AGE_SEC || timestamp > currentSec + 60) {
+    return false; // Expired or future timestamp
+  }
+
+  const expectedHmac = createHmac("sha256", GUARD_SECRET).update(`${tsStr}:${ip}`).digest("hex");
+  try {
+    const sigBuf = Buffer.from(signature, "hex");
+    const expBuf = Buffer.from(expectedHmac, "hex");
+    if (sigBuf.length !== expBuf.length) return false;
+    return timingSafeEqual(sigBuf, expBuf);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * CleanTraffic Express Middleware Guard
@@ -7,7 +45,7 @@ import type { Request, Response, NextFunction } from "express";
  * via CleanTraffic engine, and enforces:
  *  - Exact HTTP 404 or 403 responses for bots and crawlers
  *  - Parameter-preserving redirects
- *  - Cookie caching for verified human visitors
+ *  - Cryptographically signed cookie caching for verified human visitors (HMAC-SHA256)
  *  - Fail-safe pass-through on transient timeouts
  */
 export function cleanTrafficGuard(options: {
@@ -25,19 +63,18 @@ export function cleanTrafficGuard(options: {
       return next();
     }
 
-    // 2. Skip repeated checks if already verified in this session
-    const cookieHeader = req.headers.cookie || "";
-    if (cookieHeader.includes("ctc_verified=1")) {
-      return next();
-    }
-
-    // 3. Extract visitor IP (handles Railway, Cloudflare, and reverse proxies)
+    // 2. Extract visitor IP (handles Railway, Cloudflare, and reverse proxies)
     const forwardedFor = req.headers["x-forwarded-for"];
     const ip = (Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor)?.split(",")[0]?.trim()
       || req.headers["cf-connecting-ip"]?.toString()
       || req.headers["x-real-ip"]?.toString()
       || req.socket.remoteAddress
       || "127.0.0.1";
+
+    // 3. Cryptographically verify human session cookie (HMAC-SHA256)
+    if (verifySignedCookie(req.headers.cookie, ip)) {
+      return next();
+    }
 
     const userAgent = req.headers["user-agent"] || "";
     const referer = req.headers["referer"] || "";
@@ -139,13 +176,15 @@ export function cleanTrafficGuard(options: {
           if (queryString) {
             target += (target.includes("?") ? "&" : "?") + queryString;
           }
-          res.setHeader("Set-Cookie", "ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax");
+          const signedCookie = createSignedCookie(ip);
+          res.setHeader("Set-Cookie", `ctc_verified=${signedCookie}; Path=/; Max-Age=3600; SameSite=Lax; HttpOnly`);
           return res.redirect(302, target);
         }
       }
 
       // Legitimate human visitor allowed through
-      res.setHeader("Set-Cookie", "ctc_verified=1; Path=/; Max-Age=3600; SameSite=Lax");
+      const signedCookie = createSignedCookie(ip);
+      res.setHeader("Set-Cookie", `ctc_verified=${signedCookie}; Path=/; Max-Age=3600; SameSite=Lax; HttpOnly`);
       return next();
     } catch (err) {
       // Fail-Safe: Log exact error for debugging and pass through so site does not crash

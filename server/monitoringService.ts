@@ -51,19 +51,19 @@ class MonitoringService {
   private async performSelfHealthCheck() {
     const start = Date.now();
     try {
-      // 1. Verify in-memory cache responsiveness
-      const cacheCheck = cacheService.getDetectionRules();
+      // 1. Verify Redis cache responsiveness
+      const cacheCheck = await cacheService.getDetectionRules();
       const cacheLatency = Date.now() - start;
 
-      if (cacheLatency > 100) {
+      if (cacheLatency > 150) {
         this.recordIncident({
           severity: "warning",
           subsystem: "Cache Service",
-          title: "In-Memory Cache Latency Spike",
-          exactCause: `Local RAM cache response took ${cacheLatency}ms (expected <5ms). Possible Event Loop lag or high CPU usage.`,
+          title: "Redis Cache Latency Spike",
+          exactCause: `Redis response took ${cacheLatency}ms (expected <10ms). Possible network latency or high Redis command load.`,
           fileLocation: "server/cacheService.ts",
           latencyMs: cacheLatency,
-          recommendedAction: "Check server event loop lag and process CPU utilization.",
+          recommendedAction: "Check Redis connection latency and instance memory utilization.",
         });
       }
     } catch (err: any) {

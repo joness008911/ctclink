@@ -134,8 +134,8 @@ describe("User vs Administrator Authentication & Authorization Separation", () =
         isAdmin: true,
       }),
     });
-    // Body is accepted only for legitimate redirect URL fields; role is completely ignored
-    assert.ok(resBody.status === 200 || resBody.status === 400);
+    // Body is accepted only for legitimate redirect URL fields; role is completely ignored; 403 returned if email verification is enforced
+    assert.ok(resBody.status === 200 || resBody.status === 400 || resBody.status === 403);
 
     // Verify user is STILL not admin after attempt
     const verifyAdmin = await fetch(`${BASE_URL}/api/auth/user`, {

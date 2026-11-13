@@ -1,236 +1,290 @@
 /**
- * CleanTraffic Fast In-Memory Cache Service
+ * CleanTraffic Production Redis Cache Service
  * 
- * Provides sub-millisecond RAM lookups for the high-frequency decision paths:
- * - API Keys
- * - Client Users (and apiKeyId -> clientUser mappings)
- * - Detection Rules
- * - User Redirect URLs & Routing Configurations
- * - Global Settings (e.g. IP2Geo keys)
- * - In-Memory Visitor History Ring Buffer
+ * Provides sub-millisecond RAM lookups directly from Redis for the high-frequency decision paths:
+ * - API Keys (cleantraffic:apikey:*)
+ * - Client Users (cleantraffic:clientuser:*)
+ * - Detection Rules (cleantraffic:detection_rules)
+ * - User Redirect URLs & Routing Configurations (cleantraffic:redirecturls:*)
+ * - Global Settings (cleantraffic:settings:*)
+ * - Visitor History & Velocity Tracking (cleantraffic:visitor:*, cleantraffic:velocity:*)
  * 
- * Prevents database read roundtrips under heavy traffic and reduces
- * classification latency to < 1ms on the read path.
+ * Prevents database read roundtrips under heavy traffic and enforces zero local in-memory state.
  */
 
 import type { ApiKey, ClientUser, DetectionRules, UserRedirectUrls } from "@shared/schema";
-
-interface CacheEntry<T> {
-  data: T;
-  cachedAt: number;
-  ttlMs: number;
-}
+import { redisClient } from "./redis";
 
 class FastCacheService {
-  // 10 minutes standard configuration TTL
-  private readonly DEFAULT_TTL_MS = 10 * 60 * 1000;
-
-  // Primary memory stores
-  private apiKeyStore = new Map<string, CacheEntry<ApiKey>>();
-  private apiKeyToUserMap = new Map<string, string>(); // apiKeyId or keyValue -> userId
-  private clientUserStore = new Map<string, CacheEntry<ClientUser>>();
-  private redirectUrlsStore = new Map<string, CacheEntry<UserRedirectUrls>>();
-  private settingsStore = new Map<string, CacheEntry<string | null>>();
-  private detectionRulesStore: CacheEntry<DetectionRules> | null = null;
-
-  // In-memory LRU-style ring buffer for visitor history (max 25,000 recent visitors)
-  // key: `${apiKeyId || 'global'}:${deviceId}:${clientIp}`
-  private visitorHistoryStore = new Map<string, {
-    isNewVisitor: boolean;
-    visitCount: number;
-    firstSeen: Date;
-    lastSeen: Date;
-    existingVisitorId?: string | null;
-    updatedAt: number;
-  }>();
-  private readonly MAX_VISITOR_HISTORY_ENTRIES = 25000;
+  // 10 minutes standard configuration TTL (in seconds for Redis)
+  private readonly DEFAULT_TTL_SEC = 10 * 60;
+  private readonly VISITOR_TTL_SEC = 24 * 60 * 60; // 24h
 
   // --- API KEY CACHING ---
-  getApiKey(keyOrId: string): ApiKey | undefined {
-    const entry = this.apiKeyStore.get(keyOrId);
-    if (!entry) return undefined;
-    if (Date.now() - entry.cachedAt > entry.ttlMs) {
-      this.apiKeyStore.delete(keyOrId);
+  async getApiKey(keyOrId: string): Promise<ApiKey | undefined> {
+    try {
+      const data = await redisClient.get(`cleantraffic:apikey:${keyOrId}`);
+      if (!data) return undefined;
+      return JSON.parse(data) as ApiKey;
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getApiKey(${keyOrId}):`, err);
       return undefined;
     }
-    return entry.data;
   }
 
-  setApiKey(key: ApiKey, ttlMs: number = this.DEFAULT_TTL_MS): void {
-    const entry: CacheEntry<ApiKey> = {
-      data: key,
-      cachedAt: Date.now(),
-      ttlMs,
-    };
-    if (key.id) this.apiKeyStore.set(key.id, entry);
-    if (key.keyValue) this.apiKeyStore.set(key.keyValue, entry);
+  async setApiKey(key: ApiKey, ttlSec: number = this.DEFAULT_TTL_SEC): Promise<void> {
+    try {
+      const serialized = JSON.stringify(key);
+      const pipeline = redisClient.pipeline();
+      if (key.id) pipeline.set(`cleantraffic:apikey:${key.id}`, serialized, "EX", ttlSec);
+      if (key.keyValue) pipeline.set(`cleantraffic:apikey:${key.keyValue}`, serialized, "EX", ttlSec);
+      await pipeline.exec();
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setApiKey:`, err);
+    }
   }
 
-  invalidateApiKey(keyOrId: string): void {
-    const entry = this.apiKeyStore.get(keyOrId);
-    if (entry) {
-      if (entry.data.id) this.apiKeyStore.delete(entry.data.id);
-      if (entry.data.keyValue) this.apiKeyStore.delete(entry.data.keyValue);
-    } else {
-      this.apiKeyStore.delete(keyOrId);
+  async invalidateApiKey(keyOrId: string): Promise<void> {
+    try {
+      const existing = await this.getApiKey(keyOrId);
+      const pipeline = redisClient.pipeline();
+      pipeline.del(`cleantraffic:apikey:${keyOrId}`);
+      if (existing) {
+        if (existing.id && existing.id !== keyOrId) pipeline.del(`cleantraffic:apikey:${existing.id}`);
+        if (existing.keyValue && existing.keyValue !== keyOrId) pipeline.del(`cleantraffic:apikey:${existing.keyValue}`);
+      }
+      await pipeline.exec();
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] invalidateApiKey(${keyOrId}):`, err);
     }
   }
 
   // --- CLIENT USER CACHING ---
-  getClientUser(userId: string): ClientUser | undefined {
-    const entry = this.clientUserStore.get(userId);
-    if (!entry) return undefined;
-    if (Date.now() - entry.cachedAt > entry.ttlMs) {
-      this.clientUserStore.delete(userId);
+  async getClientUser(userId: string): Promise<ClientUser | undefined> {
+    try {
+      const data = await redisClient.get(`cleantraffic:clientuser:${userId}`);
+      if (!data) return undefined;
+      return JSON.parse(data) as ClientUser;
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getClientUser(${userId}):`, err);
       return undefined;
     }
-    return entry.data;
   }
 
-  getClientUserByApiKey(apiKeyId: string): ClientUser | undefined {
-    const userId = this.apiKeyToUserMap.get(apiKeyId);
-    if (!userId) return undefined;
-    return this.getClientUser(userId);
-  }
-
-  setClientUser(user: ClientUser, ttlMs: number = this.DEFAULT_TTL_MS): void {
-    const entry: CacheEntry<ClientUser> = {
-      data: user,
-      cachedAt: Date.now(),
-      ttlMs,
-    };
-    if (user.id) this.clientUserStore.set(user.id, entry);
-    if (user.apiKeyId) {
-      this.apiKeyToUserMap.set(user.apiKeyId, user.id);
+  async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
+    try {
+      const userId = await redisClient.get(`cleantraffic:apikey_to_user:${apiKeyId}`);
+      if (!userId) return undefined;
+      return this.getClientUser(userId);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getClientUserByApiKey(${apiKeyId}):`, err);
+      return undefined;
     }
   }
 
-  invalidateClientUser(userId: string): void {
-    const entry = this.clientUserStore.get(userId);
-    if (entry?.data.apiKeyId) {
-      this.apiKeyToUserMap.delete(entry.data.apiKeyId);
+  async setClientUser(user: ClientUser, ttlSec: number = this.DEFAULT_TTL_SEC): Promise<void> {
+    try {
+      const serialized = JSON.stringify(user);
+      const pipeline = redisClient.pipeline();
+      if (user.id) pipeline.set(`cleantraffic:clientuser:${user.id}`, serialized, "EX", ttlSec);
+      if (user.apiKeyId && user.id) {
+        pipeline.set(`cleantraffic:apikey_to_user:${user.apiKeyId}`, user.id, "EX", ttlSec);
+      }
+      await pipeline.exec();
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setClientUser:`, err);
     }
-    this.clientUserStore.delete(userId);
+  }
+
+  async invalidateClientUser(userId: string): Promise<void> {
+    try {
+      const existing = await this.getClientUser(userId);
+      const pipeline = redisClient.pipeline();
+      pipeline.del(`cleantraffic:clientuser:${userId}`);
+      if (existing?.apiKeyId) {
+        pipeline.del(`cleantraffic:apikey_to_user:${existing.apiKeyId}`);
+      }
+      await pipeline.exec();
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] invalidateClientUser(${userId}):`, err);
+    }
   }
 
   // --- REDIRECT URLS CACHING ---
-  getRedirectUrls(userId: string): UserRedirectUrls | undefined {
-    const entry = this.redirectUrlsStore.get(userId);
-    if (!entry) return undefined;
-    if (Date.now() - entry.cachedAt > entry.ttlMs) {
-      this.redirectUrlsStore.delete(userId);
+  async getRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined> {
+    try {
+      const data = await redisClient.get(`cleantraffic:redirecturls:${userId}`);
+      if (!data) return undefined;
+      return JSON.parse(data) as UserRedirectUrls;
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getRedirectUrls(${userId}):`, err);
       return undefined;
     }
-    return entry.data;
   }
 
-  setRedirectUrls(userId: string, urls: UserRedirectUrls, ttlMs: number = this.DEFAULT_TTL_MS): void {
-    this.redirectUrlsStore.set(userId, {
-      data: urls,
-      cachedAt: Date.now(),
-      ttlMs,
-    });
+  async setRedirectUrls(userId: string, urls: UserRedirectUrls, ttlSec: number = this.DEFAULT_TTL_SEC): Promise<void> {
+    try {
+      await redisClient.set(`cleantraffic:redirecturls:${userId}`, JSON.stringify(urls), "EX", ttlSec);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setRedirectUrls:`, err);
+    }
   }
 
-  invalidateRedirectUrls(userId: string): void {
-    this.redirectUrlsStore.delete(userId);
+  async invalidateRedirectUrls(userId: string): Promise<void> {
+    try {
+      await redisClient.del(`cleantraffic:redirecturls:${userId}`);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] invalidateRedirectUrls(${userId}):`, err);
+    }
   }
 
   // --- SETTINGS CACHING ---
-  getSetting(key: string): string | null | undefined {
-    const entry = this.settingsStore.get(key);
-    if (!entry) return undefined; // undefined = cache miss
-    if (Date.now() - entry.cachedAt > entry.ttlMs) {
-      this.settingsStore.delete(key);
+  async getSetting(key: string): Promise<string | null | undefined> {
+    try {
+      const data = await redisClient.get(`cleantraffic:settings:${key}`);
+      if (data === null) return undefined; // cache miss
+      if (data === "__NULL__") return null;
+      return data;
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getSetting(${key}):`, err);
       return undefined;
     }
-    return entry.data;
   }
 
-  setSetting(key: string, value: string | null, ttlMs: number = this.DEFAULT_TTL_MS): void {
-    this.settingsStore.set(key, {
-      data: value,
-      cachedAt: Date.now(),
-      ttlMs,
-    });
+  async setSetting(key: string, value: string | null, ttlSec: number = this.DEFAULT_TTL_SEC): Promise<void> {
+    try {
+      const val = value === null ? "__NULL__" : value;
+      await redisClient.set(`cleantraffic:settings:${key}`, val, "EX", ttlSec);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setSetting:`, err);
+    }
   }
 
-  invalidateSetting(key: string): void {
-    this.settingsStore.delete(key);
+  async invalidateSetting(key: string): Promise<void> {
+    try {
+      await redisClient.del(`cleantraffic:settings:${key}`);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] invalidateSetting(${key}):`, err);
+    }
   }
 
   // --- DETECTION RULES CACHING ---
-  getDetectionRules(): DetectionRules | undefined {
-    if (!this.detectionRulesStore) return undefined;
-    if (Date.now() - this.detectionRulesStore.cachedAt > this.detectionRulesStore.ttlMs) {
-      this.detectionRulesStore = null;
+  async getDetectionRules(): Promise<DetectionRules | undefined> {
+    try {
+      const data = await redisClient.get("cleantraffic:detection_rules");
+      if (!data) return undefined;
+      return JSON.parse(data) as DetectionRules;
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getDetectionRules:`, err);
       return undefined;
     }
-    return this.detectionRulesStore.data;
   }
 
-  setDetectionRules(rules: DetectionRules, ttlMs: number = this.DEFAULT_TTL_MS): void {
-    this.detectionRulesStore = {
-      data: rules,
-      cachedAt: Date.now(),
-      ttlMs,
-    };
-  }
-
-  invalidateDetectionRules(): void {
-    this.detectionRulesStore = null;
-  }
-
-  // --- VISITOR HISTORY IN-MEMORY CACHE ---
-  getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string): {
-    isNewVisitor: boolean;
-    visitCount: number;
-    firstSeen: Date;
-    lastSeen: Date;
-    existingVisitorId?: string | null;
-  } | undefined {
-    const key = `${apiKeyId || 'global'}:${deviceId}:${clientIp}`;
-    const entry = this.visitorHistoryStore.get(key);
-    if (!entry) return undefined;
-    return {
-      isNewVisitor: entry.isNewVisitor,
-      visitCount: entry.visitCount,
-      firstSeen: entry.firstSeen,
-      lastSeen: entry.lastSeen,
-      existingVisitorId: entry.existingVisitorId,
-    };
-  }
-
-  recordVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, record: {
-    isNewVisitor: boolean;
-    visitCount: number;
-    firstSeen: Date;
-    lastSeen: Date;
-    existingVisitorId?: string | null;
-  }): void {
-    const key = `${apiKeyId || 'global'}:${deviceId}:${clientIp}`;
-    
-    // Simple eviction when capacity exceeded
-    if (this.visitorHistoryStore.size >= this.MAX_VISITOR_HISTORY_ENTRIES) {
-      const firstKey = this.visitorHistoryStore.keys().next().value;
-      if (firstKey) this.visitorHistoryStore.delete(firstKey);
+  async setDetectionRules(rules: DetectionRules, ttlSec: number = this.DEFAULT_TTL_SEC): Promise<void> {
+    try {
+      await redisClient.set("cleantraffic:detection_rules", JSON.stringify(rules), "EX", ttlSec);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setDetectionRules:`, err);
     }
-
-    this.visitorHistoryStore.set(key, {
-      ...record,
-      updatedAt: Date.now(),
-    });
   }
 
-  // Full cache flush (useful for testing or manual admin reload)
-  clearAll(): void {
-    this.apiKeyStore.clear();
-    this.apiKeyToUserMap.clear();
-    this.clientUserStore.clear();
-    this.redirectUrlsStore.clear();
-    this.settingsStore.clear();
-    this.detectionRulesStore = null;
-    this.visitorHistoryStore.clear();
+  async invalidateDetectionRules(): Promise<void> {
+    try {
+      await redisClient.del("cleantraffic:detection_rules");
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] invalidateDetectionRules:`, err);
+    }
+  }
+
+  // --- VISITOR HISTORY IN REDIS ---
+  async getVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string): Promise<{
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  } | undefined> {
+    try {
+      const key = `cleantraffic:visitor:${apiKeyId || 'global'}:${deviceId}:${clientIp}`;
+      const data = await redisClient.get(key);
+      if (!data) return undefined;
+      const parsed = JSON.parse(data);
+      return {
+        isNewVisitor: parsed.isNewVisitor,
+        visitCount: parsed.visitCount,
+        firstSeen: new Date(parsed.firstSeen),
+        lastSeen: new Date(parsed.lastSeen),
+        existingVisitorId: parsed.existingVisitorId,
+      };
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getVisitorHistory:`, err);
+      return undefined;
+    }
+  }
+
+  async recordVisitorHistory(apiKeyId: string | null, deviceId: string, clientIp: string, record: {
+    isNewVisitor: boolean;
+    visitCount: number;
+    firstSeen: Date;
+    lastSeen: Date;
+    existingVisitorId?: string | null;
+  }): Promise<void> {
+    try {
+      const key = `cleantraffic:visitor:${apiKeyId || 'global'}:${deviceId}:${clientIp}`;
+      await redisClient.set(key, JSON.stringify(record), "EX", this.VISITOR_TTL_SEC);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] recordVisitorHistory:`, err);
+    }
+  }
+
+  // --- ATOMIC RATE LIMITING & VELOCITY TRACKING ---
+  async checkVelocity(deviceId: string, maxPerWindow: number = 5, windowSeconds: number = 60): Promise<{ count: number; isBlocked: boolean }> {
+    try {
+      const key = `cleantraffic:velocity:${deviceId}`;
+      const count = await redisClient.incr(key);
+      if (count === 1) {
+        await redisClient.expire(key, windowSeconds);
+      }
+      return {
+        count,
+        isBlocked: count > maxPerWindow,
+      };
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] checkVelocity(${deviceId}):`, err);
+      return { count: 1, isBlocked: false };
+    }
+  }
+
+  // --- GEOLOCATION CENTRAL REDIS CACHE ---
+  async getGeo(ip: string): Promise<any | undefined> {
+    try {
+      const data = await redisClient.get(`cleantraffic:geo:${ip}`);
+      if (!data) return undefined;
+      return JSON.parse(data);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] getGeo(${ip}):`, err);
+      return undefined;
+    }
+  }
+
+  async setGeo(ip: string, data: any, ttlSec: number = 24 * 60 * 60): Promise<void> {
+    try {
+      await redisClient.set(`cleantraffic:geo:${ip}`, JSON.stringify(data), "EX", ttlSec);
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] setGeo(${ip}):`, err);
+    }
+  }
+
+  // Full cache flush across all cleantraffic namespaces
+  async clearAll(): Promise<void> {
+    try {
+      const keys = await redisClient.keys("cleantraffic:*");
+      if (keys.length > 0) {
+        await redisClient.del(...keys);
+      }
+    } catch (err) {
+      console.warn(`[CACHE_ERROR] clearAll:`, err);
+    }
   }
 }
 

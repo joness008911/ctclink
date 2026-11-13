@@ -202,9 +202,26 @@ export function computeEffectiveAccountStatus(user: {
       trialDaysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
     }
   } else if (rawStatus === 'trialing') {
-    // If no trial end date set but status is trialing, provide standard 14-day window rather than immediate expiry
-    trialDaysRemaining = 14;
-    hasTrialExpiredByDate = false;
+    // FIX FOREVER TRIAL LEAK: Never grant an infinite 14-day window.
+    // If no explicit trial end date is set, compute expiry strictly against account creation date.
+    const userObj = user as any;
+    const createdAt = userObj.createdAt ? (userObj.createdAt instanceof Date ? userObj.createdAt : new Date(userObj.createdAt)) : null;
+    const standardTrialMs = 14 * 24 * 60 * 60 * 1000;
+    if (createdAt && !isNaN(createdAt.getTime())) {
+      const computedExpiry = new Date(createdAt.getTime() + standardTrialMs);
+      const diffMs = computedExpiry.getTime() - now.getTime();
+      if (diffMs <= 0) {
+        trialDaysRemaining = 0;
+        hasTrialExpiredByDate = true;
+      } else {
+        trialDaysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        hasTrialExpiredByDate = false;
+      }
+    } else {
+      // Legacy or untracked accounts without creation dates fail-closed: mark trial expired
+      trialDaysRemaining = 0;
+      hasTrialExpiredByDate = true;
+    }
   }
 
   // 3. ACTIVE PAID SUBSCRIPTION (Upgraded by user or administrator)

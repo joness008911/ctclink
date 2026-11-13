@@ -392,23 +392,36 @@ async function deploySchema() {
     await setPolicy("user_domain_generations", "service_role_all_user_domains", `FOR ALL TO service_role USING (true) WITH CHECK (true)`);
     await setPolicy("user_domain_generations", "user_own_domains_select", `FOR SELECT TO authenticated USING (auth.uid()::text = user_id)`);
 
-    // 7. System & Read-Only / Rules tables (service_role full access; authenticated can read enabled options)
-    const readOnlySystemTables = [
-      "detection_rules",
+    // 7. System & Read-Only / Rules tables
+    // CRITICAL SECURITY HARDENING: Sensitive tables must NEVER have authenticated SELECT policies!
+    // Settings (contains API keys, SMTP passwords), audit_logs, stripe_processed_events, and client_ip_whitelist
+    // are strictly service_role ONLY.
+    const serviceRoleExclusiveTables = [
       "settings",
+      "client_ip_whitelist",
+      "stripe_processed_events",
+      "audit_logs"
+    ];
+
+    for (const secTable of serviceRoleExclusiveTables) {
+      await setPolicy(secTable, `service_role_all_${secTable}`, `FOR ALL TO service_role USING (true) WITH CHECK (true)`);
+      // Explicitly drop any existing leaky authenticated read policy
+      await client.query(`DROP POLICY IF EXISTS "authenticated_read_${secTable}" ON ${secTable};`);
+    }
+
+    // Truly public/tenant read-only operational rule tables
+    const publicReadSystemTables = [
+      "detection_rules",
       "country_whitelist",
       "isp_whitelist",
       "isp_blacklist",
       "ip_blocklist",
       "cidr_blocklist",
-      "client_ip_whitelist",
       "interstitial_themes",
-      "domain_pool",
-      "stripe_processed_events",
-      "audit_logs"
+      "domain_pool"
     ];
 
-    for (const sysTable of readOnlySystemTables) {
+    for (const sysTable of publicReadSystemTables) {
       await setPolicy(sysTable, `service_role_all_${sysTable}`, `FOR ALL TO service_role USING (true) WITH CHECK (true)`);
       await setPolicy(sysTable, `authenticated_read_${sysTable}`, `FOR SELECT TO authenticated USING (true)`);
     }

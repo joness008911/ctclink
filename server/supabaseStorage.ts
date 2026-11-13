@@ -142,7 +142,14 @@ export class SupabaseStorage implements IStorage {
     if (user.email !== undefined) out.email = user.email ? user.email.trim().toLowerCase() : null;
     if (user.emailVerified !== undefined) out.email_verified = user.emailVerified;
     if (user.emailVerifiedAt !== undefined) out.email_verified_at = user.emailVerifiedAt instanceof Date ? user.emailVerifiedAt.toISOString() : user.emailVerifiedAt;
-    if (user.apiKeyId !== undefined) out.api_key_id = user.apiKeyId;
+    if (user.apiKeyId !== undefined) {
+      const rawKey = user.apiKeyId;
+      if (!rawKey || typeof rawKey !== "string" || rawKey.trim() === "" || rawKey === "none" || rawKey === "null" || rawKey === "undefined") {
+        out.api_key_id = null;
+      } else {
+        out.api_key_id = rawKey.trim();
+      }
+    }
     if (user.status !== undefined) out.status = user.status;
     if (user.tosAccepted !== undefined) out.tos_accepted = user.tosAccepted instanceof Date ? user.tosAccepted.toISOString() : user.tosAccepted;
     if (user.complianceStatus !== undefined) out.compliance_status = user.complianceStatus;
@@ -193,23 +200,56 @@ export class SupabaseStorage implements IStorage {
     };
 
     const dbPayload = this.mapClientUserToDb(record);
-    const { error } = await this.client.from("client_users").insert(dbPayload);
+
+    if (dbPayload.api_key_id) {
+      const { data: keyRecord } = await this.client
+        .from("api_keys")
+        .select("id")
+        .eq("id", dbPayload.api_key_id)
+        .limit(1);
+
+      if (!keyRecord || keyRecord.length === 0) {
+        const { data: byVal } = await this.client
+          .from("api_keys")
+          .select("id")
+          .eq("key_value", dbPayload.api_key_id)
+          .limit(1);
+
+        if (byVal && byVal.length > 0) {
+          dbPayload.api_key_id = byVal[0].id;
+          record.apiKeyId = byVal[0].id;
+        } else {
+          dbPayload.api_key_id = null;
+          record.apiKeyId = null;
+        }
+      }
+    }
+
+    let { error } = await this.client.from("client_users").insert(dbPayload);
+    if (error && error.message && error.message.includes("client_users_api_key_id_fkey")) {
+      console.warn(`[FK_RECOVERY] Foreign key error on createClientUser. Retrying with api_key_id = null.`);
+      dbPayload.api_key_id = null;
+      record.apiKeyId = null;
+      const retryResult = await this.client.from("client_users").insert(dbPayload);
+      error = retryResult.error;
+    }
+
     if (error) {
       console.error("Supabase createClientUser error:", error.message);
     }
-    cacheService.setClientUser(record);
+    await cacheService.setClientUser(record);
     return record;
   }
 
   async getClientUser(id: string): Promise<ClientUser | undefined> {
-    const cached = cacheService.getClientUser(id);
+    const cached = await cacheService.getClientUser(id);
     if (cached) return cached;
 
     try {
       const { data, error } = await this.client.from("client_users").select("*").eq("id", id).limit(1);
       if (error || !data || data.length === 0) return undefined;
       const user = this.mapClientUserFromDb(data[0]);
-      cacheService.setClientUser(user);
+      await cacheService.setClientUser(user);
       return user;
     } catch {
       return undefined;
@@ -222,7 +262,7 @@ export class SupabaseStorage implements IStorage {
       const { data, error } = await this.client.from("client_users").select("*").ilike("username", clean).limit(1);
       if (error || !data || data.length === 0) return undefined;
       const user = this.mapClientUserFromDb(data[0]);
-      cacheService.setClientUser(user);
+      await cacheService.setClientUser(user);
       return user;
     } catch {
       return undefined;
@@ -235,7 +275,7 @@ export class SupabaseStorage implements IStorage {
       const { data, error } = await this.client.from("client_users").select("*").ilike("email", clean).limit(1);
       if (error || !data || data.length === 0) return undefined;
       const user = this.mapClientUserFromDb(data[0]);
-      cacheService.setClientUser(user);
+      await cacheService.setClientUser(user);
       return user;
     } catch {
       return undefined;
@@ -253,7 +293,7 @@ export class SupabaseStorage implements IStorage {
 
       if (!error && data && data.length > 0) {
         const user = this.mapClientUserFromDb(data[0]);
-        cacheService.setClientUser(user);
+        await cacheService.setClientUser(user);
         return user;
       }
 
@@ -270,13 +310,49 @@ export class SupabaseStorage implements IStorage {
     try {
       const dbPayload = this.mapClientUserToDb({ ...updates, updatedAt: new Date() });
       delete dbPayload.id; // Don't overwrite PK
-      const { error } = await this.client.from("client_users").update(dbPayload).eq("id", id);
+
+      // If api_key_id is explicitly set in payload, verify foreign key integrity
+      if (dbPayload.api_key_id) {
+        const { data: keyRecord } = await this.client
+          .from("api_keys")
+          .select("id")
+          .eq("id", dbPayload.api_key_id)
+          .limit(1);
+
+        if (!keyRecord || keyRecord.length === 0) {
+          // Check if key_value was passed instead of primary key id
+          const { data: byVal } = await this.client
+            .from("api_keys")
+            .select("id")
+            .eq("key_value", dbPayload.api_key_id)
+            .limit(1);
+
+          if (byVal && byVal.length > 0) {
+            dbPayload.api_key_id = byVal[0].id;
+          } else {
+            console.warn(`[FK_GUARD] updateClientUser: api_key_id '${dbPayload.api_key_id}' not found in api_keys. Setting to null to avoid constraint violation.`);
+            dbPayload.api_key_id = null;
+          }
+        }
+      }
+
+      let { error } = await this.client.from("client_users").update(dbPayload).eq("id", id);
+      
+      // Auto-heal on foreign key violation
+      if (error && error.message && error.message.includes("client_users_api_key_id_fkey")) {
+        console.warn(`[FK_RECOVERY] Foreign key constraint violated on client_users_api_key_id_fkey for user ${id}. Auto-healing by updating with api_key_id = null.`);
+        dbPayload.api_key_id = null;
+        const retryResult = await this.client.from("client_users").update(dbPayload).eq("id", id);
+        error = retryResult.error;
+      }
+
       if (error) {
         console.error("Supabase updateClientUser error:", error.message);
       }
-      cacheService.invalidateClientUser(id);
+      await cacheService.invalidateClientUser(id);
       return await this.getClientUser(id);
-    } catch {
+    } catch (err) {
+      console.error("Supabase updateClientUser unexpected error:", err);
       return undefined;
     }
   }
@@ -284,7 +360,7 @@ export class SupabaseStorage implements IStorage {
   async deleteClientUser(id: string): Promise<boolean> {
     try {
       await this.client.from("client_users").delete().eq("id", id);
-      cacheService.invalidateClientUser(id);
+      await cacheService.invalidateClientUser(id);
       return true;
     } catch {
       return false;
@@ -292,7 +368,7 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getClientUserByApiKey(apiKeyId: string): Promise<ClientUser | undefined> {
-    const cached = cacheService.getClientUserByApiKey(apiKeyId);
+    const cached = await cacheService.getClientUserByApiKey(apiKeyId);
     if (cached) return cached;
 
     try {
@@ -311,7 +387,7 @@ export class SupabaseStorage implements IStorage {
 
       if (error || !data || data.length === 0) return undefined;
       const user = this.mapClientUserFromDb(data[0]);
-      cacheService.setClientUser(user);
+      await cacheService.setClientUser(user);
       return user;
     } catch {
       return undefined;
@@ -413,8 +489,19 @@ export class SupabaseStorage implements IStorage {
       createdAt: now,
       updatedAt: now,
     };
-    await this.client.from("api_keys").insert(this.mapApiKeyToDb(record));
-    cacheService.setApiKey(record);
+    const { error } = await this.client.from("api_keys").insert(this.mapApiKeyToDb(record));
+    if (error) {
+      console.warn("Supabase createApiKey initial insert warning:", error.message);
+      // Fallback: insert without optional extended columns if schema divergence exists
+      const fallbackPayload = { ...this.mapApiKeyToDb(record) };
+      delete fallbackPayload.domain_filter_mode;
+      delete fallbackPayload.allowed_domains;
+      const { error: retryError } = await this.client.from("api_keys").insert(fallbackPayload);
+      if (retryError) {
+        console.error("Supabase createApiKey retry error:", retryError.message);
+      }
+    }
+    await cacheService.setApiKey(record);
     return record;
   }
 
@@ -432,7 +519,7 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getApiKey(keyValue: string): Promise<ApiKey | undefined> {
-    const cached = cacheService.getApiKey(keyValue);
+    const cached = await cacheService.getApiKey(keyValue);
     if (cached) return cached;
     try {
       const { data, error } = await this.client
@@ -442,7 +529,7 @@ export class SupabaseStorage implements IStorage {
         .limit(1);
       if (error || !data || data.length === 0) return undefined;
       const key = this.mapApiKeyFromDb(data[0]);
-      cacheService.setApiKey(key);
+      await cacheService.setApiKey(key);
       return key;
     } catch {
       return undefined;
@@ -450,7 +537,7 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getApiKeyById(id: string): Promise<ApiKey | undefined> {
-    const cached = cacheService.getApiKey(id);
+    const cached = await cacheService.getApiKey(id);
     if (cached) return cached;
     try {
       const { data, error } = await this.client
@@ -460,7 +547,7 @@ export class SupabaseStorage implements IStorage {
         .limit(1);
       if (error || !data || data.length === 0) return undefined;
       const key = this.mapApiKeyFromDb(data[0]);
-      cacheService.setApiKey(key);
+      await cacheService.setApiKey(key);
       return key;
     } catch {
       return undefined;
@@ -473,8 +560,10 @@ export class SupabaseStorage implements IStorage {
 
   async deleteApiKey(id: string): Promise<boolean> {
     try {
+      // Proactively unlink any client_users referencing this key to avoid FK constraint issues
+      await this.client.from("client_users").update({ api_key_id: null }).eq("api_key_id", id);
       await this.client.from("api_keys").delete().eq("id", id);
-      cacheService.invalidateApiKey(id);
+      await cacheService.invalidateApiKey(id);
       return true;
     } catch {
       return false;
@@ -486,7 +575,7 @@ export class SupabaseStorage implements IStorage {
       const dbPayload = this.mapApiKeyToDb({ ...updates, updatedAt: new Date() });
       delete dbPayload.id;
       await this.client.from("api_keys").update(dbPayload).eq("id", id);
-      cacheService.invalidateApiKey(id);
+      await cacheService.invalidateApiKey(id);
       return await this.getApiKeyById(id);
     } catch {
       return undefined;
@@ -503,7 +592,7 @@ export class SupabaseStorage implements IStorage {
         last_used: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }).eq("id", key.id);
-      cacheService.setApiKey({ ...key, callCount: newCount, lastUsed: new Date() });
+      await cacheService.setApiKey({ ...key, callCount: newCount, lastUsed: new Date() });
       return true;
     } catch {
       return false;
@@ -530,7 +619,7 @@ export class SupabaseStorage implements IStorage {
 
   // ── Detection Rules ─────────────────────────────────────────────────────────
   async getDetectionRules(): Promise<DetectionRules | undefined> {
-    const cached = cacheService.getDetectionRules();
+    const cached = await cacheService.getDetectionRules();
     if (cached) return cached;
 
     try {
@@ -544,7 +633,7 @@ export class SupabaseStorage implements IStorage {
           rules: row.rules,
           updatedAt: row.updated_at ? new Date(row.updated_at) : new Date(),
         };
-        cacheService.setDetectionRules(rules);
+        await cacheService.setDetectionRules(rules);
         return rules;
       }
     } catch {}
@@ -562,7 +651,7 @@ export class SupabaseStorage implements IStorage {
       },
       updatedAt: new Date(),
     };
-    cacheService.setDetectionRules(defaultRules);
+    await cacheService.setDetectionRules(defaultRules);
     return defaultRules;
   }
 
@@ -584,7 +673,7 @@ export class SupabaseStorage implements IStorage {
       rules: updated.rules,
       updated_at: now.toISOString(),
     }, { onConflict: "id" });
-    cacheService.setDetectionRules(updated);
+    await cacheService.setDetectionRules(updated);
     return updated;
   }
 
@@ -622,7 +711,7 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getUserRedirectUrls(userId: string): Promise<UserRedirectUrls | undefined> {
-    const cached = cacheService.getRedirectUrls(userId);
+    const cached = await cacheService.getRedirectUrls(userId);
     if (cached) return cached;
 
     try {
@@ -638,7 +727,7 @@ export class SupabaseStorage implements IStorage {
           const rulesetsSetting = await this.getSetting(`rulesets_config_${userId}`);
           if (rulesetsSetting) urls.rulesetsConfig = rulesetsSetting;
         }
-        cacheService.setRedirectUrls(userId, urls);
+        await cacheService.setRedirectUrls(userId, urls);
         return urls;
       }
     } catch {}
@@ -736,14 +825,14 @@ export class SupabaseStorage implements IStorage {
     };
 
     await this.client.from("user_redirect_urls").upsert(dbPayload, { onConflict: "id" });
-    cacheService.setRedirectUrls(userId, record);
+    await cacheService.setRedirectUrls(userId, record);
     return record;
   }
 
   async deleteUserRedirectUrls(userId: string): Promise<boolean> {
     try {
       await this.client.from("user_redirect_urls").delete().eq("user_id", userId);
-      cacheService.invalidateRedirectUrls(userId);
+      await cacheService.invalidateRedirectUrls(userId);
       return true;
     } catch {
       return false;
@@ -803,7 +892,7 @@ export class SupabaseStorage implements IStorage {
     lastSeen: Date;
     existingVisitorId?: string | null;
   }> {
-    const cached = cacheService.getVisitorHistory(apiKeyId, deviceId, clientIp);
+    const cached = await cacheService.getVisitorHistory(apiKeyId, deviceId, clientIp);
     if (cached) {
       return {
         ...cached,
@@ -840,7 +929,7 @@ export class SupabaseStorage implements IStorage {
           lastSeen: now,
           existingVisitorId: prev.visitor_id || null,
         };
-        cacheService.recordVisitorHistory(apiKeyId, deviceId, clientIp, hist);
+        await cacheService.recordVisitorHistory(apiKeyId, deviceId, clientIp, hist);
         return hist;
       }
     } catch {
@@ -854,7 +943,7 @@ export class SupabaseStorage implements IStorage {
       lastSeen: now,
       existingVisitorId: null,
     };
-    cacheService.recordVisitorHistory(apiKeyId, deviceId, clientIp, fallback);
+    await cacheService.recordVisitorHistory(apiKeyId, deviceId, clientIp, fallback);
     return fallback;
   }
 
@@ -1003,24 +1092,24 @@ export class SupabaseStorage implements IStorage {
 
   // ── Settings ────────────────────────────────────────────────────────────────
   async getSetting(key: string): Promise<string | null> {
-    const cached = cacheService.getSetting(key);
+    const cached = await cacheService.getSetting(key);
     if (cached !== undefined) return cached;
 
     try {
       const { data, error } = await this.client.from("settings").select("value").eq("key", key).limit(1);
       if (!error && data && data.length > 0) {
         const val = data[0].value;
-        cacheService.setSetting(key, val);
+        await cacheService.setSetting(key, val);
         return val;
       }
     } catch {}
 
-    cacheService.setSetting(key, null);
+    await cacheService.setSetting(key, null);
     return null;
   }
 
   async setSetting(key: string, value: string): Promise<void> {
-    cacheService.setSetting(key, value);
+    await cacheService.setSetting(key, value);
     try {
       await this.client.from("settings").upsert({
         id: key,

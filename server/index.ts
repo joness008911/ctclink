@@ -4,6 +4,7 @@ import { execSync } from "child_process";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { isValidDatabaseUrl } from "./db";
+import { initRedis } from "./redis";
 
 const app = express();
 
@@ -172,6 +173,9 @@ process.on('uncaughtException', (error) => {
 
 (async () => {
   try {
+    // Initialize Redis central RAM cache and session store
+    await initRedis();
+
     // Run pending database migrations if a valid Postgres database is configured
     if (isValidDatabaseUrl(process.env.DATABASE_URL)) {
       try {

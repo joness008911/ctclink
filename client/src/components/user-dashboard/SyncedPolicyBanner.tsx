@@ -33,32 +33,38 @@ export function SyncedPolicyBanner({
 
   // Derive human-readable active deflection label
   const getDeflectionSummary = () => {
-    if (!activeRuleset) {
-      if (serverBotUrl === "404") return "Edge 404 Stealth Drop";
-      if (serverBotUrl.startsWith("http")) return `Redirect (${serverBotUrl.replace(/^https?:\/\//, "").slice(0, 24)}...)`;
-      return "Edge 403 Forbidden";
-    }
-
-    if (isSingleMode && activeRuleset.singleResponse) {
+    const rawBot = serverBotUrl?.trim() || "";
+    if (isSingleMode && activeRuleset?.singleResponse) {
       const resp = activeRuleset.singleResponse;
       if (resp.action === "redirect" && resp.redirectUrl) {
         return `Redirect (${resp.redirectUrl.replace(/^https?:\/\//, "").slice(0, 24)}...)`;
       }
-      return `Unified HTTP ${resp.statusCode || 403} (${resp.statusCode === 404 ? "Stealth Drop" : "Forbidden"})`;
+      const code = resp.statusCode || (parseInt(rawBot, 10) || 403);
+      return `HTTP ${code} (${code === 404 ? "Stealth Drop" : code === 403 ? "Forbidden" : code === 429 ? "Rate Limit" : code === 500 ? "Server Error" : "Block Response"})`;
     }
 
-    // Multi-status: Show summary of active actions
-    const statuses = Array.from(new Set(
-      activeRuleset.rules
-        .filter((r) => r.enabled)
-        .map((r) => (r.action === "redirect" && r.redirectUrl ? "Redirect" : `${r.statusCode || 403}`))
-    ));
-
-    if (statuses.length > 0) {
-      return `Multi-Status (${statuses.join(", ")})`;
+    if (rawBot) {
+      if (rawBot.startsWith("http")) {
+        return `Redirect (${rawBot.replace(/^https?:\/\//, "").slice(0, 24)}...)`;
+      }
+      const parsed = parseInt(rawBot, 10);
+      if (!isNaN(parsed)) {
+        return `HTTP ${parsed} (${parsed === 404 ? "Stealth Drop" : parsed === 403 ? "Forbidden" : parsed === 429 ? "Rate Limit" : parsed === 500 ? "Server Error" : "Blocked"})`;
+      }
     }
 
-    return "Live Edge Policy";
+    if (activeRuleset?.rules && activeRuleset.rules.length > 0) {
+      const statuses = Array.from(new Set(
+        activeRuleset.rules
+          .filter((r) => r.enabled)
+          .map((r) => (r.action === "redirect" && r.redirectUrl ? "Redirect" : `HTTP ${r.statusCode || 403}`))
+      ));
+      if (statuses.length > 0) {
+        return `Multi-Status (${statuses.join(", ")})`;
+      }
+    }
+
+    return "HTTP 403 (Forbidden)";
   };
 
   const deflectionLabel = getDeflectionSummary();
