@@ -152,25 +152,46 @@ export function sanitizeSmtpConfig(config: SmtpConfig): SmtpConfig {
 
 // ── Retrieve Active SMTP Configuration ──────────────────────────────────────
 export async function getSmtpConfig(): Promise<SmtpConfig> {
-  // Check persisted settings first (from Supabase or DB)
-  const host = (await storage.getSetting("smtp_host")) || process.env.SMTP_HOST || "";
+  const envFromDomain = (process.env.RESEND_DOMAIN || process.env.EMAIL_DOMAIN || "").trim().replace(/^@/, "");
+  const envFromEmail = (
+    process.env.RESEND_FROM ||
+    process.env.SMTP_FROM ||
+    process.env.FROM_EMAIL ||
+    (envFromDomain ? `noreply@${envFromDomain}` : "")
+  ).trim();
+  const envFromName = (
+    process.env.RESEND_FROM_NAME ||
+    process.env.SMTP_FROM_NAME ||
+    process.env.FROM_NAME ||
+    ""
+  ).trim();
+
+  // Check persisted settings (from Supabase or DB)
+  const dbHost = (await storage.getSetting("smtp_host")) || "";
+  const host = dbHost || process.env.SMTP_HOST || "";
   const portStr = (await storage.getSetting("smtp_port")) || process.env.SMTP_PORT || "587";
   const secureStr = (await storage.getSetting("smtp_secure")) || process.env.SMTP_SECURE || "false";
   const user = (await storage.getSetting("smtp_user")) || process.env.SMTP_USER || "";
   const pass = (await storage.getSetting("smtp_pass")) || process.env.SMTP_PASS || "";
-  const from = (await storage.getSetting("smtp_from")) || process.env.SMTP_FROM || "noreply@cleantraffic.io";
-  const fromName = (await storage.getSetting("smtp_from_name")) || process.env.SMTP_FROM_NAME || "CleanTraffic Security";
+  const dbFrom = (await storage.getSetting("smtp_from")) || "";
+  const from = envFromEmail || dbFrom || "noreply@cleantraffic.io";
+  const fromName = envFromName || (await storage.getSetting("smtp_from_name")) || "CleanTraffic Security";
   const providerPreset = (await storage.getSetting("smtp_provider_preset")) || "custom";
 
-  // Auto-detect Resend API key shortcut if no SMTP is explicitly configured
-  if (!host && process.env.RESEND_API_KEY) {
+  // Auto-detect Resend API key if RESEND_API_KEY is set in environment variables
+  if (process.env.RESEND_API_KEY && (!host || host.toLowerCase().includes("gmail.com") || host.toLowerCase().includes("resend.com"))) {
+    const safeResendFrom =
+      envFromEmail ||
+      (dbFrom && !dbFrom.toLowerCase().endsWith("@gmail.com") && dbFrom !== "noreply@cleantraffic.io"
+        ? dbFrom
+        : "onboarding@resend.dev");
     return sanitizeSmtpConfig({
       host: "smtp.resend.com",
       port: 465,
       secure: true,
       user: "resend",
       pass: process.env.RESEND_API_KEY,
-      from: from || "onboarding@resend.dev",
+      from: safeResendFrom,
       fromName: fromName || "CleanTraffic Security",
       providerPreset: "resend",
     });
@@ -840,58 +861,72 @@ export async function sendEmail(options: SendEmailOptions): Promise<{
   }
 
   try {
-    const fromEmail = config.from || config.user;
+    let fromEmail = config.from || config.user;
+    const resendKey =
+      process.env.RESEND_API_KEY ||
+      (config.host.toLowerCase().includes("resend.com") || config.pass.startsWith("re_") ? config.pass : "");
+
+    // Ensure Resend never uses an unverified @gmail.com / placeholder sender
+    if (resendKey && (fromEmail.toLowerCase().endsWith("@gmail.com") || fromEmail === "noreply@cleantraffic.io")) {
+      const envDomain = (process.env.RESEND_DOMAIN || process.env.EMAIL_DOMAIN || "").trim().replace(/^@/, "");
+      fromEmail =
+        process.env.RESEND_FROM ||
+        process.env.SMTP_FROM ||
+        process.env.FROM_EMAIL ||
+        (envDomain ? `noreply@${envDomain}` : "onboarding@resend.dev");
+    }
+
     const fromAddress = config.fromName ? `"${config.fromName}" <${fromEmail}>` : fromEmail;
 
     let info: any;
-    try {
-      info = await transporter.sendMail({
-        from: fromAddress,
-        replyTo: fromAddress,
-        to,
-        subject: renderedSubject,
-        html: renderedHtml,
-        text: plainText,
-        headers: {
-          "X-Entity-Ref-ID": randomUUID(),
-          "X-Mailer": "CleanTraffic-Security-Mailer",
-        },
-      });
-    } catch (sendErr: any) {
-      // 1. If Resend API key is configured (via smtp.resend.com, pass starting with re_, or RESEND_API_KEY),
-      // dispatch over HTTPS (port 443) which bypasses cloud provider SMTP port blocks completely!
-      const resendKey =
-        process.env.RESEND_API_KEY ||
-        (config.host.toLowerCase().includes("resend.com") || config.pass.startsWith("re_") ? config.pass : "");
 
-      if (resendKey && isNetworkOrTimeoutError(sendErr)) {
-        try {
-          console.log(`[Email Service] SMTP port blocked/unreachable. Falling back to Resend HTTPS API (port 443) for ${to}...`);
-          const resp = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${resendKey}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              from: fromAddress,
-              to: [to],
-              subject: renderedSubject,
-              html: renderedHtml,
-              text: plainText,
-            }),
-          });
-          if (resp.ok) {
-            const data: any = await resp.json();
-            info = { messageId: data.id || `resend_${randomUUID()}`, response: "250 OK via Resend HTTPS API" };
-          }
-        } catch (httpErr) {
-          console.warn("[Email Service] Resend HTTPS fallback error:", httpErr);
+    // Fast-path: If Resend API key is active, send directly via Resend HTTPS API (Port 443)
+    // This completely avoids cloud provider outbound SMTP port blocks (465/587) and delivers in ~150ms.
+    if (resendKey) {
+      try {
+        const resp = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${resendKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: fromAddress,
+            to: [to],
+            subject: renderedSubject,
+            html: renderedHtml,
+            text: plainText,
+          }),
+        });
+        if (resp.ok) {
+          const data: any = await resp.json();
+          info = { messageId: data.id || `resend_${randomUUID()}`, response: "250 OK via Resend HTTPS API" };
+        } else {
+          const errBody = await resp.text();
+          console.warn(`[Email Service] Resend HTTPS API returned ${resp.status}: ${errBody}`);
         }
+      } catch (httpErr) {
+        console.warn("[Email Service] Resend HTTPS primary dispatch notice:", httpErr);
       }
+    }
 
-      // 2. If not sent yet and error is a network/timeout error, try alternative SMTP port (465 <-> 587) strictly over IPv4
-      if (!info && isNetworkOrTimeoutError(sendErr)) {
+    if (!info) {
+      try {
+        info = await transporter.sendMail({
+          from: fromAddress,
+          replyTo: fromAddress,
+          to,
+          subject: renderedSubject,
+          html: renderedHtml,
+          text: plainText,
+          headers: {
+            "X-Entity-Ref-ID": randomUUID(),
+            "X-Mailer": "CleanTraffic-Security-Mailer",
+          },
+        });
+      } catch (sendErr: any) {
+        // If not sent yet and error is a network/timeout error, try alternative SMTP port (465 <-> 587) strictly over IPv4
+        if (isNetworkOrTimeoutError(sendErr)) {
         const altPort = config.port === 465 ? 587 : 465;
         const altSecure = altPort === 465;
 
@@ -916,8 +951,9 @@ export async function sendEmail(options: SendEmailOptions): Promise<{
 
         // Persist working configuration
         await saveSmtpConfig({ ...config, port: altPort, secure: altSecure });
-      } else if (!info) {
-        throw sendErr;
+        } else if (!info) {
+          throw sendErr;
+        }
       }
     }
 
